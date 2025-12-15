@@ -50,6 +50,10 @@ email-validator~=2.3.0
 # - Used by pydantic-settings for local development
 python-dotenv~=1.0.0
 
+# Python-multipart: Form data parsing
+# - Required for OAuth2 password flow (form login)
+python-multipart~=0.0.20
+
 # -----------------------------------------------------------------------------
 # Authentication & Security
 # -----------------------------------------------------------------------------
@@ -71,7 +75,7 @@ bcrypt~=4.2.0
 # Requests: Simple HTTP library for Python
 # - Synchronous HTTP client for simple scraping tasks
 requests~=2.32.0
-
+httpx~=0.28.0
 # BeautifulSoup4: HTML/XML parsing library
 # - Extract data from HTML documents
 beautifulsoup4~=4.12.0
@@ -79,6 +83,10 @@ beautifulsoup4~=4.12.0
 # lxml: Fast XML and HTML parser
 # - High-performance parser backend for BeautifulSoup
 lxml~=5.3.0
+
+# HTTPX: Async HTTP client
+# - Used for async scraping operations
+httpx~=0.28.0
 
 # -----------------------------------------------------------------------------
 # Development & Testing (uncomment as needed)

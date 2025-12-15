@@ -3,11 +3,12 @@ Authentication endpoints for user registration, login, and token refresh.
 
 Endpoints:
     POST /auth/register - Register a new user
-    POST /auth/login - Login and get JWT tokens
+    POST /auth/login - Login via form (OAuth2 compatible) or JSON
     POST /auth/refresh - Refresh access token using refresh token
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,43 +99,44 @@ async def register(
 
 
 # -----------------------------------------------------------------------------
-# Login Endpoint
+# Login Endpoint (OAuth2 Compatible)
 # -----------------------------------------------------------------------------
 
 @router.post(
     "/login",
-    response_model=AuthResponse,
+    response_model=TokenResponse,
     summary="Login user",
-    description="Authenticate with email and password to get JWT tokens.",
+    description="Login with username (email) and password. Returns JWT tokens.",
 )
 async def login(
-    request: UserLoginRequest,
+    form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
-) -> AuthResponse:
+) -> TokenResponse:
     """
-    Login a user.
+    Login a user using OAuth2 password flow.
 
-    Validates credentials and returns JWT tokens.
+    Note: 'username' field accepts email address.
+    This format is required for Swagger UI compatibility.
 
     Args:
-        request: Login credentials (email, password)
+        form_data: OAuth2 form with username (email) and password
         db: Database session
 
     Returns:
-        AuthResponse: User data and JWT tokens
+        TokenResponse: JWT access and refresh tokens
 
     Raises:
         HTTPException 401: If credentials are invalid
         HTTPException 403: If account is deactivated
     """
-    # Find user by email
+    # Find user by email (username field contains email)
     result = await db.execute(
-        select(User).where(User.email == request.email)
+        select(User).where(User.email == form_data.username)
     )
     user = result.scalar_one_or_none()
 
     # Verify credentials
-    if not user or not verify_password(request.password, user.hashed_password):
+    if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -152,12 +154,9 @@ async def login(
     access_token = create_access_token(subject=user.id)
     refresh_token = create_refresh_token(subject=user.id)
 
-    return AuthResponse(
-        user=UserResponse.model_validate(user),
-        tokens=TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-        ),
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
     )
 
 
