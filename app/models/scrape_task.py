@@ -1,22 +1,16 @@
 """
 ScrapeTask model for tracking scraping job states.
 
-Each user can have at most one non-FINALIZED task at a time,
+Each user can have at most one non-terminal task at a time,
 enforced by a partial unique index at the database level.
 """
 
 import enum
 from datetime import datetime, timezone
+from typing import Any
 
-from sqlalchemy import (
-    DateTime,
-    Enum,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    func,
-)
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -26,34 +20,50 @@ class TaskState(str, enum.Enum):
     """
     State machine for scrape tasks.
 
-    Flow: PERMISSION_GRANTED -> SCRAPED -> LLM_ANALYZED
-          -> OUTPUT_GENERATION -> FINALIZED
+    Flow:
+        PERMISSION_GRANTED → SCRAPING → SCRAPED → LLM_PROCESSING → COMPLETED
+                                 ↓                      ↓
+                              FAILED                 FAILED
+
+    Terminal states: COMPLETED, FAILED
     """
     PERMISSION_GRANTED = "PERMISSION_GRANTED"
+    SCRAPING = "SCRAPING"
     SCRAPED = "SCRAPED"
-    LLM_ANALYZED = "LLM_ANALYZED"
-    OUTPUT_GENERATION = "OUTPUT_GENERATION"
-    FINALIZED = "FINALIZED"
+    LLM_PROCESSING = "LLM_PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+# Valid state transitions
+VALID_TRANSITIONS: dict[TaskState, list[TaskState]] = {
+    TaskState.PERMISSION_GRANTED: [TaskState.SCRAPING],
+    TaskState.SCRAPING: [TaskState.SCRAPED, TaskState.FAILED],
+    TaskState.SCRAPED: [TaskState.LLM_PROCESSING, TaskState.FAILED],
+    TaskState.LLM_PROCESSING: [TaskState.COMPLETED, TaskState.FAILED],
+    TaskState.COMPLETED: [],  # Terminal
+    TaskState.FAILED: [],  # Terminal
+}
+
+TERMINAL_STATES = {TaskState.COMPLETED, TaskState.FAILED}
 
 
 class ScrapeTask(Base):
     """
     Scrape task tracking model.
 
-    Invariant: At most one non-FINALIZED task per user.
-    Enforced by partial unique index in database.
+    Invariant: At most one non-terminal task per user.
+    Enforced by partial unique index: WHERE state NOT IN ('COMPLETED', 'FAILED')
     """
 
     __tablename__ = "scrape_tasks"
 
-    # Primary Key
     id: Mapped[int] = mapped_column(
         Integer,
         primary_key=True,
         autoincrement=True,
     )
 
-    # Foreign Key to User
     user_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -61,7 +71,6 @@ class ScrapeTask(Base):
         index=True,
     )
 
-    # Task State (NOT NULL)
     state: Mapped[TaskState] = mapped_column(
         Enum(TaskState, name="task_state", native_enum=True),
         nullable=False,
@@ -69,19 +78,29 @@ class ScrapeTask(Base):
         index=True,
     )
 
-    # Target URL
     url: Mapped[str] = mapped_column(
         String(2048),
         nullable=False,
     )
 
-    # Scraped content (populated after SCRAPED state)
+    # Scraped content
     content: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )
 
-    # Timestamps
+    # Error message (populated on FAILED)
+    error: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # LLM result (populated on COMPLETED)
+    result: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -95,8 +114,17 @@ class ScrapeTask(Base):
         nullable=True,
     )
 
-    # Relationship
     user = relationship("User", back_populates="scrape_tasks")
+
+    @property
+    def is_terminal(self) -> bool:
+        """Check if task is in a terminal state."""
+        return self.state in TERMINAL_STATES
+
+    def can_transition_to(self, new_state: TaskState) -> bool:
+        """Check if transition to new_state is valid."""
+        return new_state in VALID_TRANSITIONS.get(self.state, [])
 
     def __repr__(self) -> str:
         return f"<ScrapeTask {self.id} state={self.state.value}>"
+
