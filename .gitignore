@@ -2,6 +2,10 @@
 # Agent/AI Tool Configs
 # ===========================
 .agent/
+.claude/
+.claude.json
+.claude.jsonl
+.aider*
 
 # ===========================
 # Python
