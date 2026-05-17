@@ -1,6 +1,6 @@
 # ScrapGPT — Complete Project Context
 
-> This document gives any LLM (or human) full context to understand, discuss, and contribute to this project. It covers what exists, how it works, what's planned, and what the key decisions are.
+> This document gives any LLM (or human) enough context to understand, discuss, and contribute to this project without rereading every file first. It covers what exists, how it works, what's planned, what is broken, and what rules must be respected.
 
 Last updated: 2026-05-17
 
@@ -13,6 +13,20 @@ ScrapGPT is an AI-powered web scraping platform. The user pastes a URL, the syst
 **Current state:** Backend MVP is functional (auth, task pipeline, scraping). No frontend, no real AI integration (LLM is a stub), no multi-page crawling, no checkpointing.
 
 **Target state:** Full-stack platform with React GUI, Gemini-powered page analysis, deterministic CSS-selector extraction, multi-page crawling, and crash-safe checkpointing.
+
+---
+
+## Source-of-Truth Reading Order
+
+For a new LLM session, read in this order:
+
+1. `docs/PROJECT_CONTEXT.md` — this context document.
+2. `docs/plan/ROADMAP.md` — the unified product/implementation roadmap.
+3. `docs/STATUS.md` — current known backend bugs and unfinished work.
+4. `docs/architecture.md` — current backend architecture and invariants.
+5. `CLAUDE.md` and `.agent/rules/*.md` — local project workflow rules.
+
+Important doc caveat: older separate plan drafts were removed. `docs/plan/ROADMAP.md` is now the only active plan.
 
 ---
 
@@ -73,17 +87,21 @@ scrapegpt/
 │       ├── readiness.py        # Bounded DB readiness probe
 │       └── watchdog.py         # Fails tasks stuck past timeout
 ├── alembic/versions/           # DB migrations (001-004)
-├── tests/                      # Skeleton (health + readiness only)
+├── tests/                      # Narrow test suite: health + readiness only
+│   ├── api/v1/test_health_readiness.py
+│   └── services/test_readiness.py
 ├── docs/
+│   ├── PROJECT_CONTEXT.md  # This handoff/context file
 │   ├── plan/
-│   │   ├── AI_SCRAPING_PLATFORM_PLAN.md  # ← THE PLAN (chosen)
-│   │   └── MASTER_PLAN.md               # Earlier draft (superseded)
+│   │   └── ROADMAP.md      # Unified product and implementation plan
 │   ├── architecture.md
 │   ├── STATUS.md
 │   └── learning/              # Decision logs (01-04)
 ├── requirements.txt
 └── .env                       # Local config (not in git)
 ```
+
+There are many files currently reported as modified by `git status`, mostly from line-ending conversion. Use `git diff --ignore-space-at-eol` before assuming those are meaningful code changes. Do not revert unrelated worktree changes.
 
 ---
 
@@ -118,14 +136,14 @@ class User(Base):
 
 ### Scrape Task Pipeline
 
-The core workflow today (single-URL, no AI):
+The core workflow today is single-URL text scraping plus a stub LLM step:
 
 ```
 User: POST /api/v1/scrape/start {url}
   → Admission check (credits > 0, no active task)
   → Create ScrapeTask(state=PERMISSION_GRANTED)
   → Return 202 + task_id
-  → Background pipeline starts:
+  → FastAPI BackgroundTasks starts in-process pipeline:
       PERMISSION_GRANTED → SCRAPING (fetch URL with httpx)
       SCRAPING → SCRAPED (store extracted text)
       SCRAPED → LLM_PROCESSING (deduct 1 credit atomically)
@@ -146,13 +164,22 @@ Terminal states: `COMPLETED`, `FAILED`
 
 Enforced by `VALID_TRANSITIONS` dict and `can_transition_to()` method.
 
+Current limitations of this pipeline:
+
+- It does not render JavaScript.
+- It does not crawl multiple pages.
+- It does not checkpoint per page.
+- It does not retry transient target-site failures.
+- It does not have a persistent external task queue.
+- `process_with_llm()` is a stub that sleeps and returns mock JSON.
+
 ### Key Invariants
 
 1. **One active task per user** — Partial unique index on `scrape_tasks(user_id) WHERE state NOT IN ('COMPLETED', 'FAILED')`. Database-enforced, race-condition proof.
 
 2. **Credits deducted at LLM phase only** — Not at admission. If scraping fails, user isn't charged. Deduction is atomic with the state transition (same DB transaction).
 
-3. **Always-finalize** — Every task reaches COMPLETED or FAILED. The executor has a catch-all try/except. The watchdog catches anything that slips through.
+3. **Always-finalize intent** — The executor is designed so every task should reach COMPLETED or FAILED. The catch-all helps, and the watchdog is the fallback, but the current watchdog has a known `updated_at IS NULL` bug.
 
 4. **Multi-instance-safe credit reset** — Daily at 00:00 UTC via compare-and-swap on `system_state` table. Only one instance performs the reset.
 
@@ -196,9 +223,19 @@ Enforced by `VALID_TRANSITIONS` dict and `can_transition_to()` method.
 
 5. **JWT int() cast** — `int(payload.sub)` can raise ValueError for malformed tokens → 500. Fix: try/except → 401.
 
+6. **Per-user rate limiting is not actually per-user** — `rate_limit.py` looks for `request.state.user`, but no middleware/dependency sets it. Authenticated routes currently fall back to IP-based rate limiting.
+
+7. **Auth rate-limit constant is unused** — `AUTH_RATE_LIMIT` exists, but auth endpoints are not decorated with it.
+
+8. **Some config is declared but not fully enforced** — examples: `SCRAPE_CREDIT_COST`, `LLM_TIMEOUT`, and `MAX_CONCURRENT_JOBS`.
+
+9. **`/scrape/tasks/current` response model mismatch** — response model allows `None`, but implementation returns 404 when there is no active task. Pick one behavior and make docs/schema match.
+
+10. **Tests are narrow** — current passing tests cover readiness/health only. There are no auth, scrape admission, task transition, watchdog, or pipeline tests yet.
+
 ---
 
-## The Plan Forward (AI_SCRAPING_PLATFORM_PLAN.md)
+## The Plan Forward (ROADMAP.md)
 
 ### Core Architecture Decision
 
@@ -269,7 +306,8 @@ AWAITING_SELECTION → DISCOVERING → EXTRACTING → EXPORTING → COMPLETED
 ### Gemini Integration Details
 
 - Use official `google-genai` SDK
-- Models: `gemini-3.1-flash-lite` (fast/cheap) with escalation to `gemini-2.5-flash` (reasoning)
+- Planned model config names from the plan: `GEMINI_MODEL_FAST` and `GEMINI_MODEL_REASONING`
+- Before implementation, verify currently available Google AI Studio model IDs and free-tier limits against official Google docs; do not hard-code old rate limits from older plans
 - Structured outputs with Pydantic validation on every response
 - Send only compact DOM summaries, never full HTML
 - Cache analysis by content hash to reduce API calls
@@ -305,6 +343,8 @@ All settings from `.env`, validated at startup by Pydantic:
 | `RATE_LIMIT_PER_MINUTE`        | `60`                       | Default rate limit                 |
 | `RATE_LIMIT_SCRAPE_PER_MINUTE` | `10`                       | Scrape endpoint limit              |
 
+Planned Gemini settings are not implemented yet. When added, keep them in `app/core/config.py` with typed Pydantic validation, not raw `os.environ` access.
+
 ---
 
 ## How to Run
@@ -331,6 +371,8 @@ cmd.exe /c "set DEBUG=true&& venv\Scripts\python.exe -m pytest -q"
 # Result: 13 passed
 ```
 
+The explicit `DEBUG=true` matters for this environment. Without overriding it, Windows Python may inherit `DEBUG=release` from the surrounding environment and fail Pydantic settings validation during test collection.
+
 ---
 
 ## Code Patterns & Conventions
@@ -350,7 +392,7 @@ async with db.begin():
 
 ### Error Pattern (Services)
 
-Services return result objects, not exceptions:
+Some services return result objects for expected business outcomes:
 
 ```python
 result = await admit_scrape_task(user, url, db)
@@ -358,6 +400,12 @@ if isinstance(result, AdmissionError):
     # Handle error
 task = result.task  # Success
 ```
+
+Other services intentionally raise domain exceptions for operational failures:
+
+- `scraper.scrape_url()` raises `ScrapeError`.
+- `llm_processor.process_with_llm()` raises `LLMError`.
+- The pipeline catches those and transitions tasks to `FAILED`.
 
 ### Dependency Injection
 
@@ -385,12 +433,14 @@ logger.info("event.name", extra={"key": "value", "task_id": 42})
 - **No anti-bot bypass.** Won't handle captchas, logins, or paywalls.
 - **PostgreSQL required.** Uses JSONB, partial unique indexes, native enums.
 - **Single-host deployment.** Scheduler runs in-process. For multi-host, run scheduler in dedicated worker.
+- **Project learning docs are mandatory.** `.agent/rules/documenting.md` says every completed implementation task must add a clear Markdown explanation in `docs/`, usually under `docs/learning/`.
+- **Respect current invariants.** Do not casually move credit deduction, remove the partial unique index, bypass state transitions, or put business logic in endpoints.
 
 ---
 
 ## What's NOT Done Yet (Ordered by Priority)
 
-1. Fix the 5 known bugs (see above)
+1. Fix the known Phase 0 backend bugs (see above)
 2. Gemini AI integration (page analysis, selector suggestion)
 3. React frontend (URL input → preview → configure → run → results)
 4. Browser rendering (Playwright for JS-heavy pages)
@@ -400,6 +450,20 @@ logger.info("event.name", extra={"key": "value", "task_id": 42})
 8. Real-time progress (SSE)
 9. URL validation and safety (SSRF prevention, robots.txt)
 10. Comprehensive test suite
+
+---
+
+## What Is Already Done Correctly
+
+- FastAPI app factory, router mounting, CORS, docs toggling by `DEBUG`, and lifespan setup exist.
+- JWT auth register/login/refresh flows exist.
+- SQLAlchemy async models and Alembic migrations exist.
+- Admission service enforces credit availability and one active task per user, backed by a partial unique index.
+- State transitions are centralized in `app/services/task_state.py`.
+- Credit deduction is atomic with `SCRAPED -> LLM_PROCESSING`.
+- Scheduler performs daily credit reset with a `system_state` compare-and-set pattern.
+- Readiness endpoint has bounded DB/schema checks and sanitized failures.
+- The current test command passes 13 tests, but those tests are only health/readiness coverage.
 
 ---
 
@@ -418,7 +482,7 @@ logger.info("event.name", extra={"key": "value", "task_id": 42})
 | `app/core/rate_limit.py`         | SlowAPI limiter, key function, rate constants        | 42    |
 | `app/core/scheduler.py`          | APScheduler config, credit reset, watchdog trigger   | 130   |
 | `app/db/database.py`             | Async engine, session factory, get_db generator      | 136   |
-| `app/models/base.py`             | Declarative Base, TimestampMixin, SoftDeleteMixin    | ~50   |
+| `app/models/base.py`             | Declarative Base, TimestampMixin, SoftDeleteMixin    | 152   |
 | `app/models/user.py`             | User model with credit methods                       | 214   |
 | `app/models/scrape_task.py`      | ScrapeTask, TaskState enum, VALID_TRANSITIONS        | 130   |
 | `app/schemas/auth.py`            | Auth request/response Pydantic models                | 68    |
@@ -441,6 +505,6 @@ logger.info("event.name", extra={"key": "value", "task_id": 42})
 - "How does the task pipeline work?" → State machine with always-finalize guarantee
 - "Why are credits deducted at LLM phase?" → Fairness: don't charge for failed scrapes
 - "What's the AI strategy?" → Gemini suggests selectors, deterministic code extracts
-- "What are the known bugs?" → 5 bugs listed, all in STATUS.md
-- "What's the plan?" → AI_SCRAPING_PLATFORM_PLAN.md is the source of truth
+- "What are the known bugs?" → Phase 0 bugs and cleanup risks listed above; `docs/STATUS.md` has the shorter source list
+- "What's the plan?" → `docs/plan/ROADMAP.md` is the source of truth
 - "How do I run it?" → See "How to Run" section above

@@ -1,13 +1,14 @@
 # Documentation Index
 
-## Active Documents
+## Start Here
 
-| Document                                   | Purpose                                                                                     |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| [plan/MASTER_PLAN.md](plan/MASTER_PLAN.md) | The roadmap. What we're building, how, and in what order. Start here.                       |
-| [architecture.md](architecture.md)         | How the current backend is structured: layers, state machine, data model, design decisions. |
-| [STATUS.md](STATUS.md)                     | Known bugs and unfinished work in the current codebase.                                     |
-| [ops/health.md](ops/health.md)             | Operator guide for health/readiness endpoints.                                              |
+| Document                               | Purpose                                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Handoff context for a new LLM or human session: what exists, what is planned, and key rules. |
+| [plan/ROADMAP.md](plan/ROADMAP.md)     | Unified product and implementation roadmap. This replaces the old separate plan drafts.      |
+| [STATUS.md](STATUS.md)                 | Known bugs and unfinished work in the current codebase.                                     |
+| [architecture.md](architecture.md)     | How the current backend is structured: layers, state machine, data model, design decisions. |
+| [ops/health.md](ops/health.md)         | Operator guide for health/readiness endpoints.                                              |
 
 ## Decision Logs
 

@@ -1,8 +1,8 @@
 # Current Status — Known Issues
 
-Last updated: 2026-05-15
+Last updated: 2026-05-17
 
-For the full roadmap and what to build next, see [plan/MASTER_PLAN.md](plan/MASTER_PLAN.md).
+For the full roadmap and what to build next, see [plan/ROADMAP.md](plan/ROADMAP.md).
 For architecture details, see [architecture.md](architecture.md).
 
 ---
@@ -61,8 +61,28 @@ Old enum values (`FINALIZED`, `LLM_ANALYZED`, `OUTPUT_GENERATION`) exist in migr
 
 `int(payload.sub)` raises `ValueError` for malformed tokens. Wrap in try/except → 401.
 
+### 6. Per-user rate limiting is not actually per-user 🟠
+
+**File:** `app/core/rate_limit.py`
+
+The rate-limit key function checks `request.state.user`, but no middleware or dependency sets it. Authenticated routes currently fall back to IP-based limits.
+
+### 7. Auth rate limit constant is unused 🟡
+
+**File:** `app/core/rate_limit.py`, `app/api/v1/endpoints/auth.py`
+
+`AUTH_RATE_LIMIT` exists, but auth endpoints are not decorated with it.
+
+### 8. Config is not fully enforced 🟡
+
+Examples: `SCRAPE_CREDIT_COST`, `LLM_TIMEOUT`, and `MAX_CONCURRENT_JOBS` are declared but not consistently enforced by runtime paths.
+
+### 9. `/scrape/tasks/current` response contract mismatch 🟡
+
+The response model allows `None`, but the implementation raises 404 when no task exists. Pick one behavior and make schema/docs match.
+
 ---
 
 ## What's Next
 
-See [plan/MASTER_PLAN.md](plan/MASTER_PLAN.md) — Phase 0 (bug fixes) then Phase 1 (Gemini AI integration).
+See [plan/ROADMAP.md](plan/ROADMAP.md) — Phase 0 (bug fixes) then Phase 1 (URL validation/fetching and Gemini integration).
