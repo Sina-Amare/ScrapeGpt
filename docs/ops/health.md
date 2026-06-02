@@ -1,11 +1,16 @@
 # Health Endpoints
 
-## Liveness vs Readiness
+## Endpoint Overview
 
-| Probe         | Endpoint                   | Purpose                                                             |
-| ------------- | -------------------------- | ------------------------------------------------------------------- |
-| **Liveness**  | `GET /api/v1/health`       | Confirms the process is running; always returns `200`.              |
-| **Readiness** | `GET /api/v1/health/ready` | Confirms the instance can serve traffic (DB up, schema compatible). |
+There are three endpoints. Use the right one for the right purpose:
+
+| Probe          | Endpoint                    | Purpose                                                             |
+| -------------- | --------------------------- | ------------------------------------------------------------------- |
+| **Liveness**   | `GET /api/v1/health/live`   | Confirms the process is running. Returns `{"alive": true}`.         |
+| **Readiness**  | `GET /api/v1/health/ready`  | Confirms the instance can serve traffic (DB up, schema compatible). |
+| **Basic info** | `GET /api/v1/health`        | Human-readable status (env, version) for casual checks.             |
+
+> **Note:** Use `/health/live` for Kubernetes liveness probes, **not** `/health`. The `/health` endpoint does not check any dependencies.
 
 ---
 

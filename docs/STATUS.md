@@ -57,9 +57,9 @@ Old enum values (`FINALIZED`, `LLM_ANALYZED`, `OUTPUT_GENERATION`) exist in migr
 
 ### 5. JWT `int()` cast can 500 🟠
 
-**File:** `app/api/deps.py:88`
+**Files:** `app/api/deps.py:88` and `app/api/v1/endpoints/auth.py:204`
 
-`int(payload.sub)` raises `ValueError` for malformed tokens. Wrap in try/except → 401.
+`int(payload.sub)` raises `ValueError` if `sub` is a non-integer string in an otherwise valid token. Wrap both calls in try/except → 401.
 
 ### 6. Per-user rate limiting is not actually per-user 🟠
 

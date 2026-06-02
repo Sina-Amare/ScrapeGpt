@@ -137,17 +137,21 @@ No TOCTOU race possible.
 ### Scraper (`scraper.py`)
 
 ```python
-async with httpx.AsyncClient(timeout=60.0) as client:
-    response = await client.get(url)
+async with httpx.AsyncClient(
+    timeout=settings.SCRAPE_TIMEOUT,
+    follow_redirects=True,
+) as client:
+    response = await client.get(url, headers={"User-Agent": settings.USER_AGENT})
 ```
 
-**Timeout:** 60 seconds, enforced by httpx.
+**Timeout:** Configurable via `SCRAPE_TIMEOUT` setting (default **30 seconds**), enforced by httpx.
 
 **Error handling:**
 
-- `TimeoutException` → `ScrapeError("timeout")`
-- `HTTPStatusError` → `ScrapeError("HTTP 404")`
-- Any exception → `ScrapeError("failed")`
+- `TimeoutException` → `ScrapeError("Scraping timeout after Xs")`
+- `HTTPStatusError` → `ScrapeError("HTTP {status_code}")`
+- `RequestError` → `ScrapeError("Network error: ...")`
+- Any other exception → `ScrapeError("Scraping failed: ...")`
 
 ### Watchdog (`watchdog.py`)
 

@@ -130,9 +130,11 @@ Returns either `AdmissionSuccess(task)` or an `AdmissionError` enum (`INSUFFICIE
 
 `execute_scrape_pipeline(task_id, user_id)` is the entry point invoked as a FastAPI `BackgroundTask`. It:
 
-1. Loads the task and verifies `task.user_id == user_id` (defence in depth — admission already validated, but the executor may run later).
+1. Loads the task by `task_id`. Returns early (with a log error) if the task no longer exists.
 2. Drives each transition with a wrapped try/except so any failure marks the task `FAILED` with a useful error message.
 3. Has an outer catch-all `try/except` so even unexpected errors (e.g. DB blip during a transition) still finalize the task — no task is left dangling.
+
+> **Note:** The ownership check (`task.user_id == user_id`) is performed inside `transition_to_llm_processing`, not at the top of the executor. If the IDs do not match, the task is immediately marked `FAILED` and the credit deduction is skipped.
 
 ### State transitions (`app/services/task_state.py`)
 

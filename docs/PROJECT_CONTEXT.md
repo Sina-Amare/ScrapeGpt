@@ -21,10 +21,11 @@ ScrapGPT is an AI-powered web scraping platform. The user pastes a URL, the syst
 For a new LLM session, read in this order:
 
 1. `docs/PROJECT_CONTEXT.md` — this context document.
-2. `docs/plan/ROADMAP.md` — the unified product/implementation roadmap.
-3. `docs/STATUS.md` — current known backend bugs and unfinished work.
-4. `docs/architecture.md` — current backend architecture and invariants.
-5. `CLAUDE.md` and `.agent/rules/*.md` — local project workflow rules.
+2. `docs/implementation.md` — full system reference: architecture, flows, invariants, bugs, dev guide.
+3. `docs/plan/ROADMAP.md` — the unified product/implementation roadmap.
+4. `docs/STATUS.md` — current known backend bugs and unfinished work.
+5. `docs/architecture.md` — current backend architecture and design decisions.
+6. `CLAUDE.md` and `.agent/rules/*.md` — local project workflow rules.
 
 Important doc caveat: older separate plan drafts were removed. `docs/plan/ROADMAP.md` is now the only active plan.
 
@@ -77,7 +78,7 @@ scrapegpt/
 │   │   └── scrape_task.py      # ScrapeTask + TaskState enum + transitions
 │   ├── schemas/
 │   │   ├── auth.py             # Auth request/response DTOs
-│   │   └── scrape.py           # Scrape DTOs
+│   │   └── scrape.py           # ⚠️ DEAD CODE — defines ScrapeRequest/ScrapeResponse/ScrapeError but nothing imports this file; scrape endpoint defines its own inline schemas
 │   └── services/
 │       ├── admission.py        # One-active-task + credit gating
 │       ├── task_state.py       # Atomic state transitions + credit deduction
