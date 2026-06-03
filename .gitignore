@@ -5,9 +5,25 @@
 .claude/
 .claude.json
 .claude.jsonl
+.cursor/
+.cline/
+.windsurf/
+.continue/
 .aider*
+.kilo/
+.codex/
+.antigravitycli/
+.gemini/
+.opencode/
 temp_test_freemodel.py
 CLAUDE.md
+claude.md
+AGENTS.md
+Agents.md
+agents.md
+RTK.md
+plan.md
+*_plan.md
 
 # ===========================
 # Python
@@ -189,6 +205,3 @@ uploads/
 celerybeat-schedule
 celerybeat.pid
 
-# Additional Files 
-AGENTS.md
-.agent/
