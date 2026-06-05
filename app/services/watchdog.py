@@ -50,7 +50,11 @@ async def cleanup_stuck_tasks() -> int:
         for task in stuck_pg:
             mins = settings.WATCHDOG_PERMISSION_GRANTED_TIMEOUT_MINUTES
             error_msg = f"Watchdog: Pipeline did not start within {mins}m"
-            res = await transition_to_failed(task.id, error_msg)
+            res = await transition_to_failed(
+                task.id,
+                error_msg,
+                expected_states={TaskState.PERMISSION_GRANTED},
+            )
             if res.success:
                 cleaned += 1
 
@@ -69,7 +73,11 @@ async def cleanup_stuck_tasks() -> int:
         for task in stuck_scraping:
             mins = settings.WATCHDOG_SCRAPING_TIMEOUT_MINUTES
             error_msg = f"Watchdog: Stuck in SCRAPING for >{mins}m"
-            res = await transition_to_failed(task.id, error_msg)
+            res = await transition_to_failed(
+                task.id,
+                error_msg,
+                expected_states={TaskState.SCRAPING},
+            )
             if res.success:
                 cleaned += 1
 
@@ -88,7 +96,11 @@ async def cleanup_stuck_tasks() -> int:
         for task in stuck_llm:
             mins = settings.WATCHDOG_LLM_TIMEOUT_MINUTES
             error_msg = f"Watchdog: Stuck in LLM_PROCESSING for >{mins}m"
-            res = await transition_to_failed(task.id, error_msg)
+            res = await transition_to_failed(
+                task.id,
+                error_msg,
+                expected_states={TaskState.LLM_PROCESSING},
+            )
             if res.success:
                 cleaned += 1
 

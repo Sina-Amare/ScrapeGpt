@@ -6,6 +6,7 @@ Handles state transitions with validation and atomicity.
 
 import logging
 from dataclasses import dataclass
+from collections.abc import Collection
 
 from sqlalchemy import text, select
 
@@ -143,17 +144,10 @@ async def transition_to_llm_processing(
                         "caller": user_id
                     },
                 )
-                # Capture original state before mutation
-                original_state = task.state.value
-                # Mark as FAILED (safe - we verified not terminal above)
-                task.state = TaskState.FAILED
-                task.error = f"Security: Task ownership mismatch (was {original_state})"
-                await db.flush()
-                await db.refresh(task)
                 return TransitionResult(
                     success=False,
                     task=task,
-                    error=f"Task ownership mismatch (original state: {original_state})",
+                    error="Task ownership mismatch",
                 )
 
             # Capture original state before any mutation
@@ -240,6 +234,7 @@ async def transition_to_completed(
 async def transition_to_failed(
     task_id: int,
     error_message: str,
+    expected_states: Collection[TaskState] | None = None,
 ) -> TransitionResult:
     """Transition task to FAILED with error reason."""
     async with async_session_factory() as db:
@@ -247,6 +242,21 @@ async def transition_to_failed(
             task = await db.get(ScrapeTask, task_id)
             if not task:
                 return TransitionResult(success=False, task=None, error="Task not found")
+
+            if expected_states is not None and task.state not in expected_states:
+                logger.info(
+                    "task.fail_skipped.state_changed",
+                    extra={
+                        "task_id": task_id,
+                        "current_state": task.state.value,
+                        "expected_states": [state.value for state in expected_states],
+                    },
+                )
+                return TransitionResult(
+                    success=False,
+                    task=task,
+                    error="Task state changed concurrently",
+                )
 
             if task.state in TERMINAL_STATES:
                 return TransitionResult(
