@@ -1,7 +1,7 @@
 # ===========================
 # Agent/AI Tool Configs
 # ===========================
-.agent/
+# Personal AI assistant workspaces (machine-local, not project-specific)
 .claude/
 .claude.json
 .claude.jsonl
@@ -16,11 +16,11 @@
 .gemini/
 .opencode/
 temp_test_freemodel.py
-CLAUDE.md
-claude.md
+# Generic boilerplate agent docs (not project-specific)
 AGENTS.md
 Agents.md
 agents.md
+# CLAUDE.md and .agent/rules/ are project-specific — tracked in git
 RTK.md
 plan.md
 *_plan.md
