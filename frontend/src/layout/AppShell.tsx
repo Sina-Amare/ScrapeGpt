@@ -19,8 +19,8 @@ import { useAuth } from "../lib/auth";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Activity, end: true },
-  { to: "/jobs", label: "Jobs", icon: List, end: true },
-  { to: "/jobs/new", label: "New Analysis", icon: BrainCog, end: false },
+  { to: "/projects", label: "Projects", icon: List, end: true },
+  { to: "/projects/new", label: "New Extraction", icon: BrainCog, end: false },
   { to: "/providers", label: "Providers", icon: Settings2, end: false },
   { to: "/scrape/new", label: "Legacy Scrape", icon: Plus, end: false, legacy: true },
   { to: "/health", label: "Health", icon: HeartPulse, end: false }
@@ -69,8 +69,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { displayEmail, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const health = useQuery({
-    queryKey: ["health-live"],
-    queryFn: () => api.getHealth("/health/live"),
+    queryKey: ["health-ready"],
+    queryFn: () => api.getHealth("/health/ready"),
     refetchInterval: isJsdom ? false : 15000,
     retry: 1
   });
@@ -132,10 +132,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 className={`h-2.5 w-2.5 rounded-full ${
                   health.isSuccess ? "bg-success" : "bg-warning"
                 }`}
-                aria-label={health.isSuccess ? "Backend online" : "Backend status unknown"}
+                aria-label={health.isSuccess ? "Backend ready" : "Backend not ready"}
               />
               <span className="text-sm font-semibold text-muted">
-                {health.isSuccess ? "Backend online" : "Checking backend"}
+                {health.isSuccess ? "Backend ready" : "Backend not ready"}
               </span>
             </div>
             <div className="flex min-w-0 items-center gap-3">

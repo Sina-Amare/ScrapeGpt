@@ -6,10 +6,10 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { LoginPage, RegisterPage } from "./pages/AuthPages";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HealthPage } from "./pages/HealthPage";
-import { JobDetailPage } from "./pages/JobDetailPage";
-import { JobsPage } from "./pages/JobsPage";
-import { NewJobPage } from "./pages/NewJobPage";
+import { NewProjectPage } from "./pages/NewProjectPage";
 import { NewScrapePage } from "./pages/NewScrapePage";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 
 const queryClient = new QueryClient({
@@ -27,9 +27,13 @@ function ProtectedShell() {
       <Routes>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="jobs" element={<JobsPage />} />
-        <Route path="jobs/new" element={<NewJobPage />} />
-        <Route path="jobs/:id" element={<JobDetailPage />} />
+        <Route path="projects" element={<ProjectsPage />} />
+        <Route path="projects/new" element={<NewProjectPage />} />
+        <Route path="projects/:id" element={<ProjectDetailPage />} />
+        <Route path="new" element={<Navigate to="/projects/new" replace />} />
+        <Route path="jobs" element={<Navigate to="/projects" replace />} />
+        <Route path="jobs/new" element={<Navigate to="/projects/new" replace />} />
+        <Route path="jobs/:id" element={<LegacyJobRedirect />} />
         <Route path="providers" element={<ProvidersPage />} />
         <Route path="scrape/new" element={<NewScrapePage />} />
         <Route path="health" element={<HealthPage />} />
@@ -37,6 +41,12 @@ function ProtectedShell() {
       </Routes>
     </AppShell>
   );
+}
+
+function LegacyJobRedirect() {
+  const path = window.location.pathname;
+  const id = path.split("/").filter(Boolean).at(-1);
+  return <Navigate to={id ? `/projects/${id}` : "/projects"} replace />;
 }
 
 function FallbackRedirect() {

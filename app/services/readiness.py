@@ -92,7 +92,52 @@ async def _run_probe(db: AsyncSession) -> None:
         text(
             """
             SELECT id, user_id, state, url, extraction_mode, workflow_mode
-            FROM jobs
+            FROM projects
+            LIMIT 0
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            SELECT id, project_id, mode, fields, content_config
+            FROM extraction_specs
+            LIMIT 0
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            SELECT id, project_id, spec_id, sample_records, quality_summary
+            FROM preview_results
+            LIMIT 0
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            SELECT id, project_id, state, normalized_url, lease_expires_at
+            FROM crawl_pages
+            LIMIT 0
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            SELECT id, project_id, source_url, raw_data
+            FROM extracted_records
+            LIMIT 0
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            SELECT id, project_id, format, record_count
+            FROM exports
             LIMIT 0
             """
         )

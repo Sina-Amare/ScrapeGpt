@@ -28,8 +28,8 @@ describe("DashboardPage", () => {
     globalThis.fetch = async (input, init) => {
       calls.push([input, init]);
       const path = String(input);
-      // Analysis jobs (primary section) — path includes query string e.g. /jobs?limit=20
-      if (path.includes("/jobs") && !path.includes("/cancel") && !init?.method) {
+      // Projects (primary section) — path includes query string e.g. /projects?limit=20
+      if (path.includes("/projects") && !path.includes("/cancel") && !init?.method) {
         return jsonResponse([]);
       }
       if (path.endsWith("/scrape/tasks/current")) {
@@ -87,8 +87,8 @@ describe("DashboardPage", () => {
     globalThis.fetch = async (input, init) => {
       calls.push([input, init]);
       const path = String(input);
-      // Analysis jobs (primary section) — path includes query string e.g. /jobs?limit=20
-      if (path.includes("/jobs") && !path.includes("/cancel") && !init?.method) {
+      // Projects (primary section) — path includes query string e.g. /projects?limit=20
+      if (path.includes("/projects") && !path.includes("/cancel") && !init?.method) {
         return jsonResponse([]);
       }
       if (path.endsWith("/scrape/tasks/current")) {

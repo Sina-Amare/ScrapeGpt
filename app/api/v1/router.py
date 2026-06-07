@@ -12,7 +12,7 @@ Usage:
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, health, jobs, providers, scrape
+from app.api.v1.endpoints import auth, health, jobs, projects, providers, scrape
 
 # Create the main v1 router
 api_v1_router = APIRouter()
@@ -22,6 +22,7 @@ api_v1_router.include_router(health.router)
 api_v1_router.include_router(auth.router)
 api_v1_router.include_router(providers.router)
 api_v1_router.include_router(scrape.router)
+api_v1_router.include_router(projects.router)
 api_v1_router.include_router(jobs.router)
 
 

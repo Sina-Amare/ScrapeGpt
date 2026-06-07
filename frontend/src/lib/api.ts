@@ -1,9 +1,15 @@
 import {
   AuthResponse,
   HealthResponse,
+  ExtractionSpecResponse,
+  FieldSpec,
   JobCreateInput,
   JobListItem,
   JobResponse,
+  ProjectAnalyzeInput,
+  ProjectListItem,
+  ProjectRecord,
+  ProjectResponse,
   ProviderConfig,
   ProviderCreateInput,
   ProviderKeyRevealInput,
@@ -291,5 +297,68 @@ export const api = {
 
   deleteJob(id: number): Promise<void> {
     return apiRequest<void>(`/jobs/${id}`, { method: "DELETE" });
+  },
+
+  // -------------------------------------------------------------------------
+  // Projects (primary workflow)
+  // -------------------------------------------------------------------------
+
+  analyzeProject(input: ProjectAnalyzeInput): Promise<ProjectResponse> {
+    return apiRequest<ProjectResponse>("/projects/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    });
+  },
+
+  listProjects(limit = 50): Promise<ProjectListItem[]> {
+    return apiRequest<ProjectListItem[]>(`/projects?limit=${limit}`);
+  },
+
+  getProject(id: number): Promise<ProjectResponse> {
+    return apiRequest<ProjectResponse>(`/projects/${id}`);
+  },
+
+  updateProjectSpec(
+    id: number,
+    input: {
+      fields?: FieldSpec[];
+      content_config?: Record<string, unknown>;
+      url_patterns?: Record<string, unknown>[];
+      page_limit?: number;
+      export_format?: string;
+    }
+  ): Promise<ExtractionSpecResponse> {
+    return apiRequest<ExtractionSpecResponse>(`/projects/${id}/spec`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    });
+  },
+
+  previewProject(id: number): Promise<ProjectResponse["preview"]> {
+    return apiRequest<ProjectResponse["preview"]>(`/projects/${id}/preview`, {
+      method: "POST"
+    });
+  },
+
+  extractProject(id: number, extractAnyway = false): Promise<ProjectResponse> {
+    return apiRequest<ProjectResponse>(`/projects/${id}/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ extract_anyway: extractAnyway })
+    });
+  },
+
+  listProjectRecords(id: number, limit = 100): Promise<ProjectRecord[]> {
+    return apiRequest<ProjectRecord[]>(`/projects/${id}/records?limit=${limit}`);
+  },
+
+  cancelProject(id: number): Promise<ProjectResponse> {
+    return apiRequest<ProjectResponse>(`/projects/${id}/cancel`, { method: "POST" });
+  },
+
+  deleteProject(id: number): Promise<void> {
+    return apiRequest<void>(`/projects/${id}`, { method: "DELETE" });
   }
 };

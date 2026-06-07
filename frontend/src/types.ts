@@ -171,3 +171,116 @@ export type JobResponse = {
   created_at: string;
   updated_at: string | null;
 };
+
+// ---------------------------------------------------------------------------
+// Projects (Project → Analyze → Fields → Preview → Extract → Results)
+// ---------------------------------------------------------------------------
+
+export type ProjectState =
+  | "QUEUED"
+  | "ANALYZING"
+  | "AWAITING_SETUP"
+  | "ANALYSIS_READY"
+  | "PREVIEWING"
+  | "PREVIEW_READY"
+  | "DISCOVERING"
+  | "EXTRACTING"
+  | "EXPORTING"
+  | "COMPLETED"
+  | "PAUSED"
+  | "FAILED"
+  | "CANCELED"
+  | string;
+
+export type ProjectAnalyzeInput = {
+  url: string;
+  advanced?: {
+    extraction_mode?: ExtractionMode;
+    workflow_mode?: WorkflowMode;
+    render_mode?: RenderMode;
+    provider_config_id?: number | null;
+  };
+};
+
+export type FieldSpec = {
+  name: string | null;
+  label: string | null;
+  user_label: string | null;
+  selector: string | null;
+  type: string;
+  selected: boolean;
+  required: boolean;
+  confidence: number | null;
+  sample_values: string[];
+  warnings: string[];
+};
+
+export type ExtractionSpecResponse = {
+  id: number;
+  project_id: number;
+  mode: ExtractionMode;
+  fields: FieldSpec[];
+  content_config: Record<string, unknown>;
+  url_patterns: Record<string, unknown>[];
+  page_limit: number;
+  export_format: "csv" | "json" | string;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type PreviewResponse = {
+  id: number;
+  project_id: number;
+  spec_id: number;
+  sample_records: Record<string, unknown>[];
+  warnings: unknown[];
+  missing_fields: unknown[];
+  quality_summary: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ExtractionProgress = {
+  crawl_pages_total: number;
+  extracted_records_total: number;
+  exports_total: number;
+};
+
+export type ProjectListItem = {
+  id: number;
+  url: string;
+  system_state: ProjectState;
+  product_status: string;
+  product_status_label: string;
+  product_status_tone: string;
+  detected_type: string | null;
+  confidence: number | null;
+  confidence_label: string;
+  selected_field_count: number;
+  extraction_mode: ExtractionMode;
+  last_activity: string | null;
+  error: string | null;
+  error_code: string | null;
+};
+
+export type ProjectResponse = ProjectListItem & {
+  workflow_mode: WorkflowMode;
+  render_mode: RenderMode;
+  provider_config_id: number | null;
+  warnings: string[];
+  analysis: StructuredAnalysis | ContentAnalysis | Record<string, unknown> | null;
+  fetch_metadata: Record<string, unknown> | null;
+  spec: ExtractionSpecResponse | null;
+  preview: PreviewResponse | null;
+  progress: ExtractionProgress;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type ProjectRecord = {
+  id: number;
+  source_url: string;
+  raw_data: Record<string, unknown>;
+  normalized_data: Record<string, unknown> | null;
+  warnings: unknown[];
+  created_at: string;
+};

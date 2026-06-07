@@ -2,7 +2,7 @@
 
 > **Last updated:** Round 2 review incorporated. See `docs/reviews/` history in git if you need the reasoning behind specific decisions.
 >
-> **Implementation status as of June 7, 2026:** Phase 0, Phase 0.5, frontend v0, and Phase 1 analysis jobs are implemented. This document remains the forward-looking roadmap for the remaining extraction setup/review, crawl execution, export, visual interaction, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
+> **Implementation status as of June 7, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, and the Project → Analyze → Field Selection → Preview → Extract → Results foundation are implemented. `/jobs` remains as a temporary compatibility API over project rows. This document remains the forward-looking roadmap for full multi-page crawl execution, visual interaction, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
 
 ## Context
 
@@ -195,7 +195,46 @@ provider_configs:
 
 Normal provider responses **never include API keys** — not even masked — and key material is **never logged**. A user may explicitly reveal their own stored key only through a password-confirmed reveal endpoint; the frontend must keep the revealed value in local component state only, never localStorage, query cache, URLs, or logs. Log only `provider_config_id`, provider name, and operation status. The `capability_flags` field stores the provider capability test result (whether structured output, JSON mode, etc. are supported).
 
-### Scrape Tasks / Jobs (modified)
+### Projects (implemented foundation)
+
+`projects` is now the durable user-facing extraction object. The previous Phase 1 `jobs` table is migrated to `projects`; `/jobs` is kept as a temporary compatibility API.
+
+Current project flow:
+
+```
+QUEUED
+  ↓
+ANALYZING
+  ↓
+AWAITING_SETUP | ANALYSIS_READY
+  ↓
+PREVIEWING
+  ↓
+PREVIEW_READY
+  ↓
+DISCOVERING
+  ↓
+EXTRACTING
+  ↓
+EXPORTING
+  ↓
+COMPLETED
+
+FAILED | CANCELED are terminal from active paths.
+PAUSED is reserved for later crawler recovery/resume.
+```
+
+Current foundation tables:
+
+- `extraction_specs`: user-selected fields/content settings, separate from raw AI analysis.
+- `preview_results`: latest persisted sample preview for refresh/navigation safety.
+- `crawl_pages`: project-scoped page rows with state/lease/retry fields for future full crawler execution.
+- `extracted_records`: `raw_data` plus optional `normalized_data`, source URL, warnings.
+- `exports`: generated export metadata.
+
+Important current limitation: extraction is a seed/sample path based on the analyzed page and saved spec. The table design is ready for page-level crawler execution, but full BFS crawl execution is still future work.
+
+### Scrape Tasks / Legacy Jobs (modified)
 
 Remove: `content` (moved to seed CrawlPage), credit-related fields
 Add: `analysis JSONB`, `render_mode`, `final_url`, `provider_config_id` (FK), `pages_total`, `pages_extracted`, `records_total`, `access_basis`, **`extraction_mode` (STRUCTURED | CONTENT)**

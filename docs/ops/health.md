@@ -71,7 +71,12 @@ within `READINESS_TIMEOUT_SECONDS` regardless of DB latency.
    - `users`
    - `scrape_tasks`
    - `provider_configs`
-   - `jobs`
+   - `projects`
+   - `extraction_specs`
+   - `preview_results`
+   - `crawl_pages`
+   - `extracted_records`
+   - `exports`
    - `analysis_cache`
 
 ---
@@ -86,7 +91,7 @@ within `READINESS_TIMEOUT_SECONDS` regardless of DB latency.
 2. **`schema_incompatible`**
    - Run pending migrations: `alembic upgrade head`.
    - Confirm the `alembic_version` table exists and has a row.
-   - Verify required tables (`users`, `scrape_tasks`, `provider_configs`, `jobs`, `analysis_cache`) and their columns.
+   - Verify required tables (`users`, `scrape_tasks`, `provider_configs`, `projects`, `extraction_specs`, `preview_results`, `crawl_pages`, `extracted_records`, `exports`, `analysis_cache`) and their columns.
 
 3. **`query_failed`**
    - Check DB user permissions (`SELECT` on all required tables).

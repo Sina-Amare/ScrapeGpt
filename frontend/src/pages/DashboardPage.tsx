@@ -21,9 +21,8 @@ import { TaskResultPanel } from "../components/ui/TaskResultPanel";
 import { ConfirmDeleteTaskDialog } from "../components/ui/ConfirmDeleteTaskDialog";
 import { TaskDetailDialog } from "../components/ui/TaskDetailDialog";
 import { ApiError, api } from "../lib/api";
-import { jobStateTone, jobStateLabel, shouldPollJob } from "../lib/jobPolling";
+import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject, TERMINAL_PROJECT_STATES } from "../lib/projectPolling";
 import { shouldPollTask, stateTone } from "../lib/taskPolling";
-import { JobListItem } from "../types";
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -40,20 +39,20 @@ function truncateUrl(url: string, max = 52): string {
 }
 
 // ---------------------------------------------------------------------------
-// Analysis Jobs section (primary)
+// Projects section (primary)
 // ---------------------------------------------------------------------------
 
-function AnalysisJobsSection() {
+function ProjectsSection() {
   const queryClient = useQueryClient();
 
-  const jobsQuery = useQuery({
-    queryKey: ["jobs"],
-    queryFn: () => api.listJobs(20),
+  const projectsQuery = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => api.listProjects(20),
     refetchInterval: (query) => {
-      const jobs = query.state.data;
-      if (!jobs) return 3000;
-      const hasActive = jobs.some((j) =>
-        shouldPollJob(j as JobListItem, 0)
+      const projects = query.state.data;
+      if (!projects) return 3000;
+      const hasActive = projects.some((project) =>
+        shouldPollProject(project, 0)
       );
       return hasActive ? 2000 : false;
     },
@@ -61,119 +60,121 @@ function AnalysisJobsSection() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: api.deleteJob,
+    mutationFn: api.deleteProject,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
     onError: (err) => {
-      alert(err instanceof Error ? err.message : "Failed to delete job");
+      alert(err instanceof Error ? err.message : "Failed to delete project");
     },
   });
 
-  const jobs = jobsQuery.data ?? [];
-  const activeCount = jobs.filter((j) =>
-    ["QUEUED", "ANALYZING"].includes(j.state)
+  const projects = projectsQuery.data ?? [];
+  const activeCount = projects.filter((project) =>
+    ACTIVE_PROJECT_STATES.has(project.system_state)
   ).length;
-  const readyCount = jobs.filter((j) => j.state === "ANALYSIS_READY").length;
+  const readyCount = projects.filter((project) =>
+    ["AWAITING_SETUP", "ANALYSIS_READY", "PREVIEW_READY"].includes(project.system_state)
+  ).length;
 
   return (
     <div className="grid gap-6">
       {/* Stat tiles */}
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile
-          label="Active jobs"
-          value={jobsQuery.isLoading ? "…" : String(activeCount)}
+          label="Active projects"
+          value={projectsQuery.isLoading ? "…" : String(activeCount)}
           icon={<BrainCog className="h-5 w-5" />}
         />
         <StatTile
-          label="Analysis ready"
-          value={jobsQuery.isLoading ? "…" : String(readyCount)}
+          label="Ready to review"
+          value={projectsQuery.isLoading ? "…" : String(readyCount)}
         />
         <StatTile
-          label="Total jobs"
-          value={jobsQuery.isLoading ? "…" : String(jobs.length)}
+          label="Total projects"
+          value={projectsQuery.isLoading ? "…" : String(projects.length)}
         />
       </div>
 
-      {/* Jobs list */}
+      {/* Projects list */}
       <section className="rounded-xl border border-line bg-surface shadow-panel">
         <div className="flex items-center justify-between border-b border-line px-6 py-4">
           <h2 className="text-xs font-bold uppercase tracking-widest text-muted">
-            Recent analysis jobs
+            Recent projects
           </h2>
           <Button
             variant="secondary"
-            onClick={() => void jobsQuery.refetch()}
+            onClick={() => void projectsQuery.refetch()}
           >
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
         </div>
 
-        {jobsQuery.isLoading ? (
+        {projectsQuery.isLoading ? (
           <div className="grid gap-3 p-6">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
           </div>
-        ) : jobsQuery.error ? (
+        ) : projectsQuery.error ? (
           <div className="p-6">
-            <Alert tone="danger">Could not load jobs.</Alert>
+            <Alert tone="danger">Could not load projects.</Alert>
           </div>
-        ) : jobs.length === 0 ? (
+        ) : projects.length === 0 ? (
           <div className="grid gap-4 py-14 text-center">
             <p className="text-sm text-muted">
-              No analysis jobs yet.
+              No extraction projects yet.
             </p>
             <div className="flex justify-center">
-              <Link to="/jobs/new">
+              <Link to="/projects/new">
                 <Button>
                   <BrainCog className="h-4 w-4" />
-                  Run first analysis
+                  Start first extraction
                 </Button>
               </Link>
             </div>
           </div>
         ) : (
-          <Table headings={["#", "URL", "Mode", "State", "Date", ""]}>
-            {jobs.map((j) => (
+          <Table headings={["#", "URL", "Type", "Status", "Date", ""]}>
+            {projects.map((project) => (
               <tr
-                key={j.id}
+                key={project.id}
                 className="transition-colors hover:bg-teal-soft/40"
               >
                 <td className="px-4 py-3 font-mono text-sm font-semibold text-ink">
-                  {j.id}
+                  {project.id}
                 </td>
                 <td className="max-w-xs px-4 py-3">
                   <span
                     className="block truncate text-sm text-muted"
-                    title={j.url}
+                    title={project.url}
                   >
-                    {truncateUrl(j.url)}
+                    {truncateUrl(project.url)}
                   </span>
-                  {j.error ? (
+                  {project.error ? (
                     <span
                       className="mt-0.5 block truncate text-xs text-red-500"
-                      title={j.error}
+                      title={project.error}
                     >
-                      {j.error}
+                      {project.error}
                     </span>
                   ) : null}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3">
-                  <Badge tone="neutral">{j.extraction_mode}</Badge>
+                  <Badge tone="neutral">{project.detected_type ?? project.extraction_mode}</Badge>
                 </td>
                 <td className="px-4 py-3">
-                  <Badge tone={jobStateTone(j.state)}>
-                    {jobStateLabel(j.state)}
+                  <Badge tone={projectTone(project)}>
+                    {project.product_status_label}
                   </Badge>
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-sm text-muted">
-                  {formatDate(j.created_at)}
+                  {formatDate(project.last_activity)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3">
                   <div className="flex gap-2">
-                    <Link to={`/jobs/${j.id}`}>
+                    <Link to={`/projects/${project.id}`}>
                       <button
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-muted hover:border-teal hover:bg-teal-soft hover:text-teal transition focus:outline-none focus-visible:ring-2 focus-visible:ring-teal focus-visible:ring-offset-2"
                         title="View detail"
@@ -182,12 +183,12 @@ function AnalysisJobsSection() {
                       </button>
                     </Link>
                     <button
-                      onClick={() => deleteMutation.mutate(j.id)}
+                      onClick={() => deleteMutation.mutate(project.id)}
                       disabled={
-                        !["AWAITING_SETUP", "ANALYSIS_READY", "FAILED", "CANCELED"].includes(j.state)
+                        !TERMINAL_PROJECT_STATES.has(project.system_state)
                       }
                       className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-red-500/70 hover:border-danger hover:bg-red-50 hover:text-danger transition focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-surface disabled:hover:text-red-500/50"
-                      title="Delete job"
+                      title="Delete project"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -450,16 +451,16 @@ export function DashboardPage() {
 
   return (
     <>
-      <PageHeader title="Dashboard" eyebrow="Analysis overview">
-        <Link to="/jobs/new">
+      <PageHeader title="Dashboard" eyebrow="Extraction overview">
+        <Link to="/projects/new">
           <Button>
             <BrainCog className="h-4 w-4" />
-            New analysis
+            New extraction
           </Button>
         </Link>
       </PageHeader>
 
-      <AnalysisJobsSection />
+      <ProjectsSection />
 
       {/* Legacy scrape — collapsible */}
       <div className="mt-10">
