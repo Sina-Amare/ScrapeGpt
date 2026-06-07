@@ -8,12 +8,13 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.database import async_session_factory
 from app.models.scrape_task import ScrapeTask, TaskState
+from app.models.job import Job, JobState
 from app.services.task_state import transition_to_failed
+from app.services.job_state import transition_job_to_failed
 
 
 logger = logging.getLogger(__name__)
@@ -110,11 +111,67 @@ async def cleanup_stuck_tasks() -> int:
     return cleaned
 
 
+async def cleanup_stuck_jobs() -> int:
+    """
+    Find and fail analysis jobs stuck in QUEUED or ANALYZING.
+
+    Uses expected_states guard so concurrent state advances are not overwritten.
+    Returns number of jobs cleaned up.
+    """
+    now = datetime.now(timezone.utc)
+    cleaned = 0
+
+    async with async_session_factory() as db:
+        queued_cutoff = now - timedelta(
+            minutes=settings.WATCHDOG_JOB_QUEUED_TIMEOUT_MINUTES
+        )
+        result = await db.execute(
+            select(Job).where(
+                Job.state == JobState.QUEUED,
+                func.coalesce(Job.updated_at, Job.created_at) < queued_cutoff,
+            )
+        )
+        for job in result.scalars().all():
+            mins = settings.WATCHDOG_JOB_QUEUED_TIMEOUT_MINUTES
+            res = await transition_job_to_failed(
+                job.id,
+                f"Watchdog: Job did not start within {mins}m",
+                "ANALYSIS_FAILED",
+                expected_states={JobState.QUEUED},
+            )
+            if res.success:
+                cleaned += 1
+
+        analyzing_cutoff = now - timedelta(
+            minutes=settings.WATCHDOG_JOB_ANALYZING_TIMEOUT_MINUTES
+        )
+        result = await db.execute(
+            select(Job).where(
+                Job.state == JobState.ANALYZING,
+                func.coalesce(Job.updated_at, Job.created_at) < analyzing_cutoff,
+            )
+        )
+        for job in result.scalars().all():
+            mins = settings.WATCHDOG_JOB_ANALYZING_TIMEOUT_MINUTES
+            res = await transition_job_to_failed(
+                job.id,
+                f"Watchdog: Stuck in ANALYZING for >{mins}m",
+                "ANALYSIS_FAILED",
+                expected_states={JobState.ANALYZING},
+            )
+            if res.success:
+                cleaned += 1
+
+    return cleaned
+
+
 async def run_watchdog_once() -> None:
     """Run watchdog cleanup once. Called by background scheduler."""
     try:
-        cleaned = await cleanup_stuck_tasks()
-        if cleaned > 0:
-            logger.info("watchdog.run_complete", extra={"cleaned": cleaned})
+        task_cleaned = await cleanup_stuck_tasks()
+        job_cleaned = await cleanup_stuck_jobs()
+        total = task_cleaned + job_cleaned
+        if total > 0:
+            logger.info("watchdog.run_complete", extra={"cleaned": total})
     except Exception as e:
         logger.exception("watchdog.error", extra={"error": str(e)})

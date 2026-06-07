@@ -41,8 +41,10 @@ async def test_check_db_ready_healthy_returns_ok():
 
     assert result.ready is True
     assert result.code == "ok"
-    assert session.calls == 5
+    assert session.calls == 7  # SELECT 1 + 5 table probes + 1 new (jobs + analysis_cache)
     assert any("provider_configs" in statement for statement in session.statements)
+    assert any("jobs" in statement for statement in session.statements)
+    assert any("analysis_cache" in statement for statement in session.statements)
     assert not any("system_state" in statement for statement in session.statements)
 
 

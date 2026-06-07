@@ -121,6 +121,39 @@ class Settings(BaseSettings):
         default=3, ge=1, le=10,
         description="Timeout for tasks stuck in PERMISSION_GRANTED"
     )
+    WATCHDOG_JOB_QUEUED_TIMEOUT_MINUTES: int = Field(
+        default=3, ge=1, le=10,
+        description="Timeout for jobs stuck in QUEUED"
+    )
+    WATCHDOG_JOB_ANALYZING_TIMEOUT_MINUTES: int = Field(
+        default=5, ge=1, le=30,
+        description="Timeout for jobs stuck in ANALYZING"
+    )
+
+    # -------------------------------------------------------------------------
+    # Job / Analysis Settings
+    # -------------------------------------------------------------------------
+    ALLOW_PRIVATE_NETWORK_URLS: bool = Field(
+        default=False,
+        description="Allow fetching private/localhost URLs (tests and dev only)"
+    )
+    ROBOTS_FAILURE_POLICY: str = Field(
+        default="deny",
+        pattern="^(deny|allow)$",
+        description="What to do when robots.txt cannot be fetched: deny or allow"
+    )
+    MAX_FETCH_BYTES: int = Field(
+        default=2 * 1024 * 1024,
+        ge=1024,
+        description="Maximum response body size for URL fetching"
+    )
+    MAX_REDIRECTS: int = Field(default=5, ge=0, le=20)
+    ANALYSIS_CONFIDENCE_FAST_THRESHOLD: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence for FAST workflow to land in ANALYSIS_READY vs AWAITING_SETUP"
+    )
 
     # -------------------------------------------------------------------------
     # Rate Limiting Settings

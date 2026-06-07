@@ -88,6 +88,24 @@ async def _run_probe(db: AsyncSession) -> None:
             """
         )
     )
+    await db.execute(
+        text(
+            """
+            SELECT id, user_id, state, url, extraction_mode, workflow_mode
+            FROM jobs
+            LIMIT 0
+            """
+        )
+    )
+    await db.execute(
+        text(
+            """
+            SELECT id, content_hash, extraction_mode, provider, model, analyzer_version
+            FROM analysis_cache
+            LIMIT 0
+            """
+        )
+    )
 
 
 def _failure(code: ReadinessCode, exc: Exception | None = None) -> DBReadinessResult:
