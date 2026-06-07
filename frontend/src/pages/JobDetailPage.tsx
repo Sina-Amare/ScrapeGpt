@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, RefreshCw, XCircle } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, RefreshCw, XCircle } from "lucide-react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
@@ -19,7 +20,6 @@ import {
   StructuredAnalysis,
   StructuredCandidateField,
 } from "../types";
-import { useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Analysis display components
@@ -28,22 +28,29 @@ import { useState } from "react";
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const color =
-    pct >= 80
-      ? "bg-success"
-      : pct >= 60
-      ? "bg-warning"
-      : "bg-danger";
+    pct >= 80 ? "bg-success" : pct >= 60 ? "bg-warning" : "bg-danger";
   return (
     <div className="flex items-center gap-3">
       <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+        <div
+          className={`h-full rounded-full ${color}`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
-      <span className="w-10 text-right text-sm font-bold text-ink">{pct}%</span>
+      <span className="w-10 text-right text-sm font-bold text-ink">
+        {pct}%
+      </span>
     </div>
   );
 }
 
-function StructuredResult({ data }: { data: StructuredAnalysis }) {
+function StructuredResult({
+  data,
+  showAdvanced,
+}: {
+  data: StructuredAnalysis;
+  showAdvanced: boolean;
+}) {
   return (
     <div className="grid gap-6">
       {/* Summary row */}
@@ -52,7 +59,7 @@ function StructuredResult({ data }: { data: StructuredAnalysis }) {
           <p className="text-xs font-bold uppercase tracking-widest text-muted">
             Page type
           </p>
-          <p className="mt-1 text-lg font-bold text-ink capitalize">
+          <p className="mt-1 text-lg font-bold capitalize text-ink">
             {data.page_type}
           </p>
         </div>
@@ -74,30 +81,7 @@ function StructuredResult({ data }: { data: StructuredAnalysis }) {
         </div>
       </div>
 
-      {/* Selectors */}
-      {data.repeated_item_selector ? (
-        <div>
-          <p className="mb-1 text-xs font-bold uppercase tracking-widest text-muted">
-            Repeated item selector
-          </p>
-          <code className="block rounded-md border border-line bg-porcelain px-3 py-2 font-mono text-sm text-ink">
-            {data.repeated_item_selector}
-          </code>
-        </div>
-      ) : null}
-
-      {data.pagination_selector ? (
-        <div>
-          <p className="mb-1 text-xs font-bold uppercase tracking-widest text-muted">
-            Pagination selector
-          </p>
-          <code className="block rounded-md border border-line bg-porcelain px-3 py-2 font-mono text-sm text-ink">
-            {data.pagination_selector}
-          </code>
-        </div>
-      ) : null}
-
-      {/* Candidate fields table */}
+      {/* Candidate fields */}
       {data.candidate_fields.length > 0 ? (
         <div>
           <p className="mb-3 text-xs font-bold uppercase tracking-widest text-muted">
@@ -108,45 +92,54 @@ function StructuredResult({ data }: { data: StructuredAnalysis }) {
               <thead>
                 <tr className="border-b border-line bg-porcelain text-left text-xs font-bold uppercase tracking-widest text-muted">
                   <th className="px-4 py-2.5">Field</th>
-                  <th className="px-4 py-2.5">Selector</th>
+                  {showAdvanced ? (
+                    <th className="px-4 py-2.5">Selector</th>
+                  ) : null}
                   <th className="px-4 py-2.5">Type</th>
                   <th className="px-4 py-2.5">Confidence</th>
                   <th className="px-4 py-2.5">Samples</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line bg-surface">
-                {data.candidate_fields.map((field: StructuredCandidateField) => (
-                  <tr key={field.name} className="hover:bg-teal-soft/30 transition-colors">
+                {data.candidate_fields.map((f: StructuredCandidateField) => (
+                  <tr
+                    key={f.name}
+                    className="transition-colors hover:bg-teal-soft/30"
+                  >
                     <td className="px-4 py-3">
-                      <span className="font-semibold text-ink">{field.label}</span>
+                      <span className="font-semibold text-ink">{f.label}</span>
                       <span className="ml-1.5 font-mono text-xs text-muted">
-                        ({field.name})
+                        ({f.name})
                       </span>
-                      {field.required ? (
-                        <span className="ml-1.5 text-xs font-bold text-teal">required</span>
+                      {f.required ? (
+                        <span className="ml-1.5 text-xs font-bold text-teal">
+                          required
+                        </span>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3">
-                      <code className="rounded bg-porcelain px-1.5 py-0.5 font-mono text-xs text-ink">
-                        {field.selector}
-                      </code>
-                    </td>
-                    <td className="px-4 py-3 text-muted">{field.data_type}</td>
+                    {showAdvanced ? (
+                      <td className="px-4 py-3">
+                        <code className="rounded bg-porcelain px-1.5 py-0.5 font-mono text-xs text-ink">
+                          {f.selector}
+                        </code>
+                      </td>
+                    ) : null}
+                    <td className="px-4 py-3 text-muted">{f.data_type}</td>
                     <td className="px-4 py-3">
                       <span
                         className={
-                          field.confidence >= 0.8
+                          f.confidence >= 0.8
                             ? "font-bold text-success"
-                            : field.confidence >= 0.6
+                            : f.confidence >= 0.6
                             ? "font-bold text-warning"
                             : "font-bold text-danger"
                         }
                       >
-                        {(field.confidence * 100).toFixed(0)}%
+                        {(f.confidence * 100).toFixed(0)}%
                       </span>
                     </td>
                     <td className="px-4 py-3 text-muted">
-                      {field.sample_values.slice(0, 2).join(", ") || "—"}
+                      {f.sample_values.slice(0, 2).join(", ") || "—"}
                     </td>
                   </tr>
                 ))}
@@ -156,9 +149,36 @@ function StructuredResult({ data }: { data: StructuredAnalysis }) {
         </div>
       ) : null}
 
+      {/* Advanced: CSS selectors */}
+      {showAdvanced ? (
+        <div className="grid gap-4">
+          {data.repeated_item_selector ? (
+            <div>
+              <p className="mb-1 text-xs font-bold uppercase tracking-widest text-muted">
+                Repeated item selector
+              </p>
+              <code className="block rounded-md border border-line bg-porcelain px-3 py-2 font-mono text-sm text-ink">
+                {data.repeated_item_selector}
+              </code>
+            </div>
+          ) : null}
+
+          {data.pagination_selector ? (
+            <div>
+              <p className="mb-1 text-xs font-bold uppercase tracking-widest text-muted">
+                Pagination selector
+              </p>
+              <code className="block rounded-md border border-line bg-porcelain px-3 py-2 font-mono text-sm text-ink">
+                {data.pagination_selector}
+              </code>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {data.warnings.length > 0 ? (
         <Alert tone="info">
-          <ul className="list-disc pl-3 space-y-1">
+          <ul className="list-disc space-y-1 pl-3">
             {data.warnings.map((w, i) => (
               <li key={i}>{w}</li>
             ))}
@@ -169,7 +189,13 @@ function StructuredResult({ data }: { data: StructuredAnalysis }) {
   );
 }
 
-function ContentResult({ data }: { data: ContentAnalysis }) {
+function ContentResult({
+  data,
+  showAdvanced,
+}: {
+  data: ContentAnalysis;
+  showAdvanced: boolean;
+}) {
   return (
     <div className="grid gap-6">
       <div className="grid gap-4 sm:grid-cols-3">
@@ -177,7 +203,7 @@ function ContentResult({ data }: { data: ContentAnalysis }) {
           <p className="text-xs font-bold uppercase tracking-widest text-muted">
             Content type
           </p>
-          <p className="mt-1 text-lg font-bold text-ink capitalize">
+          <p className="mt-1 text-lg font-bold capitalize text-ink">
             {data.content_type}
           </p>
         </div>
@@ -199,14 +225,17 @@ function ContentResult({ data }: { data: ContentAnalysis }) {
         </div>
       </div>
 
-      <div>
-        <p className="mb-1 text-xs font-bold uppercase tracking-widest text-muted">
-          Primary content selector
-        </p>
-        <code className="block rounded-md border border-line bg-porcelain px-3 py-2 font-mono text-sm text-ink">
-          {data.primary_content_selector}
-        </code>
-      </div>
+      {/* Advanced: primary content selector */}
+      {showAdvanced ? (
+        <div>
+          <p className="mb-1 text-xs font-bold uppercase tracking-widest text-muted">
+            Primary content selector
+          </p>
+          <code className="block rounded-md border border-line bg-porcelain px-3 py-2 font-mono text-sm text-ink">
+            {data.primary_content_selector}
+          </code>
+        </div>
+      ) : null}
 
       {data.recommended_chunking ? (
         <div>
@@ -238,22 +267,29 @@ function ContentResult({ data }: { data: ContentAnalysis }) {
               <thead>
                 <tr className="border-b border-line bg-porcelain text-left text-xs font-bold uppercase tracking-widest text-muted">
                   <th className="px-4 py-2.5">Field</th>
-                  <th className="px-4 py-2.5">Selector</th>
+                  {showAdvanced ? (
+                    <th className="px-4 py-2.5">Selector</th>
+                  ) : null}
                   <th className="px-4 py-2.5">Confidence</th>
                   <th className="px-4 py-2.5">Samples</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line bg-surface">
                 {data.metadata_fields.map((f) => (
-                  <tr key={f.name} className="hover:bg-teal-soft/30 transition-colors">
+                  <tr
+                    key={f.name}
+                    className="transition-colors hover:bg-teal-soft/30"
+                  >
                     <td className="px-4 py-3">
                       <span className="font-semibold text-ink">{f.label}</span>
                     </td>
-                    <td className="px-4 py-3">
-                      <code className="rounded bg-porcelain px-1.5 py-0.5 font-mono text-xs text-ink">
-                        {f.selector}
-                      </code>
-                    </td>
+                    {showAdvanced ? (
+                      <td className="px-4 py-3">
+                        <code className="rounded bg-porcelain px-1.5 py-0.5 font-mono text-xs text-ink">
+                          {f.selector}
+                        </code>
+                      </td>
+                    ) : null}
                     <td className="px-4 py-3">
                       <span
                         className={
@@ -280,7 +316,7 @@ function ContentResult({ data }: { data: ContentAnalysis }) {
 
       {data.warnings.length > 0 ? (
         <Alert tone="info">
-          <ul className="list-disc pl-3 space-y-1">
+          <ul className="list-disc space-y-1 pl-3">
             {data.warnings.map((w, i) => (
               <li key={i}>{w}</li>
             ))}
@@ -291,20 +327,37 @@ function ContentResult({ data }: { data: ContentAnalysis }) {
   );
 }
 
-function AnalysisResult({ job }: { job: JobResponse }) {
+function AnalysisResult({
+  job,
+  showAdvanced,
+}: {
+  job: JobResponse;
+  showAdvanced: boolean;
+}) {
   if (!job.analysis) return null;
 
   const isStructured = job.extraction_mode === "STRUCTURED";
   const isContent = job.extraction_mode === "CONTENT";
 
   if (isStructured && "candidate_fields" in job.analysis) {
-    return <StructuredResult data={job.analysis as StructuredAnalysis} />;
+    return (
+      <StructuredResult
+        data={job.analysis as StructuredAnalysis}
+        showAdvanced={showAdvanced}
+      />
+    );
   }
   if (isContent && "primary_content_selector" in job.analysis) {
-    return <ContentResult data={job.analysis as ContentAnalysis} />;
+    return (
+      <ContentResult
+        data={job.analysis as ContentAnalysis}
+        showAdvanced={showAdvanced}
+      />
+    );
   }
 
-  // Fallback: raw JSON view
+  // Fallback: raw JSON — only shown in Advanced mode
+  if (!showAdvanced) return null;
   return (
     <pre className="overflow-x-auto rounded-xl border border-line bg-porcelain p-4 text-xs text-ink">
       {JSON.stringify(job.analysis, null, 2)}
@@ -321,6 +374,7 @@ export function JobDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [failureCount, setFailureCount] = useState(0);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const jobId = Number(id);
 
@@ -403,15 +457,15 @@ export function JobDetailPage() {
           <section className="rounded-xl border border-line bg-surface p-6 shadow-panel">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div className="min-w-0">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-xl font-bold text-ink">
-                    {job.url.length > 70
-                      ? job.url.slice(0, 70) + "…"
-                      : job.url}
-                  </h2>
-                </div>
+                <h2 className="text-xl font-bold text-ink">
+                  {job.url.length > 70
+                    ? job.url.slice(0, 70) + "…"
+                    : job.url}
+                </h2>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <Badge tone={jobStateTone(job.state)}>{jobStateLabel(job.state)}</Badge>
+                  <Badge tone={jobStateTone(job.state)}>
+                    {jobStateLabel(job.state)}
+                  </Badge>
                   <Badge tone="neutral">{job.extraction_mode}</Badge>
                   <Badge tone="neutral">{job.workflow_mode}</Badge>
                   <Badge tone="neutral">{job.render_mode}</Badge>
@@ -445,12 +499,12 @@ export function JobDetailPage() {
               </div>
             ) : null}
 
-            {job.warnings.length > 0 ? (
+            {(job.warnings ?? []).length > 0 ? (
               <div className="mt-4">
                 <Alert tone="info">
                   <p className="mb-1 font-semibold">Warnings:</p>
-                  <ul className="list-disc pl-4 space-y-0.5">
-                    {job.warnings.map((w, i) => (
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {(job.warnings ?? []).map((w, i) => (
                       <li key={i}>{w}</li>
                     ))}
                   </ul>
@@ -458,7 +512,6 @@ export function JobDetailPage() {
               </div>
             ) : null}
 
-            {/* In-progress hint */}
             {ACTIVE_JOB_STATES.has(job.state) ? (
               <div className="mt-4 rounded-xl border border-dashed border-line bg-porcelain p-5 text-center text-sm text-muted">
                 {job.state === "QUEUED"
@@ -471,22 +524,39 @@ export function JobDetailPage() {
           {/* Analysis results */}
           {job.analysis ? (
             <section className="rounded-xl border border-line bg-surface p-6 shadow-panel">
-              <h2 className="mb-6 text-xs font-bold uppercase tracking-widest text-muted">
-                Analysis result
-              </h2>
-              <AnalysisResult job={job} />
+              <div className="mb-6 flex items-center justify-between">
+                <h2 className="text-xs font-bold uppercase tracking-widest text-muted">
+                  Analysis result
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-muted hover:text-ink transition"
+                >
+                  {showAdvanced ? (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  )}
+                  {showAdvanced ? "Hide advanced" : "Show advanced"}
+                </button>
+              </div>
+              <AnalysisResult job={job} showAdvanced={showAdvanced} />
             </section>
           ) : null}
 
-          {/* Fetch metadata */}
-          {job.fetch_metadata ? (
+          {/* Fetch metadata — advanced only */}
+          {showAdvanced && job.fetch_metadata ? (
             <section className="rounded-xl border border-line bg-surface p-6 shadow-panel">
               <h2 className="mb-4 text-xs font-bold uppercase tracking-widest text-muted">
                 Fetch metadata
               </h2>
               <div className="grid gap-3 sm:grid-cols-3">
                 {Object.entries(job.fetch_metadata).map(([k, v]) => (
-                  <div key={k} className="rounded-lg border border-line bg-porcelain p-3">
+                  <div
+                    key={k}
+                    className="rounded-lg border border-line bg-porcelain p-3"
+                  >
                     <p className="text-xs font-bold uppercase tracking-widest text-muted">
                       {k.replace(/_/g, " ")}
                     </p>

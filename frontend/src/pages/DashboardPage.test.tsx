@@ -28,6 +28,10 @@ describe("DashboardPage", () => {
     globalThis.fetch = async (input, init) => {
       calls.push([input, init]);
       const path = String(input);
+      // Analysis jobs (primary section) — path includes query string e.g. /jobs?limit=20
+      if (path.includes("/jobs") && !path.includes("/cancel") && !init?.method) {
+        return jsonResponse([]);
+      }
       if (path.endsWith("/scrape/tasks/current")) {
         return jsonResponse({ detail: "No active task" }, 404);
       }
@@ -61,6 +65,10 @@ describe("DashboardPage", () => {
 
     const view = renderWithProviders(<DashboardPage />);
 
+    // Expand the legacy scrape collapsible section
+    const legacyToggle = await view.findByText("Legacy scrape");
+    fireEvent.click(legacyToggle);
+
     assert.ok(await view.findByText("https://example.com"));
 
     // Find and click the View Details button (1st action button)
@@ -79,6 +87,10 @@ describe("DashboardPage", () => {
     globalThis.fetch = async (input, init) => {
       calls.push([input, init]);
       const path = String(input);
+      // Analysis jobs (primary section) — path includes query string e.g. /jobs?limit=20
+      if (path.includes("/jobs") && !path.includes("/cancel") && !init?.method) {
+        return jsonResponse([]);
+      }
       if (path.endsWith("/scrape/tasks/current")) {
         return jsonResponse({ detail: "No active task" }, 404);
       }
@@ -102,6 +114,10 @@ describe("DashboardPage", () => {
 
     const view = renderWithProviders(<DashboardPage />);
 
+    // Expand the legacy scrape collapsible section
+    const legacyToggle = await view.findByText("Legacy scrape");
+    fireEvent.click(legacyToggle);
+
     assert.ok(await view.findByText("https://example.com"));
 
     // Find and click the Delete Task button (2nd action button)
@@ -113,12 +129,14 @@ describe("DashboardPage", () => {
     assert.ok(await view.findByText(/Are you sure you want to delete Scrape Task/));
 
     // Confirm deletion
-    const confirmButton = view.getAllByRole("button").find((b) => b.textContent?.trim() === "Delete task");
+    const confirmButton = view
+      .getAllByRole("button")
+      .find((b) => b.textContent?.trim() === "Delete task");
     assert.ok(confirmButton);
     fireEvent.click(confirmButton);
 
     // Verify that the task is deleted and the list refetches/updates to empty state
-    assert.ok(await view.findByText("No tasks yet. Run your first scrape to see history here."));
+    assert.ok(await view.findByText("No scrape tasks yet."));
     assert.equal(deleted, true);
   });
 });

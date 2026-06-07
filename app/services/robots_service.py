@@ -45,16 +45,31 @@ def _robots_url(url: str) -> str:
 
 
 async def _fetch_robots(robots_url: str) -> RobotFileParser | None:
+    """
+    Fetch and parse robots.txt.
+
+    Security note: follow_redirects is intentionally False. A robots.txt that
+    redirects to an unverified URL could be used as an SSRF vector. Redirected
+    robots.txt is treated as unavailable; ROBOTS_FAILURE_POLICY then applies.
+    """
     try:
         async with httpx.AsyncClient(
             timeout=10.0,
-            follow_redirects=True,
+            follow_redirects=False,  # never follow — prevents SSRF via robots redirect
             headers={"User-Agent": _USER_AGENT},
         ) as client:
             resp = await client.get(robots_url)
 
+        # 3xx redirect: treat as unavailable (SSRF risk if we followed unvalidated URL)
+        if resp.is_redirect:
+            logger.warning(
+                "robots.redirect_ignored",
+                extra={"url": robots_url, "location": resp.headers.get("location", "")},
+            )
+            return None
+
         if resp.status_code == 404:
-            # No robots.txt means everything is allowed
+            # No robots.txt — no restrictions
             rp = RobotFileParser()
             rp.set_url(robots_url)
             rp.parse([])
@@ -78,7 +93,7 @@ async def check_robots(url: str) -> RobotsCheck:
     Check whether url is fetchable according to robots.txt.
 
     Caches parsed robots rules per origin for TTL seconds.
-    On fetch failure, applies settings.ROBOTS_FAILURE_POLICY (deny | allow).
+    On fetch failure or redirect, applies settings.ROBOTS_FAILURE_POLICY (deny | allow).
     """
     origin = _origin(url)
     now = time.monotonic()

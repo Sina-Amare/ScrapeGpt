@@ -14,12 +14,14 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     status,
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.rate_limit import SCRAPE_RATE_LIMIT, limiter
 from app.models.job import ACTIVE_JOB_STATES, DELETABLE_JOB_STATES, Job, JobState
 from app.models.user import User
 from app.schemas.job import JobCreate, JobListItem, JobResponse
@@ -63,6 +65,7 @@ def _job_list_item(job: Job) -> JobListItem:
         workflow_mode=job.workflow_mode.value,
         render_mode=job.render_mode.value,
         confidence=job.confidence,
+        warnings=job.warnings or [],
         error=job.error,
         error_code=job.error_code,
         created_at=job.created_at,
@@ -76,7 +79,9 @@ def _job_list_item(job: Job) -> JobListItem:
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create an analysis job",
 )
+@limiter.limit(SCRAPE_RATE_LIMIT)
 async def create_job(
+    request: Request,
     payload: JobCreate,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),

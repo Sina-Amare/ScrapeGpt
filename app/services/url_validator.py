@@ -129,7 +129,16 @@ def validate_url(url: str) -> str:
     except ValueError:
         pass  # It's a hostname, not a raw IP — resolve it
 
-    # Resolve all A/AAAA records
+    # Resolve all A/AAAA records.
+    #
+    # TOCTOU / DNS-rebinding limitation: we resolve here in Python, but httpx
+    # (and Playwright) re-resolve at the time the TCP connection is established.
+    # An attacker-controlled domain can return a public IP during this check and
+    # a private IP when the actual connection is made. This race is not fixable
+    # at the application layer. Full mitigation requires an egress firewall that
+    # blocks RFC-1918/loopback ranges, or an IP-pinned transport that binds the
+    # resolved address and prevents re-resolution. We document the limitation
+    # here rather than silently claiming SSRF is fully prevented.
     try:
         addr_infos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:

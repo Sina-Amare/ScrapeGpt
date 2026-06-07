@@ -116,6 +116,7 @@ class JobListItem(BaseModel):
     workflow_mode: str
     render_mode: str
     confidence: float | None = None
+    warnings: list[str] = []
     error: str | None = None
     error_code: str | None = None
     created_at: datetime | None = None

@@ -364,3 +364,57 @@ async def test_create_job_success_returns_202(async_client, app, monkeypatch):
     body = response.json()
     assert body["id"] == 99
     assert body["state"] == "QUEUED"
+
+
+# ---------------------------------------------------------------------------
+# Rate limit wiring
+# ---------------------------------------------------------------------------
+
+
+def test_create_job_endpoint_has_rate_limit_wiring():
+    """POST /jobs must declare `request: Request` — required by SlowAPI."""
+    import inspect
+    from app.api.v1.endpoints.jobs import create_job
+
+    params = inspect.signature(create_job).parameters
+    assert "request" in params, (
+        "create_job must declare 'request: Request' for SlowAPI rate limiting"
+    )
+
+
+# ---------------------------------------------------------------------------
+# JobListItem warnings contract
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_includes_warnings(async_client, app):
+    """GET /jobs must include warnings in each JobListItem."""
+    j = _job(job_id=7)
+    j.warnings = ["Selector had low confidence", "JavaScript detected"]
+    session = FakeJobSession([j])
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield session)
+
+    response = await async_client.get("/api/v1/jobs")
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["warnings"] == [
+        "Selector had low confidence",
+        "JavaScript detected",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_warnings_defaults_to_empty_list(async_client, app):
+    """GET /jobs must return warnings=[] when job.warnings is None."""
+    j = _job(job_id=8)
+    j.warnings = None  # type: ignore[assignment]
+    session = FakeJobSession([j])
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield session)
+
+    response = await async_client.get("/api/v1/jobs")
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["warnings"] == []
