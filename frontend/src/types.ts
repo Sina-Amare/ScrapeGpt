@@ -74,3 +74,100 @@ export type ProviderKeyResponse = {
 };
 
 export type HealthResponse = Record<string, unknown>;
+
+// ---------------------------------------------------------------------------
+// Jobs (Phase 1 — Analysis pipeline)
+// ---------------------------------------------------------------------------
+
+export type JobState =
+  | "QUEUED"
+  | "ANALYZING"
+  | "AWAITING_SETUP"
+  | "ANALYSIS_READY"
+  | "FAILED"
+  | "CANCELED"
+  | string;
+
+export type ExtractionMode = "STRUCTURED" | "CONTENT";
+export type WorkflowMode = "GUIDED" | "FAST";
+export type RenderMode = "AUTO" | "STATIC" | "BROWSER";
+
+export type JobCreateInput = {
+  url: string;
+  extraction_mode?: ExtractionMode;
+  workflow_mode?: WorkflowMode;
+  render_mode?: RenderMode;
+  provider_config_id?: number | null;
+};
+
+export type JobListItem = {
+  id: number;
+  url: string;
+  state: JobState;
+  extraction_mode: ExtractionMode;
+  workflow_mode: WorkflowMode;
+  render_mode: RenderMode;
+  confidence: number | null;
+  warnings: string[];
+  error: string | null;
+  error_code: string | null;
+  created_at: string;
+};
+
+export type StructuredCandidateField = {
+  name: string;
+  label: string;
+  selector: string;
+  data_type: string;
+  required: boolean;
+  confidence: number;
+  sample_values: string[];
+};
+
+export type StructuredAnalysis = {
+  page_type: string;
+  repeated_item_selector: string;
+  candidate_fields: StructuredCandidateField[];
+  detail_link_selector: string | null;
+  pagination_selector: string | null;
+  estimated_pages: number | null;
+  warnings: string[];
+  confidence: number;
+};
+
+export type ContentMetadataField = {
+  name: string;
+  label: string;
+  selector: string;
+  confidence: number;
+  sample_values: string[];
+};
+
+export type ContentAnalysis = {
+  content_type: string;
+  primary_content_selector: string;
+  estimated_pages: number | null;
+  avg_content_length: number | null;
+  recommended_chunking: string;
+  metadata_fields: ContentMetadataField[];
+  warnings: string[];
+  confidence: number;
+};
+
+export type JobResponse = {
+  id: number;
+  url: string;
+  state: JobState;
+  extraction_mode: ExtractionMode;
+  workflow_mode: WorkflowMode;
+  render_mode: RenderMode;
+  provider_config_id: number | null;
+  confidence: number | null;
+  warnings: string[];
+  analysis: StructuredAnalysis | ContentAnalysis | Record<string, unknown> | null;
+  fetch_metadata: Record<string, unknown> | null;
+  error: string | null;
+  error_code: string | null;
+  created_at: string;
+  updated_at: string | null;
+};

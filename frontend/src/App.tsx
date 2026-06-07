@@ -6,6 +6,9 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { LoginPage, RegisterPage } from "./pages/AuthPages";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HealthPage } from "./pages/HealthPage";
+import { JobDetailPage } from "./pages/JobDetailPage";
+import { JobsPage } from "./pages/JobsPage";
+import { NewJobPage } from "./pages/NewJobPage";
 import { NewScrapePage } from "./pages/NewScrapePage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 
@@ -24,6 +27,9 @@ function ProtectedShell() {
       <Routes>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="jobs" element={<JobsPage />} />
+        <Route path="jobs/new" element={<NewJobPage />} />
+        <Route path="jobs/:id" element={<JobDetailPage />} />
         <Route path="providers" element={<ProvidersPage />} />
         <Route path="scrape/new" element={<NewScrapePage />} />
         <Route path="health" element={<HealthPage />} />

@@ -1,6 +1,9 @@
 import {
   AuthResponse,
   HealthResponse,
+  JobCreateInput,
+  JobListItem,
+  JobResponse,
   ProviderConfig,
   ProviderCreateInput,
   ProviderKeyRevealInput,
@@ -260,5 +263,33 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input)
     });
+  },
+
+  // -------------------------------------------------------------------------
+  // Jobs (Phase 1 — Analysis pipeline)
+  // -------------------------------------------------------------------------
+
+  createJob(input: JobCreateInput): Promise<JobResponse> {
+    return apiRequest<JobResponse>("/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    });
+  },
+
+  listJobs(limit = 50): Promise<JobListItem[]> {
+    return apiRequest<JobListItem[]>(`/jobs?limit=${limit}`);
+  },
+
+  getJob(id: number): Promise<JobResponse> {
+    return apiRequest<JobResponse>(`/jobs/${id}`);
+  },
+
+  cancelJob(id: number): Promise<JobResponse> {
+    return apiRequest<JobResponse>(`/jobs/${id}/cancel`, { method: "POST" });
+  },
+
+  deleteJob(id: number): Promise<void> {
+    return apiRequest<void>(`/jobs/${id}`, { method: "DELETE" });
   }
 };

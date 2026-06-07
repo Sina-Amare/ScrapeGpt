@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
+  BrainCog,
   DatabaseZap,
   HeartPulse,
+  List,
   LogOut,
   Menu,
   Plus,
@@ -17,8 +19,10 @@ import { useAuth } from "../lib/auth";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: Activity },
+  { to: "/jobs", label: "Jobs", icon: List },
+  { to: "/jobs/new", label: "New Analysis", icon: BrainCog },
   { to: "/providers", label: "Providers", icon: Settings2 },
-  { to: "/scrape/new", label: "New Scrape", icon: Plus },
+  { to: "/scrape/new", label: "Legacy Scrape", icon: Plus },
   { to: "/health", label: "Health", icon: HeartPulse }
 ];
 
