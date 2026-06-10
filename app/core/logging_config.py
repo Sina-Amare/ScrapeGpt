@@ -10,8 +10,10 @@ and two filters:
   calls automatically gain ambient context.
 
 - SecretRedactingFilter: backstop that strips known API key
-  patterns from log messages.  Does not replace call-site
-  discipline — it is a safety net.
+  patterns from log messages, args, AND structured extra fields.
+  Also sanitizes URL fields by stripping query strings and
+  fragments.  Does not replace call-site discipline — it is a
+  safety net.
 
 disable_existing_loggers=False preserves all existing
 logging.getLogger(__name__) declarations in service files.
@@ -22,8 +24,10 @@ from __future__ import annotations
 import json
 import logging
 import logging.config
+import re
 import sys
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from app.core.config import settings
 from app.core.log_context import get_log_context
@@ -31,8 +35,57 @@ from app.services.provider_service import redact_provider_secret
 
 
 # ---------------------------------------------------------------------------
+# URL sanitization
+# ---------------------------------------------------------------------------
+
+# Keys whose values should be treated as URLs and sanitized
+_URL_KEYS: frozenset[str] = frozenset({
+    "url", "normalized_url", "source_url", "seed",
+    "seed_validated", "validated_url", "validated_seed",
+    "final_url", "redirect_url", "page_url", "root_url",
+})
+
+# Keys whose values should be fully redacted regardless of content
+_FULL_REDACT_KEYS: frozenset[str] = frozenset({
+    "api_key", "token", "access_token", "refresh_token",
+    "authorization", "password", "secret", "bearer",
+    "hashed_password", "api_key_encrypted",
+})
+
+REDACTED = "[REDACTED]"
+REDACTED_URL_QUERY = "[URL_SANITIZED]"
+
+
+def sanitize_url(url: str) -> str:
+    """Strip query string and fragment from a URL to prevent
+    leaking tokens, API keys, session IDs, signed URLs, or
+    password reset links in log output.
+
+    Preserves scheme + host + path for diagnostic value.
+    """
+    if not url or not isinstance(url, str):
+        return url
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        # If urlparse fails, redact the whole value
+        return REDACTED_URL_QUERY
+    # Rebuild without query or fragment
+    sanitized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    if parsed.query or parsed.fragment:
+        sanitized += f"?{REDACTED_URL_QUERY}"
+    return sanitized
+
+
+# ---------------------------------------------------------------------------
 # Filters
 # ---------------------------------------------------------------------------
+
+# Standard LogRecord attributes that should not be treated as
+# extra fields during redaction.
+_STANDARD_ATTRS: set[str] = set(
+    logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys()
+) | {"message", "asctime"}
 
 
 class ContextInjectingFilter(logging.Filter):
@@ -51,14 +104,20 @@ class ContextInjectingFilter(logging.Filter):
 
 
 class SecretRedactingFilter(logging.Filter):
-    """Backstop filter that strips known API key patterns from
-    log messages and args.  Does not replace call-site discipline
-    (safe_provider_error_message) — it is a safety net for cases
-    where redaction was missed.
+    """Backstop filter that strips known secret patterns from
+    log messages, args, AND structured extra fields.  Also
+    sanitizes URL fields by stripping query strings/fragments.
+
+    Does not replace call-site discipline
+    (safe_provider_error_message) — it is a safety net for
+    cases where redaction was missed at the call site.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # 1. Redact the message string
         record.msg = redact_provider_secret(str(record.msg))
+
+        # 2. Redact args
         if record.args:
             record.args = tuple(
                 redact_provider_secret(str(a))
@@ -70,7 +129,90 @@ class SecretRedactingFilter(logging.Filter):
                     else (record.args,)
                 )
             )
+
+        # 3. Redact/sanitize structured extra fields
+        for key in list(record.__dict__.keys()):
+            if key in _STANDARD_ATTRS:
+                continue
+            value = record.__dict__[key]
+            if value is None:
+                continue
+
+            # Full-redact keys: always replace entire value
+            if key in _FULL_REDACT_KEYS:
+                setattr(record, key, REDACTED)
+                continue
+
+            # URL keys: sanitize by stripping query/fragment
+            if key in _URL_KEYS and isinstance(value, str):
+                setattr(record, key, sanitize_url(value))
+                continue
+
+            # String values: apply pattern-based redaction
+            if isinstance(value, str):
+                redacted = redact_provider_secret(value)
+                # Also sanitize if the string looks like a URL
+                # (catches ad-hoc URL fields not in _URL_KEYS)
+                if re.match(r"^https?://", value):
+                    redacted = sanitize_url(redacted)
+                setattr(record, key, redacted)
+                continue
+
+            # Dict values: redact/sanitize recursively
+            if isinstance(value, dict):
+                setattr(
+                    record, key,
+                    self._redact_dict(value),
+                )
+                continue
+
+            # List values: redact/sanitize each element
+            if isinstance(value, list):
+                setattr(
+                    record, key,
+                    self._redact_list(value),
+                )
+                continue
+
         return True
+
+    def _redact_dict(self, d: dict) -> dict:
+        """Recursively redact/sanitize a dict."""
+        result: dict = {}
+        for key, value in d.items():
+            if key in _FULL_REDACT_KEYS:
+                result[key] = REDACTED
+            elif key in _URL_KEYS and isinstance(value, str):
+                result[key] = sanitize_url(value)
+            elif isinstance(value, str):
+                redacted = redact_provider_secret(value)
+                if re.match(r"^https?://", value):
+                    redacted = sanitize_url(redacted)
+                result[key] = redacted
+            elif isinstance(value, dict):
+                result[key] = self._redact_dict(value)
+            elif isinstance(value, list):
+                result[key] = self._redact_list(value)
+            else:
+                result[key] = value
+        return result
+
+    def _redact_list(self, lst: list) -> list:
+        """Recursively redact/sanitize a list."""
+        result: list = []
+        for item in lst:
+            if isinstance(item, str):
+                redacted = redact_provider_secret(item)
+                if re.match(r"^https?://", item):
+                    redacted = sanitize_url(redacted)
+                result.append(redacted)
+            elif isinstance(item, dict):
+                result.append(self._redact_dict(item))
+            elif isinstance(item, list):
+                result.append(self._redact_list(item))
+            else:
+                result.append(item)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -149,22 +291,18 @@ class JsonFormatter(logging.Formatter):
             record.created, tz=timezone.utc
         ).isoformat(timespec="milliseconds") + "Z"
 
-        # Core fields
+        # Core fields — include "event" as the structured log
+        # contract field (the first argument to logger calls).
         log_obj: dict = {
             "timestamp": ts,
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "event": record.getMessage(),
         }
 
         # Add all extra fields as top-level JSON keys
-        standard_attrs = set(
-            logging.LogRecord(
-                "", 0, "", 0, "", (), None
-            ).__dict__.keys()
-        ) | {"message", "asctime"}
         for key, value in record.__dict__.items():
-            if key not in standard_attrs and value is not None:
+            if key not in _STANDARD_ATTRS and value is not None:
                 log_obj[key] = value
 
         # Add exception info

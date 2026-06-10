@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.log_context import set_task_context
+from app.core.log_context import set_page_context, set_task_context
 from app.db.database import async_session_factory
 from app.models.job import (
     CrawlPage,
@@ -73,6 +73,7 @@ async def start_project_extraction(
         spec.crawl_scope,
         allow_unconfirmed=allow_unconfirmed,
         allow_legacy_missing=True,
+        project_id=project.id,
     )
     project.transition_to(ProjectState.DISCOVERING)
     project.error = None
@@ -238,6 +239,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 spec.crawl_scope,
                 allow_unconfirmed=False,
                 allow_legacy_missing=True,
+                project_id=project_id,
             )
 
             if project.state == ProjectState.DISCOVERING:
@@ -275,6 +277,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 page.state = CrawlPageState.FETCHING
                 page.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
                 await db.commit()
+                set_page_context(page_id=page.id)
 
                 try:
                     validated_url = validate_url(page.normalized_url)

@@ -134,23 +134,40 @@ def create_app() -> FastAPI:
         )
         set_request_context(request_id=request_id)
         start = time.monotonic()
-        response = await call_next(request)
-        duration_ms = int(
-            (time.monotonic() - start) * 1000
-        )
-        logger.info(
-            "http.request",
-            extra={
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "duration_ms": duration_ms,
-                "request_id": request_id,
-            },
-        )
-        response.headers["X-Request-ID"] = request_id
-        clear_context()
-        return response
+        try:
+            response = await call_next(request)
+            duration_ms = int(
+                (time.monotonic() - start) * 1000
+            )
+            logger.info(
+                "http.request",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "duration_ms": duration_ms,
+                    "request_id": request_id,
+                },
+            )
+            response.headers["X-Request-ID"] = request_id
+            return response
+        except Exception as exc:
+            duration_ms = int(
+                (time.monotonic() - start) * 1000
+            )
+            logger.error(
+                "http.request_failed",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "duration_ms": duration_ms,
+                    "request_id": request_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            raise
+        finally:
+            clear_context()
 
     # CORS Middleware
     # Allows cross-origin requests from specified origins

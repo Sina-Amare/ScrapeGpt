@@ -214,7 +214,7 @@ class TestJsonFormatter:
         parsed = json.loads(output)
         assert parsed["level"] == "INFO"
         assert parsed["logger"] == "test.logger"
-        assert parsed["message"] == "test_event"
+        assert parsed["event"] == "test_event"
         assert "timestamp" in parsed
 
     def test_includes_extra_fields_as_top_level_keys(self):

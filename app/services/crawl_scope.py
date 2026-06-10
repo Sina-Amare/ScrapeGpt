@@ -187,6 +187,7 @@ def assert_scope_confirmed(
     *,
     allow_unconfirmed: bool = False,
     allow_legacy_missing: bool = True,
+    project_id: int | None = None,
 ) -> None:
     """Enforce the scope confirmation policy.
 
@@ -215,7 +216,7 @@ def assert_scope_confirmed(
     if mode == CrawlScopeMode.CURRENT_PAGE.value:
         logger.info(
             "scope.confirmation_gate_passed",
-            extra={"scope_mode": mode},
+            extra={"scope_mode": mode, "project_id": project_id},
         )
         return
     if status == "USER_CONFIRMED":
@@ -224,6 +225,7 @@ def assert_scope_confirmed(
             extra={
                 "scope_mode": mode,
                 "scope_status": status,
+                "project_id": project_id,
             },
         )
         return
@@ -231,7 +233,11 @@ def assert_scope_confirmed(
         return
     logger.warning(
         "scope.confirmation_required",
-        extra={"scope_mode": mode, "scope_status": status},
+        extra={
+            "scope_mode": mode,
+            "scope_status": status,
+            "project_id": project_id,
+        },
     )
     raise ScopeConfirmationError(scope)
 
