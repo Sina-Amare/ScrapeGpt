@@ -3,6 +3,8 @@
 import csv
 import io
 import json
+import logging
+import time
 import zipfile
 from html import escape
 
@@ -58,6 +60,8 @@ from app.services.project_preview import create_preview, latest_preview
 from app.services.project_status import confidence_label, detected_type, product_status_for
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
+
+logger = logging.getLogger(__name__)
 
 
 async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
@@ -527,32 +531,58 @@ async def export_project(
     db: AsyncSession = Depends(get_db),
     format: str = Query(default="csv", pattern="^(csv|json|xlsx)$"),
 ) -> Response:
-    await _owned_project(db, user, project_id)
-    records = await list_records(db, project_id, 0, 5000)
-    data = [record.normalized_data or record.raw_data for record in records]
-    if format == "json":
-        return Response(
-            content=json.dumps(data),
-            media_type="application/json",
-            headers={"Content-Disposition": f'attachment; filename="project-{project_id}.json"'},
-        )
-    if format == "xlsx":
-        return Response(
-            content=_xlsx_bytes(data),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="project-{project_id}.xlsx"'},
-        )
-
-    output = io.StringIO()
-    fieldnames = sorted({key for row in data for key in row.keys()})
-    writer = csv.DictWriter(output, fieldnames=fieldnames)
-    writer.writeheader()
-    writer.writerows(data)
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="project-{project_id}.csv"'},
+    logger.info(
+        "export.started",
+        extra={"project_id": project_id, "user_id": user.id, "format": format},
     )
+    start_time = time.monotonic()
+    try:
+        await _owned_project(db, user, project_id)
+        records = await list_records(db, project_id, 0, 5000)
+        data = [record.normalized_data or record.raw_data for record in records]
+        duration_ms = round((time.monotonic() - start_time) * 1000, 1)
+        logger.info(
+            "export.completed",
+            extra={
+                "project_id": project_id,
+                "format": format,
+                "record_count": len(records),
+                "duration_ms": duration_ms,
+            },
+        )
+        if format == "json":
+            return Response(
+                content=json.dumps(data),
+                media_type="application/json",
+                headers={"Content-Disposition": f'attachment; filename="project-{project_id}.json"'},
+            )
+        if format == "xlsx":
+            return Response(
+                content=_xlsx_bytes(data),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f'attachment; filename="project-{project_id}.xlsx"'},
+            )
+
+        output = io.StringIO()
+        fieldnames = sorted({key for row in data for key in row.keys()})
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(data)
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="project-{project_id}.csv"'},
+        )
+    except Exception as exc:
+        logger.error(
+            "export.failed",
+            extra={
+                "project_id": project_id,
+                "format": format,
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise
 
 
 def _xlsx_bytes(rows: list[dict]) -> bytes:

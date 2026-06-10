@@ -7,6 +7,7 @@ Handles:
 """
 
 import logging
+import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -20,12 +21,24 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone="UTC")
 
 
+async def _timed_watchdog() -> None:
+    """Wrap watchdog execution with scheduler timing logs."""
+    logger.debug("scheduler.job_started", extra={"job_name": "watchdog_cleanup"})
+    start = time.monotonic()
+    await run_watchdog_once()
+    duration_ms = round((time.monotonic() - start) * 1000, 1)
+    logger.debug(
+        "scheduler.job_completed",
+        extra={"job_name": "watchdog_cleanup", "duration_ms": duration_ms},
+    )
+
+
 def configure_scheduler() -> None:
     """Configure all scheduled jobs."""
 
     # Watchdog: every 60 seconds
     scheduler.add_job(
-        run_watchdog_once,
+        _timed_watchdog,
         trigger=IntervalTrigger(seconds=60),
         id="watchdog_cleanup",
         name="Clean up stuck tasks",

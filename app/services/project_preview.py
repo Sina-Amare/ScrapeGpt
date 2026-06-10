@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import select
@@ -12,6 +13,8 @@ from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, fetch_url
 from app.services.robots_service import RobotsResult, check_robots
 from app.services.url_validator import URLValidationError, validate_url
+
+logger = logging.getLogger(__name__)
 
 
 def _selected_fields(spec: ExtractionSpec) -> list[dict[str, Any]]:
@@ -146,6 +149,7 @@ async def create_preview(
     project: Project,
     spec: ExtractionSpec,
 ) -> PreviewResult:
+    logger.debug("preview.started", extra={"project_id": project.id})
     project.transition_to(ProjectState.PREVIEWING)
     await db.flush()
 
@@ -157,6 +161,17 @@ async def create_preview(
         project.error_code = "PREVIEW_FAILED"
         await db.flush()
         raise
+
+    # Log selector failures for missing fields
+    for field in payload.get("missing_fields", []):
+        logger.warning(
+            "preview.selector_failed",
+            extra={
+                "project_id": project.id,
+                "field_name": field.get("name"),
+                "selector": field.get("label"),
+            },
+        )
 
     preview = PreviewResult(
         project_id=project.id,
@@ -170,4 +185,22 @@ async def create_preview(
     project.transition_to(ProjectState.PREVIEW_READY)
     await db.flush()
     await db.refresh(preview)
+
+    record_count = len(preview.sample_records or [])
+    qs = preview.quality_summary or {}
+    selected_count = qs.get("selected_field_count", 0)
+    missing_count = qs.get("missing_field_count", 0)
+    hit_rate = (
+        round((selected_count - missing_count) / selected_count * 100, 1)
+        if selected_count > 0
+        else 0.0
+    )
+    logger.info(
+        "preview.completed",
+        extra={
+            "project_id": project.id,
+            "record_count": record_count,
+            "selector_hit_rate": hit_rate,
+        },
+    )
     return preview

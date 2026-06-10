@@ -201,6 +201,10 @@ async def create_frontier_preview(
     except URLValidationError:
         return None
 
+    logger.debug(
+        "frontier.fetch_started",
+        extra={"project_id": project.id, "url": seed_validated},
+    )
     try:
         fetch = await fetch_url(
             seed_validated, project.render_mode.value
@@ -244,6 +248,29 @@ async def create_frontier_preview(
         )
         if preview is None:
             return None
+        scope_mode = (spec.crawl_scope or {}).get("mode", "CURRENT_PAGE")
+        included_count = len(preview.included_urls or [])
+        excluded_count = len(preview.excluded_urls or [])
+        logger.info(
+            "frontier.preview_built",
+            extra={
+                "project_id": project.id,
+                "scope_mode": scope_mode,
+                "included_count": included_count,
+                "excluded_count": excluded_count,
+            },
+        )
+        total_decisions = included_count + excluded_count
+        if total_decisions > 0 and excluded_count / total_decisions >= 0.8:
+            logger.warning(
+                "frontier.high_exclusion_rate",
+                extra={
+                    "project_id": project.id,
+                    "excluded_pct": round(
+                        excluded_count / total_decisions * 100, 1
+                    ),
+                },
+            )
 
     db.add(preview)
     await db.flush()

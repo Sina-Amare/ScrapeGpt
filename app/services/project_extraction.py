@@ -284,6 +284,14 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         page.block_reason = "ROBOTS_BLOCKED"
                         page.error = robots.reason
                         await db.commit()
+                        logger.warning(
+                            "extraction.page_robots_blocked",
+                            extra={
+                                "project_id": project_id,
+                                "page_id": page.id,
+                                "url": validated_url,
+                            },
+                        )
                         processed_pages += 1
                         continue
                     if robots.result == RobotsResult.UNAVAILABLE:
@@ -291,6 +299,15 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         page.block_reason = "ROBOTS_UNAVAILABLE"
                         page.error = robots.reason
                         await db.commit()
+                        logger.warning(
+                            "extraction.page_robots_blocked",
+                            extra={
+                                "project_id": project_id,
+                                "page_id": page.id,
+                                "url": validated_url,
+                                "reason": "robots_unavailable",
+                            },
+                        )
                         processed_pages += 1
                         continue
 
@@ -346,6 +363,17 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                             )
                         )
                     total_records += len(extracted)
+                    logger.debug(
+                        "extraction.records_extracted",
+                        extra={
+                            "project_id": project_id,
+                            "page_id": page.id,
+                            "record_count": len(extracted),
+                            "warnings_count": sum(
+                                len(item.warnings or []) for item in extracted
+                            ),
+                        },
+                    )
                     page.state = CrawlPageState.EXTRACTED
                     page.error = None
                     page.block_reason = None
@@ -358,6 +386,15 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     page.error = str(exc)
                     page.lease_expires_at = None
                     await db.commit()
+                    logger.error(
+                        "extraction.page_failed",
+                        extra={
+                            "project_id": project_id,
+                            "page_id": page.id,
+                            "url": page.normalized_url,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
 
                 processed_pages += 1
                 if settings.MIN_CRAWL_DELAY_MS:
@@ -396,6 +433,20 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     spec,
                     pages_attempted=pages_total,
                     pages_failed=pages_failed,
+                )
+                quality_label = (
+                    spec.quality_summary.get("overall_label")
+                    if isinstance(spec.quality_summary, dict)
+                    else None
+                )
+                field_count = len(spec.fields or [])
+                logger.info(
+                    "extraction.quality_computed",
+                    extra={
+                        "project_id": project_id,
+                        "quality_label": quality_label,
+                        "field_count": field_count,
+                    },
                 )
             except Exception as exc:
                 logger.error(

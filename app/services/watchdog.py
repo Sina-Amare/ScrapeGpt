@@ -5,6 +5,7 @@ Detects and fails tasks stuck in non-terminal states.
 """
 
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, func
@@ -58,6 +59,14 @@ async def cleanup_stuck_tasks() -> int:
             )
             if res.success:
                 cleaned += 1
+                logger.info(
+                    "watchdog.task_reset",
+                    extra={
+                        "task_id": task.id,
+                        "old_state": TaskState.PERMISSION_GRANTED.value,
+                        "timeout_category": "permission_granted",
+                    },
+                )
 
         # Find tasks stuck in SCRAPING
         scraping_cutoff = now - timedelta(
@@ -81,6 +90,14 @@ async def cleanup_stuck_tasks() -> int:
             )
             if res.success:
                 cleaned += 1
+                logger.info(
+                    "watchdog.task_reset",
+                    extra={
+                        "task_id": task.id,
+                        "old_state": TaskState.SCRAPING.value,
+                        "timeout_category": "scraping",
+                    },
+                )
 
         # Find tasks stuck in LLM_PROCESSING
         llm_cutoff = now - timedelta(
@@ -104,6 +121,14 @@ async def cleanup_stuck_tasks() -> int:
             )
             if res.success:
                 cleaned += 1
+                logger.info(
+                    "watchdog.task_reset",
+                    extra={
+                        "task_id": task.id,
+                        "old_state": TaskState.LLM_PROCESSING.value,
+                        "timeout_category": "llm_processing",
+                    },
+                )
 
         if cleaned > 0:
             logger.info("watchdog.cleanup_complete", extra={"cleaned": cleaned})
@@ -141,6 +166,13 @@ async def cleanup_stuck_jobs() -> int:
             )
             if res.success:
                 cleaned += 1
+                logger.info(
+                    "watchdog.job_reset",
+                    extra={
+                        "job_id": job.id,
+                        "old_state": JobState.QUEUED.value,
+                    },
+                )
 
         analyzing_cutoff = now - timedelta(
             minutes=settings.WATCHDOG_JOB_ANALYZING_TIMEOUT_MINUTES
@@ -161,6 +193,13 @@ async def cleanup_stuck_jobs() -> int:
             )
             if res.success:
                 cleaned += 1
+                logger.info(
+                    "watchdog.job_reset",
+                    extra={
+                        "job_id": job.id,
+                        "old_state": JobState.ANALYZING.value,
+                    },
+                )
 
     return cleaned
 
@@ -168,10 +207,21 @@ async def cleanup_stuck_jobs() -> int:
 async def run_watchdog_once() -> None:
     """Run watchdog cleanup once. Called by background scheduler."""
     try:
+        sweep_start = time.monotonic()
+        logger.debug(
+            "watchdog.sweep_started",
+            extra={"timestamp": datetime.now(timezone.utc).isoformat()},
+        )
         task_cleaned = await cleanup_stuck_tasks()
         job_cleaned = await cleanup_stuck_jobs()
-        total = task_cleaned + job_cleaned
-        if total > 0:
-            logger.info("watchdog.run_complete", extra={"cleaned": total})
+        duration_ms = round((time.monotonic() - sweep_start) * 1000, 1)
+        logger.info(
+            "watchdog.sweep_completed",
+            extra={
+                "tasks_reset": task_cleaned,
+                "jobs_reset": job_cleaned,
+                "duration_ms": duration_ms,
+            },
+        )
     except Exception as e:
         logger.exception("watchdog.error", extra={"error": str(e)})
