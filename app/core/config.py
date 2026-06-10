@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # CORS Settings
     # -------------------------------------------------------------------------
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8000,http://127.0.0.1:5173"
     
     @property
     def cors_origins_list(self) -> List[str]:
@@ -107,7 +107,15 @@ class Settings(BaseSettings):
     READINESS_TIMEOUT_SECONDS: float = Field(default=2.0, ge=0.5, le=10.0)
     MAX_CONCURRENT_JOBS_PER_USER: int = Field(default=3, ge=1, le=50)
     MAX_PAGES_PER_JOB: int = Field(default=500, ge=1, le=100000)
-    CRAWL_CONCURRENCY: int = Field(default=3, ge=1, le=50)
+    CRAWL_CONCURRENCY: int = Field(
+        default=3, ge=1, le=50,
+        description=(
+            "Reserved for future use. Currently the extraction "
+            "loop processes pages sequentially with MIN_CRAWL_DELAY_MS "
+            "between fetches. This setting does not affect concurrency "
+            "until a parallel crawl executor is implemented."
+        ),
+    )
     MIN_CRAWL_DELAY_MS: int = Field(default=500, ge=0, le=60000)
     JOB_QUEUE_DEPTH: int = Field(default=10, ge=1, le=1000)
     USER_AGENT: str = "ScrapGPT/1.0"
@@ -128,6 +136,18 @@ class Settings(BaseSettings):
     WATCHDOG_JOB_ANALYZING_TIMEOUT_MINUTES: int = Field(
         default=5, ge=1, le=30,
         description="Timeout for jobs stuck in ANALYZING"
+    )
+    WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES: int = Field(
+        default=10, ge=1, le=30,
+        description="Timeout for projects stuck in DISCOVERING"
+    )
+    WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES: int = Field(
+        default=60, ge=5, le=180,
+        description="Timeout for projects stuck in EXTRACTING"
+    )
+    WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES: int = Field(
+        default=10, ge=1, le=30,
+        description="Timeout for projects stuck in EXPORTING"
     )
 
     # -------------------------------------------------------------------------
