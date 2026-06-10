@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.log_context import set_task_context
 from app.db.database import async_session_factory
 from app.models.job import (
     CrawlPage,
@@ -198,13 +199,27 @@ async def _mark_project_failed(db: AsyncSession, project: Project, message: str,
 
 async def execute_project_extraction(project_id: int, spec_id: int) -> None:
     """Run the crawl/extract pipeline as a background task."""
-    logger.info("project_extraction.started", extra={"project_id": project_id, "spec_id": spec_id})
+    logger.info(
+        "project_extraction.started",
+        extra={"project_id": project_id, "spec_id": spec_id},
+    )
     async with async_session_factory() as db:
         project = await db.get(Project, project_id)
         spec = await db.get(ExtractionSpec, spec_id)
         if not project or not spec or spec.project_id != project_id:
-            logger.error("project_extraction.missing_state", extra={"project_id": project_id, "spec_id": spec_id})
+            logger.error(
+                "project_extraction.missing_state",
+                extra={
+                    "project_id": project_id,
+                    "spec_id": spec_id,
+                },
+            )
             return
+
+        set_task_context(
+            project_id=project_id,
+            user_id=project.user_id,
+        )
 
         try:
             validated_seed = validate_url(project.normalized_url or project.url)
@@ -239,8 +254,14 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     scope_max = scope_max_pages(scope)
                     if scope_max < page_limit:
                         page_limit = scope_max
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.error(
+                        "extraction.scope_max_pages_failed",
+                        extra={
+                            "project_id": project_id,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
 
             while processed_pages < page_limit:
                 if await _project_was_canceled(db, project_id):
@@ -376,7 +397,14 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     pages_attempted=pages_total,
                     pages_failed=pages_failed,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.error(
+                    "extraction.quality_computation_failed",
+                    extra={
+                        "project_id": project_id,
+                        "error_type": type(exc).__name__,
+                    },
+                )
                 spec.quality_summary = {}
 
             db.add(

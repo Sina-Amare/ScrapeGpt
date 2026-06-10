@@ -1,5 +1,7 @@
 """Provider configuration endpoints."""
 
+import logging
+
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +21,8 @@ from app.schemas.provider import (
 )
 from app.services import provider_service
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/providers", tags=["Providers"])
 
@@ -139,14 +143,39 @@ async def reveal_provider_key(
     """Decrypt and return the stored API key after password confirmation."""
     provider_config = await _get_owned_provider_or_404(provider_id, user, db)
     if not verify_password(payload.password, user.hashed_password):
+        logger.warning(
+            "security.key_reveal_failed",
+            extra={
+                "user_id": user.id,
+                "provider_config_id": provider_config.id,
+                "reason": "invalid_password",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Password confirmation failed",
         )
 
     try:
-        api_key = provider_service.decrypt_api_key(provider_config.api_key_encrypted)
+        api_key = provider_service.decrypt_api_key(
+            provider_config.api_key_encrypted
+        )
+        logger.warning(
+            "security.key_revealed",
+            extra={
+                "user_id": user.id,
+                "provider_config_id": provider_config.id,
+            },
+        )
     except InvalidToken:
+        logger.warning(
+            "security.key_reveal_failed",
+            extra={
+                "user_id": user.id,
+                "provider_config_id": provider_config.id,
+                "reason": "decryption_error",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to decrypt API key. The encryption key has changed.",

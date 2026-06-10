@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 
 from sqlalchemy import select
@@ -50,10 +51,13 @@ from app.services.crawl_scope import (
     classify_links_for_scope,
     scope_max_pages,
 )
+from app.core.log_context import set_task_context
 from app.services.extraction_spec_service import latest_spec
 from app.services.fetcher import fetch_url
 from app.services.url_normalizer import normalize_url
 from app.services.url_validator import URLValidationError, validate_url
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SAMPLE_LIMIT = 100
 SCOPE_EXCLUSION_THRESHOLD = 10
@@ -182,6 +186,12 @@ async def create_frontier_preview(
     spec = await latest_spec(db, project.id)
     if spec is None:
         return None
+
+    set_task_context(
+        project_id=project.id,
+        user_id=project.user_id,
+    )
+
     scope = spec.crawl_scope or {}
     seed = project.normalized_url or project.url
     if not seed:
@@ -192,8 +202,18 @@ async def create_frontier_preview(
         return None
 
     try:
-        fetch = await fetch_url(seed_validated, project.render_mode.value)
-    except Exception:
+        fetch = await fetch_url(
+            seed_validated, project.render_mode.value
+        )
+    except Exception as exc:
+        logger.error(
+            "frontier.fetch_failed",
+            extra={
+                "project_id": project.id,
+                "url": seed_validated,
+                "error_type": type(exc).__name__,
+            },
+        )
         fetch = None
 
     html = fetch.html if fetch is not None else ""

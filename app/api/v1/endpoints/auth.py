@@ -7,6 +7,8 @@ Endpoints:
     POST /auth/refresh - Refresh access token using refresh token
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
@@ -33,6 +35,7 @@ from app.schemas.auth import (
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
@@ -75,6 +78,10 @@ async def register(
     existing_user = result.scalar_one_or_none()
 
     if existing_user:
+        logger.warning(
+            "auth.register_failed",
+            extra={"reason": "email_exists"},
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
@@ -88,6 +95,11 @@ async def register(
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    logger.info(
+        "auth.register_success",
+        extra={"user_id": user.id},
+    )
 
     # Generate tokens
     access_token = create_access_token(subject=user.id)
@@ -143,7 +155,13 @@ async def login(
     user = result.scalar_one_or_none()
 
     # Verify credentials
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    if not user or not verify_password(
+        form_data.password, user.hashed_password
+    ):
+        logger.warning(
+            "auth.login_failed",
+            extra={"reason": "invalid_credentials"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -152,10 +170,22 @@ async def login(
 
     # Check if account is active
     if not user.is_active:
+        logger.warning(
+            "auth.login_failed",
+            extra={
+                "reason": "user_inactive",
+                "user_id": user.id,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is deactivated",
         )
+
+    logger.info(
+        "auth.login_success",
+        extra={"user_id": user.id},
+    )
 
     # Generate tokens
     access_token = create_access_token(subject=user.id)
@@ -204,6 +234,10 @@ async def refresh_token(
     token_payload = verify_token(payload.refresh_token, token_type="refresh")
 
     if not token_payload:
+        logger.warning(
+            "auth.token_refresh_failed",
+            extra={"reason": "invalid_token"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
@@ -214,6 +248,10 @@ async def refresh_token(
     try:
         user_id = int(token_payload.sub)
     except ValueError:
+        logger.warning(
+            "auth.token_refresh_failed",
+            extra={"reason": "invalid_subject"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid subject in token",
@@ -225,16 +263,32 @@ async def refresh_token(
     user = result.scalar_one_or_none()
 
     if not user:
+        logger.warning(
+            "auth.token_refresh_failed",
+            extra={"reason": "user_not_found"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
 
     if not user.is_active:
+        logger.warning(
+            "auth.token_refresh_failed",
+            extra={
+                "reason": "user_inactive",
+                "user_id": user.id,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is deactivated",
         )
+
+    logger.info(
+        "auth.token_refresh_success",
+        extra={"user_id": user.id},
+    )
 
     # Generate new tokens
     access_token = create_access_token(subject=user.id)
