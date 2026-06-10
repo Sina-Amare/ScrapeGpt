@@ -2,14 +2,15 @@
 Task executor with always-finalize guarantee.
 
 Orchestrates the scrape pipeline with exception handling.
+Includes SSRF-safe URL validation and robots.txt checks
+mirroring the project pipeline's safety checks.
 """
 
 import logging
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db.database import async_session_factory
 from app.models.scrape_task import ScrapeTask, TaskState
+from app.services.robots_service import RobotsResult, check_robots
 from app.services.scraper import scrape_url, ScrapeError
 from app.services.llm_processor import process_with_llm, LLMError
 from app.services.task_state import (
@@ -19,6 +20,7 @@ from app.services.task_state import (
     transition_to_completed,
     transition_to_failed,
 )
+from app.services.url_validator import URLValidationError, validate_url
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,52 @@ async def execute_scrape_pipeline(task_id: int, user_id: int) -> None:
                 return
             url = task.url
 
+        # Phase 0: SSRF-safe URL validation (defense-in-depth;
+        # the endpoint also validates, but this catches any URLs
+        # that were stored before the endpoint check was added).
+        try:
+            validated_url = validate_url(url)
+        except URLValidationError as exc:
+            await transition_to_failed(
+                task_id,
+                str(exc),
+                expected_states={TaskState.PERMISSION_GRANTED},
+            )
+            logger.warning(
+                "pipeline.url_blocked",
+                extra={
+                    "task_id": task_id,
+                    "url": url,
+                    "reason": exc.reason.value,
+                },
+            )
+            return
+
+        # Phase 0.5: Check robots.txt (mirrors project pipeline).
+        robots = await check_robots(validated_url)
+        if robots.result == RobotsResult.BLOCKED:
+            await transition_to_failed(
+                task_id,
+                f"robots.txt disallows fetching: {robots.reason}",
+                expected_states={TaskState.PERMISSION_GRANTED},
+            )
+            logger.warning(
+                "pipeline.robots_blocked",
+                extra={"task_id": task_id, "url": validated_url},
+            )
+            return
+        if robots.result == RobotsResult.UNAVAILABLE:
+            await transition_to_failed(
+                task_id,
+                f"robots.txt unavailable and policy=deny: {robots.reason}",
+                expected_states={TaskState.PERMISSION_GRANTED},
+            )
+            logger.warning(
+                "pipeline.robots_unavailable",
+                extra={"task_id": task_id, "url": validated_url},
+            )
+            return
+
         # Phase 1: Transition to SCRAPING
         result = await transition_to_scraping(task_id)
         if not result.success:
@@ -62,7 +110,7 @@ async def execute_scrape_pipeline(task_id: int, user_id: int) -> None:
 
         # Phase 2: Scrape URL
         try:
-            content = await scrape_url(url)
+            content = await scrape_url(validated_url)
         except ScrapeError as e:
             await transition_to_failed(task_id, f"Scraping failed: {e.message}")
             return

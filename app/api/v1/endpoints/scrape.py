@@ -33,6 +33,7 @@ from app.services.admission import (
     AdmissionErrorType,
 )
 from app.services.task_executor import execute_scrape_pipeline
+from app.services.url_validator import URLValidationError, validate_url
 
 
 router = APIRouter(prefix="/scrape", tags=["Scraping"])
@@ -89,6 +90,17 @@ async def start_scrape(
     User can poll GET /tasks/{id} for status.
     """
     url_str = str(payload.url)
+
+    # SSRF-safe URL validation: block private/loopback/metadata IPs
+    # before creating the task. This mirrors the project pipeline's
+    # safety checks and gives immediate feedback to the user.
+    try:
+        validate_url(url_str)
+    except URLValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(exc), "error_code": exc.reason.value},
+        )
 
     result = await admit_scrape_task(user, url_str, db)
 
