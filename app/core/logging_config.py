@@ -77,6 +77,28 @@ def sanitize_url(url: str) -> str:
     return sanitized
 
 
+def _sanitize_exception_text(text: str) -> str:
+    """Sanitize formatted exception traceback text to prevent
+    secret leaks through exception messages, stack frames,
+    and local variable representations.
+
+    Applies pattern-based redaction (redact_provider_secret)
+    and URL sanitization to the entire traceback string.
+    """
+    if not text:
+        return text
+    # 1. Pattern-based redaction for API keys, tokens, etc.
+    sanitized = redact_provider_secret(text)
+    # 2. URL sanitization: find any http/https URLs in the
+    #    traceback and strip their query strings/fragments.
+    sanitized = re.sub(
+        r"(https?://[^\s\"')\]]+)",
+        lambda m: sanitize_url(m.group(1)),
+        sanitized,
+    )
+    return sanitized
+
+
 # ---------------------------------------------------------------------------
 # Filters
 # ---------------------------------------------------------------------------
@@ -232,6 +254,11 @@ class DevFormatter(logging.Formatter):
     (works over SSH).
     """
 
+    def formatException(self, ei) -> str:
+        """Format exception traceback and sanitize secrets."""
+        text = super().formatException(ei)
+        return _sanitize_exception_text(text)
+
     def format(self, record: logging.LogRecord) -> str:
         # Timestamp in ISO 8601 UTC
         ts = datetime.fromtimestamp(
@@ -284,6 +311,11 @@ class JsonFormatter(logging.Formatter):
     without regex.  The extra={} context dicts that already exist
     on every log call map directly to top-level JSON fields.
     """
+
+    def formatException(self, ei) -> str:
+        """Format exception traceback and sanitize secrets."""
+        text = super().formatException(ei)
+        return _sanitize_exception_text(text)
 
     def format(self, record: logging.LogRecord) -> str:
         # Timestamp in ISO 8601 UTC

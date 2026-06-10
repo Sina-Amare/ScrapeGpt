@@ -24,7 +24,12 @@ PROVIDER_CONFIG_LOCK_NAMESPACE = 47005
 REDACTED_SECRET = "[REDACTED_SECRET]"
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
-    re.compile(r"(?i)((?:api[_-]?key|x-api-key|authorization)\s*[:=]\s*)[^\s,;]+"),
+    re.compile(
+        r"(?i)((?:api[_-]?key|x-api-key|authorization|password"
+        r"|token|access_token|refresh_token|secret"
+        r"|hashed_password|api_key_encrypted)"
+        r"\s*[:=]\s*)[^\s,;]+"
+    ),
     re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b"),
     re.compile(r"\bsk-proj-[A-Za-z0-9_-]{6,}\b"),
 )

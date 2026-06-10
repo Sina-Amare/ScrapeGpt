@@ -9,10 +9,13 @@ calls) to validate the remediation fixes from the logging review:
 4. Correlation fields (project_id in scope confirmation, page_id propagation)
 5. Request ID propagation through middleware
 6. sanitize_url() edge cases
+7. Exception traceback redaction through real formatter pipeline
+8. Real middleware exercise (not copied logic)
 """
 
 import json
 import logging
+import sys
 import time
 import uuid
 
@@ -29,8 +32,10 @@ from app.core.logging_config import (
     REDACTED,
     REDACTED_URL_QUERY,
     ContextInjectingFilter,
+    DevFormatter,
     JsonFormatter,
     SecretRedactingFilter,
+    _sanitize_exception_text,
     sanitize_url,
 )
 from app.services.crawl_scope import (
@@ -817,3 +822,397 @@ class TestSanitizeUrlEdgeCases:
             f"https://app.example.com/auth/callback?{_URL_SAN}"
         )
         assert "oauth_code_123" not in result
+
+
+# ---------------------------------------------------------------------------
+# Exception traceback redaction through real formatter pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestExceptionTracebackRedaction:
+    """Validate that exception tracebacks containing secrets are
+    sanitized in both JsonFormatter and DevFormatter output.
+
+    This addresses the blocker from LOGGING_FINAL_REVIEW.md:
+    exception tracebacks bypassed the redaction pipeline because
+    formatException() was called after SecretRedactingFilter had
+    already processed the record, and the formatted traceback text
+    was not passed through redact_provider_secret() or URL
+    sanitization.
+    """
+
+    def test_api_key_in_exception_sanitized_in_json(self):
+        """An exception message containing an API key pattern
+        (sk-...) should be redacted in JsonFormatter output."""
+        fmt = JsonFormatter()
+        try:
+            raise ValueError(
+                "Call failed with api_key="
+                "sk-abc123def456ghi789jkl012mno345pqr678stu901vwx234yz"
+            )
+        except ValueError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "provider.call_failed", (), ei,
+        )
+        output = fmt.format(record)
+        parsed = json.loads(output)
+
+        # The exception field should NOT contain the raw API key
+        assert "sk-abc123" not in parsed["exception"]
+        assert "[REDACTED_SECRET]" in parsed["exception"]
+
+    def test_api_key_in_exception_sanitized_in_dev(self):
+        """An exception message containing an API key pattern
+        (sk-...) should be redacted in DevFormatter output."""
+        fmt = DevFormatter()
+        try:
+            raise ValueError(
+                "Call failed with api_key="
+                "sk-abc123def456ghi789jkl012mno345pqr678stu901vwx234yz"
+            )
+        except ValueError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "provider.call_failed", (), ei,
+        )
+        output = fmt.format(record)
+
+        # The traceback should NOT contain the raw API key
+        assert "sk-abc123" not in output
+        assert "[REDACTED_SECRET]" in output
+
+    def test_bearer_token_in_exception_sanitized_in_json(self):
+        """An exception message containing a Bearer token should
+        be redacted in JsonFormatter output."""
+        fmt = JsonFormatter()
+        try:
+            raise RuntimeError(
+                "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9."
+                "abc123def456ghi789"
+            )
+        except RuntimeError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "auth.token_refresh_failed", (), ei,
+        )
+        output = fmt.format(record)
+        parsed = json.loads(output)
+
+        # Bearer token should be redacted
+        assert "eyJhbGciOiJIUzI1NiJ9" not in parsed["exception"]
+        assert "[REDACTED_SECRET]" in parsed["exception"]
+
+    def test_bearer_token_in_exception_sanitized_in_dev(self):
+        """An exception message containing a Bearer token should
+        be redacted in DevFormatter output."""
+        fmt = DevFormatter()
+        try:
+            raise RuntimeError(
+                "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9."
+                "abc123def456ghi789"
+            )
+        except RuntimeError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "auth.token_refresh_failed", (), ei,
+        )
+        output = fmt.format(record)
+
+        assert "eyJhbGciOiJIUzI1NiJ9" not in output
+        assert "[REDACTED_SECRET]" in output
+
+    def test_url_query_token_in_exception_sanitized_in_json(self):
+        """An exception message containing a URL with a query-string
+        token should be sanitized in JsonFormatter output."""
+        fmt = JsonFormatter()
+        try:
+            raise ConnectionError(
+                "Failed to connect to "
+                "https://api.example.com/v1/data?token=secret123&session=abc"
+            )
+        except ConnectionError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "fetcher.connection_failed", (), ei,
+        )
+        output = fmt.format(record)
+        parsed = json.loads(output)
+
+        # URL query string should be sanitized
+        assert "secret123" not in parsed["exception"]
+        assert "session=abc" not in parsed["exception"]
+        # The sanitized URL should appear with [URL_SANITIZED]
+        assert f"?{_URL_SAN}" in parsed["exception"]
+
+    def test_url_query_token_in_exception_sanitized_in_dev(self):
+        """An exception message containing a URL with a query-string
+        token should be sanitized in DevFormatter output."""
+        fmt = DevFormatter()
+        try:
+            raise ConnectionError(
+                "Failed to connect to "
+                "https://api.example.com/v1/data?token=secret123&session=abc"
+            )
+        except ConnectionError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "fetcher.connection_failed", (), ei,
+        )
+        output = fmt.format(record)
+
+        assert "secret123" not in output
+        assert "session=abc" not in output
+        assert f"?{_URL_SAN}" in output
+
+    def test_signed_url_in_exception_sanitized_in_json(self):
+        """An exception containing an Azure/S3 signed URL should
+        have the query string sanitized in JsonFormatter output."""
+        fmt = JsonFormatter()
+        try:
+            raise RuntimeError(
+                "Storage error: "
+                "https://storage.blob.core.windows.net/container/file?"
+                "sv=2023-01-03&sig=abc123def456ghi789jkl012mno345"
+            )
+        except RuntimeError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "extraction.storage_error", (), ei,
+        )
+        output = fmt.format(record)
+        parsed = json.loads(output)
+
+        assert "sig=abc123" not in parsed["exception"]
+        assert "sv=2023" not in parsed["exception"]
+        assert f"?{_URL_SAN}" in parsed["exception"]
+
+    def test_authorization_header_in_exception_sanitized(self):
+        """An exception containing an Authorization header value
+        should be redacted in both formatter outputs."""
+        fmt_json = JsonFormatter()
+        fmt_dev = DevFormatter()
+        try:
+            raise ValueError(
+                "Invalid authorization: Bearer sk-abc123def456ghi789"
+            )
+        except ValueError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "auth.validation_failed", (), ei,
+        )
+
+        json_output = fmt_json.format(record)
+        parsed = json.loads(json_output)
+        assert "sk-abc123" not in parsed["exception"]
+        assert "[REDACTED_SECRET]" in parsed["exception"]
+
+        dev_output = fmt_dev.format(record)
+        assert "sk-abc123" not in dev_output
+        assert "[REDACTED_SECRET]" in dev_output
+
+    def test_password_in_exception_sanitized(self):
+        """An exception containing a password string should be
+        redacted in both formatter outputs."""
+        fmt_json = JsonFormatter()
+        fmt_dev = DevFormatter()
+        try:
+            raise ValueError("password=my_secret_password_123")
+        except ValueError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "auth.login_failed", (), ei,
+        )
+
+        json_output = fmt_json.format(record)
+        parsed = json.loads(json_output)
+        assert "my_secret_password_123" not in parsed["exception"]
+        assert "[REDACTED_SECRET]" in parsed["exception"]
+
+        dev_output = fmt_dev.format(record)
+        assert "my_secret_password_123" not in dev_output
+        assert "[REDACTED_SECRET]" in dev_output
+
+    def test_sanitize_exception_text_directly(self):
+        """_sanitize_exception_text() should redact API key patterns
+        and sanitize URLs in traceback text."""
+        text = (
+            "Traceback (most recent call last):\n"
+            "  File 'app/services/provider_service.py', line 42\n"
+            "    api_key = 'sk-abc123def456ghi789jkl012mno345pqr678'\n"
+            "ValueError: Call to "
+            "https://api.example.com/v1/data?token=secret failed"
+        )
+        result = _sanitize_exception_text(text)
+
+        assert "sk-abc123" not in result
+        assert "[REDACTED_SECRET]" in result
+        assert "secret" not in result
+        assert f"?{_URL_SAN}" in result
+        # Non-sensitive parts should be preserved
+        assert "Traceback" in result
+        assert "provider_service.py" in result
+
+    def test_clean_exception_preserved(self):
+        """An exception with no secrets should pass through
+        unchanged."""
+        fmt = JsonFormatter()
+        try:
+            raise ValueError("clean error message")
+        except ValueError:
+            ei = sys.exc_info()
+
+        record = logging.LogRecord(
+            "test", logging.ERROR, "", 0,
+            "test.clean_error", (), ei,
+        )
+        output = fmt.format(record)
+        parsed = json.loads(output)
+
+        assert "clean error message" in parsed["exception"]
+
+
+# ---------------------------------------------------------------------------
+# Real middleware exercise (not copied logic)
+# ---------------------------------------------------------------------------
+
+
+class TestRealMiddlewareExercise:
+    """Exercise the real app.main request_context_middleware
+    instead of building local FastAPI apps with copied middleware
+    logic.
+
+    This addresses the finding from LOGGING_FINAL_REVIEW.md that
+    the remediation tests mostly built local FastAPI apps with
+    copied middleware logic, reducing regression protection if
+    the real middleware changes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_real_middleware_clears_context_after_request(
+        self, caplog,
+    ):
+        """The real app.main middleware should clear log context
+        after every HTTP request, verified by checking context
+        state before and after."""
+        from app.main import create_app
+        from httpx import ASGITransport, AsyncClient
+
+        app = create_app()
+
+        # Use a simpler approach:
+        # set context before the request, make the request,
+        # and verify context is cleared afterward.
+        set_request_context(request_id="pre-existing-ctx")
+        assert get_log_context()["request_id"] == "pre-existing-ctx"
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver",
+        ) as client:
+            # Make a request to the health endpoint
+            resp = await client.get(
+                "/api/v1/health",
+                headers={"X-Request-ID": "real-mw-test"},
+            )
+            # The response should succeed (health endpoint)
+            assert resp.status_code == 200
+
+        # After the request, the middleware's finally block
+        # should have cleared the context
+        assert get_log_context() == {}
+
+    @pytest.mark.asyncio
+    async def test_real_middleware_sets_request_id_in_response(
+        self,
+    ):
+        """The real middleware should set X-Request-ID in the
+        response headers."""
+        from app.main import create_app
+        from httpx import ASGITransport, AsyncClient
+
+        app = create_app()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver",
+        ) as client:
+            resp = await client.get(
+                "/api/v1/health",
+                headers={"X-Request-ID": "req-header-test"},
+            )
+            assert resp.status_code == 200
+            assert resp.headers.get("X-Request-ID") == "req-header-test"
+
+    @pytest.mark.asyncio
+    async def test_real_middleware_generates_uuid_when_no_header(
+        self,
+    ):
+        """When no X-Request-ID header is provided, the real
+        middleware should generate a UUID and return it in the
+        response."""
+        from app.main import create_app
+        from httpx import ASGITransport, AsyncClient
+
+        app = create_app()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver",
+        ) as client:
+            resp = await client.get("/api/v1/health")
+            assert resp.status_code == 200
+            request_id = resp.headers.get("X-Request-ID")
+            # Should be a valid UUID
+            uuid.UUID(request_id)
+
+    @pytest.mark.asyncio
+    async def test_real_middleware_logs_http_request_on_success(
+        self, caplog,
+    ):
+        """The real middleware should log http.request on
+        successful responses."""
+        caplog.set_level(logging.INFO)
+        from app.main import create_app
+        from httpx import ASGITransport, AsyncClient
+
+        app = create_app()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver",
+        ) as client:
+            resp = await client.get(
+                "/api/v1/health",
+                headers={"X-Request-ID": "req-log-test"},
+            )
+            assert resp.status_code == 200
+
+        # Find the http.request log event
+        records = [
+            r for r in caplog.records
+            if r.getMessage() == "http.request"
+        ]
+        assert len(records) >= 1
+        rec = records[0]
+        assert rec.method == "GET"
+        assert rec.request_id == "req-log-test"
+        assert rec.status_code == 200

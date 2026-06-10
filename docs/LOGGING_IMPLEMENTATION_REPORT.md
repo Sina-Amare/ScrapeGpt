@@ -3,13 +3,13 @@
 **Branch:** `feature/logging-observability`
 **Date:** 2026-06-10
 **Plan reference:** `docs/LOGGING_AND_OBSERVABILITY_PLAN.md`
-**Remediation:** See `docs/LOGGING_REMEDIATION_REPORT.md` for post-review fixes.
+**Remediation:** See `docs/LOGGING_REMEDIATION_REPORT.md` for first-round fixes. See `docs/LOGGING_FINAL_REMEDIATION_REPORT.md` for final security fixes.
 
 ---
 
 ## 1. Summary
 
-The full 3-layer logging and observability plan has been implemented and subsequently remediated per the logging review. All 329 backend tests pass with 0 failures. The implementation follows the plan's architecture (stdlib `logging` + JSON formatter + contextvars) without redesign.
+The full 3-layer logging and observability plan has been implemented and subsequently remediated per two rounds of review. All 344 backend tests pass with 0 failures. The implementation follows the plan's architecture (stdlib `logging` + JSON formatter + contextvars) without redesign.
 
 ---
 
@@ -17,13 +17,13 @@ The full 3-layer logging and observability plan has been implemented and subsequ
 
 ### Layer 1 — Infrastructure
 
-| File                         | Change                                                                                                                                                                                                                                                                      | Commit                |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| `app/core/log_context.py`    | **New file.** Context variables (`request_id`, `user_id`, `project_id`, `page_id`) with `set_request_context`, `set_task_context`, `bind_user_id`, `set_page_context`, `clear_context`, `get_log_context`.                                                                  | `a47af80`             |
-| `app/core/logging_config.py` | **New file.** `ContextInjectingFilter`, `SecretRedactingFilter` (with extra-field redaction + URL sanitization), `DevFormatter`, `JsonFormatter` (with `"event"` field), `configure_logging()`, `sanitize_url()`. Idempotent, stdout-only, `LOG_FORMAT`/`LOG_LEVEL` driven. | `a47af80` + `99e2c04` |
-| `app/main.py`                | Added `configure_logging()` call in lifespan, `request_context_middleware` with try/finally pattern that sets/clears `request_id` per HTTP request, logs `http.request_failed` on exceptions, replaced `print("Startup complete")` with `logger.info`.                      | `a47af80` + `99e2c04` |
-| `app/api/deps.py`            | Added `bind_user_id(user.id)` after successful JWT decode in `get_current_user` and `get_optional_user`.                                                                                                                                                                    | `a47af80`             |
-| `app/db/database.py`         | Set `echo=False` on `async_session_factory` to suppress SQLAlchemy query logging.                                                                                                                                                                                           | `a47af80`             |
+| File                         | Change                                                                                                                                                                                                                                                                                                                                                                                           | Commit                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
+| `app/core/log_context.py`    | **New file.** Context variables (`request_id`, `user_id`, `project_id`, `page_id`) with `set_request_context`, `set_task_context`, `bind_user_id`, `set_page_context`, `clear_context`, `get_log_context`.                                                                                                                                                                                       | `a47af80`                     |
+| `app/core/logging_config.py` | **New file.** `ContextInjectingFilter`, `SecretRedactingFilter` (with extra-field redaction + URL sanitization), `DevFormatter` (with `formatException` override for traceback redaction), `JsonFormatter` (with `"event"` field + `formatException` override), `_sanitize_exception_text()`, `sanitize_url()`, `configure_logging()`. Idempotent, stdout-only, `LOG_FORMAT`/`LOG_LEVEL` driven. | `a47af80` + `99e2c04` + final |
+| `app/main.py`                | Added `configure_logging()` call in lifespan, `request_context_middleware` with try/finally pattern that sets/clears `request_id` per HTTP request, logs `http.request_failed` on exceptions, replaced `print("Startup complete")` with `logger.info`.                                                                                                                                           | `a47af80` + `99e2c04`         |
+| `app/api/deps.py`            | Added `bind_user_id(user.id)` after successful JWT decode in `get_current_user` and `get_optional_user`.                                                                                                                                                                                                                                                                                         | `a47af80`                     |
+| `app/db/database.py`         | Set `echo=False` on `async_session_factory` to suppress SQLAlchemy query logging.                                                                                                                                                                                                                                                                                                                | `a47af80`                     |
 
 ### Layer 2 — Security & Correctness
 
@@ -50,14 +50,14 @@ The full 3-layer logging and observability plan has been implemented and subsequ
 
 ## 3. New Files
 
-| File                                     | Lines | Purpose                                                                             |
-| ---------------------------------------- | ----- | ----------------------------------------------------------------------------------- |
-| `app/core/log_context.py`                | 88    | Context variable bindings for log correlation                                       |
-| `app/core/logging_config.py`             | 381   | Logging configuration, formatters, filters, URL sanitization, extra-field redaction |
-| `tests/core/test_log_context.py`         | 62    | Unit tests for log_context module                                                   |
-| `tests/core/test_logging_config.py`      | 321   | Unit tests for logging_config module                                                |
-| `tests/core/test_logging_integration.py` | 628   | Integration tests for all logging events                                            |
-| `tests/core/test_logging_remediation.py` | 839   | Implementation-level tests for remediation fixes                                    |
+| File                                     | Lines | Purpose                                                                                                            |
+| ---------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------ |
+| `app/core/log_context.py`                | 88    | Context variable bindings for log correlation                                                                      |
+| `app/core/logging_config.py`             | 403   | Logging configuration, formatters, filters, URL sanitization, extra-field redaction, exception traceback redaction |
+| `tests/core/test_log_context.py`         | 62    | Unit tests for log_context module                                                                                  |
+| `tests/core/test_logging_config.py`      | 321   | Unit tests for logging_config module                                                                               |
+| `tests/core/test_logging_integration.py` | 628   | Integration tests for all logging events                                                                           |
+| `tests/core/test_logging_remediation.py` | 1150  | Implementation-level tests for remediation fixes, exception redaction, real middleware                             |
 
 ---
 
@@ -70,6 +70,7 @@ The full 3-layer logging and observability plan has been implemented and subsequ
 | `app/db/database.py`                 | Set `echo=False`                                                             |
 | `app/api/v1/endpoints/auth.py`       | Added 6 auth event logs (register, login, token_refresh success/failed)      |
 | `app/api/v1/endpoints/providers.py`  | Added key reveal + key reveal failed audit logs                              |
+| `app/services/provider_service.py`   | Expanded `_SECRET_PATTERNS` to cover `password`, `token`, `secret`, etc.     |
 | `app/services/project_extraction.py` | Fixed 3 silent excepts, added 4 coverage events, added task context binding  |
 | `app/services/frontierpreview.py`    | Fixed silent except, added 3 coverage events, added task context binding     |
 | `app/services/crawl_scope.py`        | Added 4 scope classification events                                          |
@@ -84,7 +85,7 @@ The full 3-layer logging and observability plan has been implemented and subsequ
 
 ```
 $ venv\Scripts\python.exe -m pytest tests/ -x --tb=short -q
-329 passed, 43 warnings in 6.80s
+344 passed, 43 warnings in 7.43s
 ```
 
 **New test files:**
@@ -92,9 +93,9 @@ $ venv\Scripts\python.exe -m pytest tests/ -x --tb=short -q
 - `tests/core/test_log_context.py` — 9 tests (all pass)
 - `tests/core/test_logging_config.py` — 22 tests (all pass)
 - `tests/core/test_logging_integration.py` — 31 tests (all pass)
-- `tests/core/test_logging_remediation.py` — 30 tests (all pass)
+- `tests/core/test_logging_remediation.py` — 45 tests (all pass)
 
-**Total new tests: 92**
+**Total new tests: 106**
 
 No regressions in existing test suite.
 
@@ -159,8 +160,9 @@ No regressions in existing test suite.
 ## 7. Security Guarantees
 
 - **No credential material in logs:** Auth events log `user_id` and `email` only; passwords and tokens are never logged.
-- **Secret redaction backstop:** `SecretRedactingFilter` strips API key patterns (`sk-...`, `key-...`, etc.) from log messages, args, AND structured extra fields. It also fully redacts keys in `_FULL_REDACT_KEYS` (`api_key`, `token`, `password`, etc.) and sanitizes URL fields in `_URL_KEYS` by stripping query strings and fragments.
+- **Secret redaction backstop:** `SecretRedactingFilter` strips API key patterns (`sk-...`, `key-...`, etc.) from log messages, args, AND structured extra fields. It also fully redacts keys in `_FULL_REDACT_KEYS` (`api_key`, `token`, `password`, etc.) and sanitizes URL fields in `_URL_KEYS` by stripping query strings and fragments. The `_SECRET_PATTERNS` regex in `redact_provider_secret()` now also covers `password=`, `token=`, `secret=`, `access_token=`, `refresh_token=`, `hashed_password=`, and `api_key_encrypted=` patterns in free-form text (including exception tracebacks).
 - **URL sanitization:** `sanitize_url()` strips query strings and fragments from URL extra fields to prevent token/session/key leaks via logged URLs. Ad-hoc URL strings (starting with `http://` or `https://`) are also sanitized by a catch-all check.
+- **Exception traceback redaction:** Both `DevFormatter` and `JsonFormatter` override `formatException()` to pass the formatted traceback text through `_sanitize_exception_text()`, which applies `redact_provider_secret()` pattern redaction and URL sanitization. This prevents secrets from leaking through `logger.exception()` calls or any `exc_info`-bearing log event.
 - **Key reveal audit trail:** `security.key_revealed` event records who revealed which provider key, without including the key value itself.
 - **No extracted content in logs:** Extraction events log counts and labels only; raw field values and record content stay in the database.
 
