@@ -18,6 +18,10 @@ from alembic import context
 from app.models.base import Base
 from app.core.config import settings
 
+# Side-effect import: registers all models with Base.metadata so
+# alembic --autogenerate detects new tables (including browser_sessions).
+import app.models  # noqa: F401, E402
+
 # Alembic Config object
 config = context.config
 

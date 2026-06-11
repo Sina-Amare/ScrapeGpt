@@ -11,6 +11,7 @@ import { NewScrapePage } from "./pages/NewScrapePage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
+import { SessionsPage } from "./pages/SessionsPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,7 @@ function ProtectedShell() {
         <Route path="jobs/new" element={<Navigate to="/projects/new" replace />} />
         <Route path="jobs/:id" element={<LegacyJobRedirect />} />
         <Route path="providers" element={<ProvidersPage />} />
+        <Route path="sessions" element={<SessionsPage />} />
         <Route path="scrape/new" element={<NewScrapePage />} />
         <Route path="health" element={<HealthPage />} />
         <Route path="*" element={<FallbackRedirect />} />

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   BrainCog,
+  Cookie,
   DatabaseZap,
   HeartPulse,
   List,
@@ -22,6 +23,7 @@ const navItems = [
   { to: "/projects", label: "Projects", icon: List, end: true },
   { to: "/projects/new", label: "New Extraction", icon: BrainCog, end: false },
   { to: "/providers", label: "Providers", icon: Settings2, end: false },
+  { to: "/sessions", label: "Sessions", icon: Cookie, end: false },
   { to: "/scrape/new", label: "Legacy Scrape", icon: Plus, end: false, legacy: true },
   { to: "/health", label: "Health", icon: HeartPulse, end: false }
 ];

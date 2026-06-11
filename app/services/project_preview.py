@@ -13,6 +13,7 @@ from app.services.anti_bot import CHALLENGE_MESSAGES, anti_bot_challenge_reason
 from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, fetch_url
 from app.services.robots_service import RobotsResult, check_robots
+from app.services.session_service import get_cookies_for_session
 from app.services.url_validator import URLValidationError, validate_url
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,11 @@ def build_preview_payload(project: Project, spec: ExtractionSpec) -> dict[str, A
     }
 
 
-async def build_selector_preview_payload(project: Project, spec: ExtractionSpec) -> dict[str, Any]:
+async def build_selector_preview_payload(
+    project: Project,
+    spec: ExtractionSpec,
+    db: AsyncSession | None = None,
+) -> dict[str, Any]:
     """Fetch the seed page and execute saved selectors for a real preview."""
     try:
         validated_url = validate_url(project.normalized_url or project.url)
@@ -97,8 +102,21 @@ async def build_selector_preview_payload(project: Project, spec: ExtractionSpec)
         and project.fetch_metadata.get("render_mode_used") == "BROWSER"
     ):
         effective_render_mode = "BROWSER"
+
+    session_cookies: list[dict] | None = None
+    if db is not None and project.browser_session_id is not None:
+        session_cookies = await get_cookies_for_session(
+            db,
+            project.browser_session_id,
+            owner_user_id=project.user_id,
+        )
+
     try:
-        fetched = await fetch_url(validated_url, effective_render_mode)
+        fetched = await fetch_url(
+            validated_url,
+            effective_render_mode,
+            browser_session_cookies=session_cookies,
+        )
     except FetchError as exc:
         raise RuntimeError(str(exc)) from exc
     challenge_reason = anti_bot_challenge_reason(fetched.html, fetched.final_url)
@@ -167,7 +185,7 @@ async def create_preview(
     await db.flush()
 
     try:
-        payload = await build_selector_preview_payload(project, spec)
+        payload = await build_selector_preview_payload(project, spec, db)
     except Exception as exc:
         project.transition_to(ProjectState.FAILED)
         project.error = f"Preview failed: {exc}"

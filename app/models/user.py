@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from app.models.browser_session import BrowserSession
     from app.models.provider_config import ProviderConfig
 
 
@@ -95,7 +96,14 @@ class User(TimestampMixin, Base):
         foreign_keys=[default_provider_id],
         post_update=True,
     )
-    
+
+    browser_sessions: Mapped[list["BrowserSession"]] = relationship(
+        "BrowserSession",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="BrowserSession.user_id",
+    )
+
     # -------------------------------------------------------------------------
     # Methods
     # -------------------------------------------------------------------------

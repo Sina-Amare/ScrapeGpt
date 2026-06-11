@@ -16,7 +16,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { ApiError, api } from "../lib/api";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject } from "../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation, scopeModeLabel } from "../lib/scopeCopy";
-import { CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, ProjectRecord } from "../types";
+import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, ProjectRecord } from "../types";
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const pct = value == null ? 0 : Math.round(value * 100);
@@ -294,6 +294,19 @@ export function ProjectDetailPage() {
     },
   });
 
+  const setSessionMutation = useMutation({
+    mutationFn: (sessionId: number | null) =>
+      api.setProjectSession(projectId, sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    },
+  });
+
+  const { data: sessions } = useQuery<BrowserSession[]>({
+    queryKey: ["sessions"],
+    queryFn: () => api.listSessions(),
+  });
+
   const previewMutation = useMutation({
     mutationFn: () => api.previewProject(projectId),
     onSuccess: () => {
@@ -440,8 +453,73 @@ export function ProjectDetailPage() {
                 {retryMutation.error && (
                   <Alert tone="danger">{retryMutation.error.message}</Alert>
                 )}
+                {project.error_code === "BOT_PROTECTION_BLOCKED" && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
+                    <p className="font-medium text-amber-800">
+                      ScrapGPT cannot pass this bot protection automatically.
+                    </p>
+                    {(() => {
+                      const domain = (() => {
+                        try { return new URL(project.url).hostname; } catch { return ""; }
+                      })();
+                      const matching = (sessions ?? []).filter(
+                        (s) => s.is_active && (s.domain === domain || domain.endsWith(`.${s.domain}`))
+                      );
+                      if (matching.length === 0) {
+                        return (
+                          <p className="mt-1 text-amber-700">
+                            <Link to="/sessions" className="underline">
+                              Add a browser session for {domain || "this domain"}
+                            </Link>{" "}
+                            in Settings → Sessions, then retry.
+                          </p>
+                        );
+                      }
+                      return (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="text-amber-700">Use a saved session:</span>
+                          <Select
+                            value={String(project.browser_session_id ?? "")}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setSessionMutation.mutate(val ? Number(val) : null);
+                            }}
+                            className="text-sm"
+                          >
+                            <option value="">— Select session —</option>
+                            {matching.map((s) => (
+                              <option key={s.id} value={String(s.id)}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </Select>
+                          {setSessionMutation.error && (
+                            <span className="text-xs text-red-600">
+                              {setSessionMutation.error.message}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
             ) : null}
+            {project.progress.crawl_pages_blocked > 0 && (
+              <details className="mt-3">
+                <summary className="cursor-pointer text-sm font-medium text-amber-700">
+                  {project.progress.crawl_pages_blocked} page(s) blocked during extraction
+                </summary>
+                <ul className="mt-2 space-y-1 rounded-md border border-amber-100 bg-amber-50 p-3">
+                  {(project.progress.blocked_pages_detail ?? []).map((p, i) => (
+                    <li key={i} className="flex flex-wrap gap-2 text-xs text-gray-600">
+                      <span className="font-mono max-w-sm truncate">{p.url}</span>
+                      <span className="text-amber-700">{p.error ?? p.block_reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
             {project.warnings.length ? (
               <div className="mt-5">
                 <Alert tone="info">

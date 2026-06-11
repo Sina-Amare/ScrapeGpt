@@ -1,4 +1,5 @@
 # Models module - SQLAlchemy ORM models
+from app.models.browser_session import BrowserSession
 from app.models.provider_config import ProviderConfig
 from app.models.scrape_task import ScrapeTask, TaskState
 from app.models.user import User
@@ -20,6 +21,7 @@ from app.models.job import (
 )
 
 __all__ = [
+    "BrowserSession",
     "User",
     "ScrapeTask",
     "TaskState",

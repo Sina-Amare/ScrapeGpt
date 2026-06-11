@@ -50,6 +50,12 @@ class _NoRows:
     def scalar_one_or_none(self):
         return None
 
+    def all(self):
+        return []
+
+    def scalars(self):
+        return self
+
     def __iter__(self):
         return iter(())
 

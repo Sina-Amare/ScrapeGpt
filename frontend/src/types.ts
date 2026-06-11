@@ -351,6 +351,12 @@ export type PreviewResponse = {
   created_at: string;
 };
 
+export type BlockedPageDetail = {
+  url: string;
+  block_reason: string;
+  error: string | null;
+};
+
 export type ExtractionProgress = {
   crawl_pages_total: number;
   crawl_pages_pending: number;
@@ -360,6 +366,7 @@ export type ExtractionProgress = {
   crawl_pages_failed: number;
   extracted_records_total: number;
   exports_total: number;
+  blocked_pages_detail: BlockedPageDetail[];
 };
 
 export type ProjectListItem = {
@@ -383,6 +390,7 @@ export type ProjectResponse = ProjectListItem & {
   workflow_mode: WorkflowMode;
   render_mode: RenderMode;
   provider_config_id: number | null;
+  browser_session_id: number | null;
   warnings: string[];
   analysis:
     | StructuredAnalysis
@@ -398,6 +406,29 @@ export type ProjectResponse = ProjectListItem & {
   progress: ExtractionProgress;
   created_at: string;
   updated_at: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// Browser Sessions
+// ---------------------------------------------------------------------------
+
+export type BrowserSession = {
+  id: number;
+  name: string;
+  domain: string;
+  user_agent: string | null;
+  expires_at: string | null;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type BrowserSessionCreateInput = {
+  name: string;
+  domain: string;
+  cookies_raw: string;
+  user_agent?: string | null;
+  expires_at?: string | null;
 };
 
 export type ProjectRecord = {

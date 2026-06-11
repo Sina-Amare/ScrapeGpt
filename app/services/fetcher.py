@@ -219,7 +219,10 @@ def _ensure_windows_proactor_policy_for_playwright() -> None:
         asyncio.set_event_loop_policy(policy_factory())
 
 
-def _browser_fetch_sync(url: str) -> FetchResult:
+def _browser_fetch_sync(
+    url: str,
+    cookies: list[dict] | None = None,
+) -> FetchResult:
     """Fetch with Playwright sync API for Windows selector event loops."""
     _ensure_windows_proactor_policy_for_playwright()
     try:
@@ -246,6 +249,8 @@ def _browser_fetch_sync(url: str) -> FetchResult:
                         if k not in ("Accept-Encoding",)
                     },
                 )
+                if cookies:
+                    context.add_cookies(cookies)
                 try:
                     def _route_handler(route: Any) -> None:
                         req_url = route.request.url
@@ -315,7 +320,10 @@ def _browser_fetch_sync(url: str) -> FetchResult:
         raise FetchError(_format_browser_exception(exc), "FETCH_FAILED") from exc
 
 
-async def _browser_fetch_async(url: str) -> FetchResult:
+async def _browser_fetch_async(
+    url: str,
+    cookies: list[dict] | None = None,
+) -> FetchResult:
     """Fetch a URL with Playwright Chromium. Raises FetchError if unavailable."""
     try:
         from playwright.async_api import async_playwright  # noqa: PLC0415
@@ -343,6 +351,8 @@ async def _browser_fetch_async(url: str) -> FetchResult:
                         if k not in ("Accept-Encoding",)
                     },
                 )
+                if cookies:
+                    await context.add_cookies(cookies)
                 try:
                     # SSRF prevention: intercept every outgoing request and block
                     # private / metadata IPs before the connection is established.
@@ -430,10 +440,13 @@ async def _browser_fetch_async(url: str) -> FetchResult:
     )
 
 
-async def _browser_fetch(url: str) -> FetchResult:
+async def _browser_fetch(
+    url: str,
+    cookies: list[dict] | None = None,
+) -> FetchResult:
     if _should_use_threaded_browser_fetch():
-        return await asyncio.to_thread(_browser_fetch_sync, url)
-    return await _browser_fetch_async(url)
+        return await asyncio.to_thread(_browser_fetch_sync, url, cookies)
+    return await _browser_fetch_async(url, cookies)
 
 
 def _is_sparse(html: str) -> bool:
@@ -442,7 +455,11 @@ def _is_sparse(html: str) -> bool:
     return len(stripped) < 500
 
 
-async def fetch_url(url: str, render_mode: str = "AUTO") -> FetchResult:
+async def fetch_url(
+    url: str,
+    render_mode: str = "AUTO",
+    browser_session_cookies: list[dict] | None = None,
+) -> FetchResult:
     """
     Fetch a URL according to render_mode.
 
@@ -453,7 +470,7 @@ async def fetch_url(url: str, render_mode: str = "AUTO") -> FetchResult:
     not installed.
     """
     if render_mode == "BROWSER":
-        return await _browser_fetch(url)
+        return await _browser_fetch(url, browser_session_cookies)
 
     result = await _static_fetch(url)
 
@@ -473,7 +490,7 @@ async def fetch_url(url: str, render_mode: str = "AUTO") -> FetchResult:
 
     logger.info(log_event, extra={"url": url, "challenge": challenge})
     try:
-        result = await _browser_fetch(url)
+        result = await _browser_fetch(url, browser_session_cookies)
     except FetchError as exc:
         if exc.error_code == "BROWSER_UNAVAILABLE":
             logger.info(

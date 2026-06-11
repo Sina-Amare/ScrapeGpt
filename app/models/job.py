@@ -199,6 +199,12 @@ class Project(Base):
         nullable=True,
     )
 
+    browser_session_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("browser_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
     normalized_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
 
@@ -254,7 +260,14 @@ class Project(Base):
     )
 
     user = relationship("User", backref="projects")
-    provider_config = relationship("ProviderConfig", foreign_keys=[provider_config_id])
+    provider_config = relationship(
+        "ProviderConfig", foreign_keys=[provider_config_id]
+    )
+    browser_session = relationship(
+        "BrowserSession",
+        foreign_keys=[browser_session_id],
+        back_populates="projects",
+    )
     specs = relationship(
         "ExtractionSpec",
         back_populates="project",

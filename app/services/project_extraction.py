@@ -27,6 +27,7 @@ from app.models.job import (
     ProjectState,
 )
 from app.services.anti_bot import CHALLENGE_MESSAGES, anti_bot_challenge_reason
+from app.services.session_service import get_cookies_for_session
 from app.services.crawl_scope import (
     CrawlScopeMode,
     ScopeConfirmationError,
@@ -287,6 +288,15 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         },
                     )
 
+            # Load session cookies once for the whole crawl.
+            session_cookies: list[dict] | None = None
+            if project.browser_session_id is not None:
+                session_cookies = await get_cookies_for_session(
+                    db,
+                    project.browser_session_id,
+                    owner_user_id=project.user_id,
+                )
+
             while processed_pages < page_limit:
                 if await _project_was_canceled(db, project_id):
                     logger.info("project_extraction.canceled", extra={"project_id": project_id})
@@ -343,7 +353,11 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         and project.fetch_metadata.get("render_mode_used") == "BROWSER"
                     ):
                         effective_render_mode = "BROWSER"
-                    fetched = await fetch_url(validated_url, effective_render_mode)
+                    fetched = await fetch_url(
+                        validated_url,
+                        effective_render_mode,
+                        browser_session_cookies=session_cookies,
+                    )
                     challenge_reason = anti_bot_challenge_reason(fetched.html, fetched.final_url)
                     if challenge_reason:
                         page.state = CrawlPageState.BLOCKED
@@ -479,14 +493,43 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 )
                 project = await db.get(Project, project_id)
                 if project and not project.is_terminal:
-                    await _mark_project_failed(
-                        db, project,
-                        (
-                            f"All {processed_pages} pages failed or "
-                            f"were blocked during extraction"
-                        ),
-                        "ALL_PAGES_FAILED",
+                    # Distinguish bot-protection blocks from generic failures
+                    # so the UI can offer a session-based retry.
+                    blocked_rows = (await db.execute(
+                        select(CrawlPage.block_reason).where(
+                            CrawlPage.project_id == project_id,
+                            CrawlPage.state == CrawlPageState.BLOCKED,
+                        )
+                    )).scalars().all()
+                    failed_count = int(await db.scalar(
+                        select(func.count(CrawlPage.id)).where(
+                            CrawlPage.project_id == project_id,
+                            CrawlPage.state == CrawlPageState.FAILED,
+                        )
+                    ) or 0)
+                    bot_blocked = [
+                        r for r in blocked_rows
+                        if r == "ANTI_BOT_CHALLENGE"
+                    ]
+                    all_bot = (
+                        bot_blocked
+                        and len(bot_blocked) == len(blocked_rows)
+                        and failed_count == 0
                     )
+                    if all_bot:
+                        msg = (
+                            f"All {len(bot_blocked)} page(s) were blocked by "
+                            "bot protection. Add a browser session for this "
+                            "domain in Settings → Sessions, then retry."
+                        )
+                        code = "BOT_PROTECTION_BLOCKED"
+                    else:
+                        msg = (
+                            f"All {processed_pages} pages failed or "
+                            "were blocked during extraction"
+                        )
+                        code = "ALL_PAGES_FAILED"
+                    await _mark_project_failed(db, project, msg, code)
                 return
 
             if spec.mode == ExtractionMode.STRUCTURED and total_records == 0:

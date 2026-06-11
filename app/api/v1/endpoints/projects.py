@@ -28,6 +28,7 @@ from app.models.job import (
     ACTIVE_PROJECT_STATES,
     DELETABLE_PROJECT_STATES,
     CrawlPage,
+    CrawlPageState,
     Export,
     ExtractedRecord,
     ExtractionMode,
@@ -37,6 +38,7 @@ from app.models.job import (
 )
 from app.models.user import User
 from app.schemas.project import (
+    BlockedPageDetail,
     ExtractRequest,
     ExtractionProgress,
     ExtractionQuality,
@@ -70,20 +72,45 @@ logger = logging.getLogger(__name__)
 
 async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
     crawl_pages_total = await db.scalar(
-        select(func.count(CrawlPage.id)).where(CrawlPage.project_id == project_id)
+        select(func.count(CrawlPage.id)).where(
+            CrawlPage.project_id == project_id
+        )
     )
     page_counts_result = await db.execute(
         select(CrawlPage.state, func.count(CrawlPage.id))
         .where(CrawlPage.project_id == project_id)
         .group_by(CrawlPage.state)
     )
-    page_counts = {state.value if hasattr(state, "value") else str(state): int(count) for state, count in page_counts_result}
+    page_counts = {
+        state.value if hasattr(state, "value") else str(state): int(count)
+        for state, count in page_counts_result
+    }
     records = await db.scalar(
-        select(func.count(ExtractedRecord.id)).where(ExtractedRecord.project_id == project_id)
+        select(func.count(ExtractedRecord.id)).where(
+            ExtractedRecord.project_id == project_id
+        )
     )
     exports = await db.scalar(
         select(func.count(Export.id)).where(Export.project_id == project_id)
     )
+
+    blocked_rows = (await db.execute(
+        select(CrawlPage.normalized_url, CrawlPage.block_reason, CrawlPage.error)
+        .where(
+            CrawlPage.project_id == project_id,
+            CrawlPage.state == CrawlPageState.BLOCKED,
+        )
+        .limit(100)
+    )).all()
+    blocked_detail = [
+        BlockedPageDetail(
+            url=row.normalized_url or "",
+            block_reason=row.block_reason or "UNKNOWN",
+            error=row.error,
+        )
+        for row in blocked_rows
+    ]
+
     return ExtractionProgress(
         crawl_pages_total=int(crawl_pages_total or 0),
         crawl_pages_pending=page_counts.get("PENDING", 0),
@@ -93,6 +120,7 @@ async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
         crawl_pages_failed=page_counts.get("FAILED", 0),
         extracted_records_total=int(records or 0),
         exports_total=int(exports or 0),
+        blocked_pages_detail=blocked_detail,
     )
 
 
@@ -759,6 +787,31 @@ async def retry_project(
             job_id=project.id,
             provider_config_id=provider.id,
         )
+    return await _project_response(db, project)
+
+
+@router.patch(
+    "/{project_id}/session",
+    response_model=ProjectResponse,
+    summary="Assign or clear a browser session for a project",
+)
+async def set_project_session(
+    project_id: int,
+    browser_session_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectResponse:
+    from app.services.session_service import get_session  # noqa: PLC0415
+    project = await _owned_project(db, user, project_id)
+    if browser_session_id is not None:
+        session = await get_session(db, user, browser_session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found",
+            )
+    project.browser_session_id = browser_session_id
+    await db.commit()
     return await _project_response(db, project)
 
 

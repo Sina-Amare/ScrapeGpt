@@ -212,6 +212,12 @@ class PreviewResponse(BaseModel):
     created_at: datetime | None = None
 
 
+class BlockedPageDetail(BaseModel):
+    url: str
+    block_reason: str
+    error: str | None = None
+
+
 class ExtractionProgress(BaseModel):
     crawl_pages_total: int = 0
     crawl_pages_pending: int = 0
@@ -221,6 +227,7 @@ class ExtractionProgress(BaseModel):
     crawl_pages_failed: int = 0
     extracted_records_total: int = 0
     exports_total: int = 0
+    blocked_pages_detail: list[BlockedPageDetail] = Field(default_factory=list)
 
 
 class ProjectListItem(BaseModel):

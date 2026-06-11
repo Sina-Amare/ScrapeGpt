@@ -1,5 +1,7 @@
 import {
   AuthResponse,
+  BrowserSession,
+  BrowserSessionCreateInput,
   CrawlScope,
   ExtractionSpecResponse,
   FieldSpec,
@@ -385,8 +387,35 @@ export const api = {
     return apiRequest<ProjectResponse>(`/projects/${id}/retry`, { method: "POST" });
   },
 
+  setProjectSession(id: number, sessionId: number | null): Promise<ProjectResponse> {
+    const params = sessionId != null ? `?browser_session_id=${sessionId}` : "";
+    return apiRequest<ProjectResponse>(`/projects/${id}/session${params}`, {
+      method: "PATCH"
+    });
+  },
+
   deleteProject(id: number): Promise<void> {
     return apiRequest<void>(`/projects/${id}`, { method: "DELETE" });
+  },
+
+  // -------------------------------------------------------------------------
+  // Browser Sessions
+  // -------------------------------------------------------------------------
+
+  listSessions(): Promise<BrowserSession[]> {
+    return apiRequest<BrowserSession[]>("/sessions");
+  },
+
+  createSession(input: BrowserSessionCreateInput): Promise<BrowserSession> {
+    return apiRequest<BrowserSession>("/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    });
+  },
+
+  deleteSession(id: number): Promise<void> {
+    return apiRequest<void>(`/sessions/${id}`, { method: "DELETE" });
   },
 
   async exportProject(id: number, format: "csv" | "json" | "xlsx" = "csv"): Promise<void> {
