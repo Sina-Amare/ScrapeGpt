@@ -88,6 +88,9 @@ class FakeProjectSession:
     async def refresh(self, obj):
         pass
 
+    async def rollback(self):
+        pass
+
     async def commit(self):
         self.commits += 1
 
@@ -186,6 +189,132 @@ async def test_delete_active_project_returns_400_without_deleting(async_client, 
     assert response.status_code == 400
     assert db.commits == 0
     assert db.deleted_tables == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_css_selector_returns_422(async_client, app):
+    project = _project()
+    project.state = ProjectState.ANALYSIS_READY
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+
+    response = await async_client.patch(
+        "/api/v1/projects/1/spec",
+        json={"fields": [{"name": "title", "selector": "##invalid[unclosed"}]},
+    )
+
+    assert response.status_code == 422
+    assert "selector" in response.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_zero_preview_records_blocks_extraction(async_client, app, monkeypatch):
+    project = _project()
+    project.state = ProjectState.PREVIEW_READY
+
+    fake_spec = ExtractionSpec(
+        id=1,
+        project_id=1,
+        mode=ExtractionMode.STRUCTURED,
+        fields=[{"name": "title", "selector": "h1", "selected": True}],
+        content_config={},
+        url_patterns=[],
+        page_limit=500,
+        export_format="csv",
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_preview = PreviewResult(
+        id=1,
+        project_id=1,
+        spec_id=1,
+        sample_records=[],
+        warnings=[],
+        missing_fields=[],
+        quality_summary={"sample_record_count": 0},
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def _latest_spec(db, project_id):
+        return fake_spec
+
+    async def _latest_preview(db, project_id):
+        return fake_preview
+
+    monkeypatch.setattr("app.api.v1.endpoints.projects.latest_spec", _latest_spec)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.latest_preview", _latest_preview)
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+
+    response = await async_client.post("/api/v1/projects/1/extract")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "ZERO_PREVIEW_RECORDS"
+
+
+@pytest.mark.asyncio
+async def test_extract_anyway_bypasses_zero_preview_gate(async_client, app, monkeypatch):
+    project = _project()
+    project.state = ProjectState.PREVIEW_READY
+
+    fake_spec = ExtractionSpec(
+        id=1,
+        project_id=1,
+        mode=ExtractionMode.STRUCTURED,
+        fields=[],
+        content_config={},
+        url_patterns=[],
+        page_limit=500,
+        export_format="csv",
+        created_at=datetime.now(timezone.utc),
+    )
+    fake_preview = PreviewResult(
+        id=1,
+        project_id=1,
+        spec_id=1,
+        sample_records=[],
+        warnings=[],
+        missing_fields=[],
+        quality_summary={"sample_record_count": 0},
+        created_at=datetime.now(timezone.utc),
+    )
+
+    async def _latest_spec(db, project_id):
+        return fake_spec
+
+    async def _latest_preview(db, project_id):
+        return fake_preview
+
+    async def _start_extraction(db, project, spec, *, allow_unconfirmed=False):
+        project.state = ProjectState.DISCOVERING
+
+    async def _ensure_default_spec(db, project):
+        return fake_spec
+
+    async def _noop_execute(project_id, spec_id):
+        pass
+
+    monkeypatch.setattr("app.api.v1.endpoints.projects.latest_spec", _latest_spec)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.latest_preview", _latest_preview)
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.projects.start_project_extraction", _start_extraction
+    )
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.projects.ensure_default_spec", _ensure_default_spec
+    )
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.projects.execute_project_extraction", _noop_execute
+    )
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeProjectSession(project))
+
+    response = await async_client.post(
+        "/api/v1/projects/1/extract",
+        json={"extract_anyway": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["system_state"] == "DISCOVERING"
 
 
 class _DeleteFailingSession(FakeProjectSession):

@@ -336,7 +336,14 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         processed_pages += 1
                         continue
 
-                    fetched = await fetch_url(validated_url, project.render_mode.value)
+                    effective_render_mode = project.render_mode.value
+                    if (
+                        effective_render_mode == "AUTO"
+                        and isinstance(project.fetch_metadata, dict)
+                        and project.fetch_metadata.get("render_mode_used") == "BROWSER"
+                    ):
+                        effective_render_mode = "BROWSER"
+                    fetched = await fetch_url(validated_url, effective_render_mode)
                     challenge_reason = anti_bot_challenge_reason(fetched.html, fetched.final_url)
                     if challenge_reason:
                         page.state = CrawlPageState.BLOCKED

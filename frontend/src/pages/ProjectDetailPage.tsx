@@ -171,6 +171,11 @@ export function ProjectDetailPage() {
   const [scopeChangedAfterPreview, setScopeChangedAfterPreview] = useState(false);
   // Scope confirmation error from extract 409
   const [extractScopeError, setExtractScopeError] = useState<string | null>(null);
+  // Preview-gate error (NO_PREVIEW / STALE_PREVIEW / ZERO_PREVIEW_RECORDS) with bypass option
+  const [extractGateError, setExtractGateError] = useState<{
+    code: string;
+    message: string;
+  } | null>(null);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
@@ -290,26 +295,41 @@ export function ProjectDetailPage() {
   });
 
   const extractMutation = useMutation({
-    mutationFn: () => api.extractProject(projectId, false),
+    mutationFn: (extractAnyway: boolean) =>
+      api.extractProject(projectId, extractAnyway),
     onSuccess: () => {
       setExtractScopeError(null);
+      setExtractGateError(null);
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["project-records-page", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
-        const detail = error.detail as
-          | { detail?: { error_code?: string } | null }
+        const raw = error.detail as
+          | { detail?: { error_code?: string; message?: string } | null }
           | null;
-        if (detail?.detail?.error_code === "SCOPE_NOT_CONFIRMED") {
+        const code = raw?.detail?.error_code;
+        const message = raw?.detail?.message;
+        if (code === "SCOPE_NOT_CONFIRMED") {
           setExtractScopeError(
             "Confirm what ScrapGPT should crawl before extraction."
           );
           return;
         }
+        if (
+          code === "STALE_PREVIEW" ||
+          code === "ZERO_PREVIEW_RECORDS" ||
+          code === "NO_PREVIEW"
+        ) {
+          setExtractGateError({
+            code,
+            message: message ?? "Run preview before extracting.",
+          });
+          return;
+        }
       }
-    }
+    },
   });
 
   const cancelMutation = useMutation({
@@ -512,7 +532,7 @@ export function ProjectDetailPage() {
                 <p className="text-sm text-muted">Run extraction from the saved field selection.</p>
               </div>
               <Button
-                onClick={() => extractMutation.mutate()}
+                onClick={() => { setExtractGateError(null); extractMutation.mutate(false); }}
                 disabled={
                   !project.preview ||
                   extractMutation.isPending ||
@@ -542,6 +562,25 @@ export function ProjectDetailPage() {
               </div>
             ) : null}
 
+            {extractGateError ? (
+              <div className="mb-4">
+                <Alert tone="info">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    <div>
+                      <p>{extractGateError.message}</p>
+                      <button
+                        className="mt-2 text-sm underline hover:no-underline"
+                        onClick={() => extractMutation.mutate(true)}
+                        disabled={extractMutation.isPending}
+                      >
+                        {extractMutation.isPending ? "Extracting…" : "Extract anyway"}
+                      </button>
+                    </div>
+                  </div>
+                </Alert>
+              </div>
+            ) : null}
             {extractMutation.error && !(extractMutation.error instanceof ApiError && extractMutation.error.status === 409) ? (
               <div className="mb-4"><Alert tone="danger">{extractMutation.error.message}</Alert></div>
             ) : null}

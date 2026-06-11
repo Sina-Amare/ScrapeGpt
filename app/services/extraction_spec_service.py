@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import soupsieve as sv
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +13,37 @@ from app.core.config import settings
 from app.models.job import ExtractionMode, ExtractionSpec, Project
 from app.services.crawl_scope import default_crawl_scope
 
+logger = logging.getLogger(__name__)
+
+
+def _validated_selector(raw: str | None, field_name: str | None) -> str | None:
+    if not raw or not raw.strip():
+        return raw
+    try:
+        sv.compile(raw.strip())
+        return raw
+    except Exception as exc:
+        logger.warning(
+            "spec.invalid_selector_from_analysis",
+            extra={"field_name": field_name, "selector": raw, "error": str(exc)},
+        )
+        return None
+
+
+def _build_field(field: dict[str, Any], confidence: float) -> dict[str, Any]:
+    name = field.get("name")
+    return {
+        "name": name,
+        "label": field.get("label") or name,
+        "user_label": field.get("label") or name,
+        "selector": _validated_selector(field.get("selector"), name),
+        "type": field.get("data_type") or field.get("type") or "string",
+        "selected": confidence >= 0.7,
+        "required": bool(field.get("required")),
+        "confidence": confidence,
+        "sample_values": field.get("sample_values") or [],
+        "warnings": [],
+    }
 
 
 def default_spec_from_analysis(project: Project) -> dict[str, Any]:
@@ -21,20 +54,7 @@ def default_spec_from_analysis(project: Project) -> dict[str, Any]:
     if project.extraction_mode == ExtractionMode.STRUCTURED:
         for field in analysis.get("candidate_fields", []) or []:
             confidence = float(field.get("confidence") or 0)
-            fields.append(
-                {
-                    "name": field.get("name"),
-                    "label": field.get("label") or field.get("name"),
-                    "user_label": field.get("label") or field.get("name"),
-                    "selector": field.get("selector"),
-                    "type": field.get("data_type") or field.get("type") or "string",
-                    "selected": confidence >= 0.7,
-                    "required": bool(field.get("required")),
-                    "confidence": confidence,
-                    "sample_values": field.get("sample_values") or [],
-                    "warnings": [],
-                }
-            )
+            fields.append(_build_field(field, confidence))
     else:
         content_config = {
             "primary_selector": analysis.get("primary_content_selector"),
@@ -44,20 +64,10 @@ def default_spec_from_analysis(project: Project) -> dict[str, Any]:
         }
         for field in analysis.get("metadata_fields", []) or []:
             confidence = float(field.get("confidence") or 0)
-            fields.append(
-                {
-                    "name": field.get("name"),
-                    "label": field.get("label") or field.get("name"),
-                    "user_label": field.get("label") or field.get("name"),
-                    "selector": field.get("selector"),
-                    "type": "string",
-                    "selected": confidence >= 0.7,
-                    "required": False,
-                    "confidence": confidence,
-                    "sample_values": field.get("sample_values") or [],
-                    "warnings": [],
-                }
-            )
+            entry = _build_field(field, confidence)
+            entry["type"] = "string"
+            entry["required"] = False
+            fields.append(entry)
 
     return {
         "mode": project.extraction_mode,
@@ -70,8 +80,9 @@ def default_spec_from_analysis(project: Project) -> dict[str, Any]:
     }
 
 
-
-async def latest_spec(db: AsyncSession, project_id: int) -> ExtractionSpec | None:
+async def latest_spec(
+    db: AsyncSession, project_id: int
+) -> ExtractionSpec | None:
     result = await db.execute(
         select(ExtractionSpec)
         .where(ExtractionSpec.project_id == project_id)
@@ -81,7 +92,9 @@ async def latest_spec(db: AsyncSession, project_id: int) -> ExtractionSpec | Non
     return result.scalar_one_or_none()
 
 
-async def ensure_default_spec(db: AsyncSession, project: Project) -> ExtractionSpec | None:
+async def ensure_default_spec(
+    db: AsyncSession, project: Project
+) -> ExtractionSpec | None:
     spec = await latest_spec(db, project.id)
     if spec is not None:
         return spec

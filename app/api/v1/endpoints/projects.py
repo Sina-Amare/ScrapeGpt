@@ -30,6 +30,7 @@ from app.models.job import (
     CrawlPage,
     Export,
     ExtractedRecord,
+    ExtractionMode,
     ExtractionSpec,
     Project,
     ProjectState,
@@ -468,6 +469,24 @@ async def extract_project(
                     "error_code": "STALE_PREVIEW",
                 },
             )
+    # Gate: structured-mode preview with zero records means selectors matched nothing.
+    if (
+        preview is not None
+        and not extract_anyway
+        and spec.mode == ExtractionMode.STRUCTURED
+        and len(preview.sample_records or []) == 0
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "Preview found no records — CSS selectors likely do not "
+                    "match the current page. Run preview again to check for "
+                    "selector errors, or choose extract anyway."
+                ),
+                "error_code": "ZERO_PREVIEW_RECORDS",
+            },
+        )
     if project.state not in {
         ProjectState.AWAITING_SETUP,
         ProjectState.ANALYSIS_READY,
@@ -742,6 +761,7 @@ async def delete_project(
             "project.delete_failed",
             extra={"project_id": project_id, "user_id": user.id},
         )
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(

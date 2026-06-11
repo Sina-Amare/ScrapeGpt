@@ -115,7 +115,11 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
 
         confidence = float(analysis.get("confidence", 0.0))
         warnings = list(analysis.get("warnings", []))
-        fetch_meta = {**fetch_result.fetch_metadata, "final_url": fetch_result.final_url}
+        fetch_meta = {
+            **fetch_result.fetch_metadata,
+            "final_url": fetch_result.final_url,
+            "render_mode_used": fetch_result.render_mode_used.value,
+        }
 
         # ---- Phase 7: Choose final state ----
         if (

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+import soupsieve as sv
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 from app.schemas.job import ContentAnalysis, StructuredAnalysis
@@ -49,6 +50,16 @@ class FieldSpec(BaseModel):
     user_label: str | None = None
     selector: str | None = None
     type: str = "string"
+
+    @field_validator("selector")
+    @classmethod
+    def validate_selector_syntax(cls, value: str | None) -> str | None:
+        if value is not None and value.strip():
+            try:
+                sv.compile(value.strip())
+            except Exception as exc:
+                raise ValueError(f"Invalid CSS selector: {exc}") from exc
+        return value
     selected: bool = True
     required: bool = False
     confidence: float | None = None

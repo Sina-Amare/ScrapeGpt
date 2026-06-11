@@ -90,8 +90,15 @@ async def build_selector_preview_payload(project: Project, spec: ExtractionSpec)
     if robots.result == RobotsResult.UNAVAILABLE:
         raise RuntimeError(f"robots.txt unavailable and policy=deny: {robots.reason}")
 
+    effective_render_mode = project.render_mode.value
+    if (
+        effective_render_mode == "AUTO"
+        and isinstance(project.fetch_metadata, dict)
+        and project.fetch_metadata.get("render_mode_used") == "BROWSER"
+    ):
+        effective_render_mode = "BROWSER"
     try:
-        fetched = await fetch_url(validated_url, project.render_mode.value)
+        fetched = await fetch_url(validated_url, effective_render_mode)
     except FetchError as exc:
         raise RuntimeError(str(exc)) from exc
     challenge_reason = anti_bot_challenge_reason(fetched.html, fetched.final_url)
