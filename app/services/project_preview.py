@@ -12,7 +12,6 @@ from app.models.job import ExtractionSpec, PreviewResult, Project, ProjectState
 from app.services.anti_bot import CHALLENGE_MESSAGES, anti_bot_challenge_reason
 from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, fetch_url
-from app.services.robots_service import RobotsResult, check_robots
 from app.services.session_service import get_cookies_for_session
 from app.services.url_validator import URLValidationError, validate_url
 
@@ -88,12 +87,6 @@ async def build_selector_preview_payload(
         validated_url = validate_url(project.normalized_url or project.url)
     except URLValidationError as exc:
         raise RuntimeError(str(exc)) from exc
-
-    robots = await check_robots(validated_url)
-    if robots.result == RobotsResult.BLOCKED:
-        raise RuntimeError(f"robots.txt disallows previewing this URL: {robots.reason}")
-    if robots.result == RobotsResult.UNAVAILABLE:
-        raise RuntimeError(f"robots.txt unavailable and policy=deny: {robots.reason}")
 
     effective_render_mode = project.render_mode.value
     if (

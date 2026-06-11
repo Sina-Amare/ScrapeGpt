@@ -37,7 +37,6 @@ from app.services.crawl_scope import (
 )
 from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, fetch_url
-from app.services.robots_service import RobotsResult, check_robots
 from app.services.url_normalizer import discover_same_site_links, normalize_url
 from app.services.url_validator import URLValidationError, validate_url
 from app.services.extraction_quality import compute_extraction_quality
@@ -313,38 +312,6 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
 
                 try:
                     validated_url = validate_url(page.normalized_url)
-                    robots = await check_robots(validated_url)
-                    if robots.result == RobotsResult.BLOCKED:
-                        page.state = CrawlPageState.BLOCKED
-                        page.block_reason = "ROBOTS_BLOCKED"
-                        page.error = robots.reason
-                        await db.commit()
-                        logger.warning(
-                            "extraction.page_robots_blocked",
-                            extra={
-                                "project_id": project_id,
-                                "page_id": page.id,
-                                "url": validated_url,
-                            },
-                        )
-                        processed_pages += 1
-                        continue
-                    if robots.result == RobotsResult.UNAVAILABLE:
-                        page.state = CrawlPageState.BLOCKED
-                        page.block_reason = "ROBOTS_UNAVAILABLE"
-                        page.error = robots.reason
-                        await db.commit()
-                        logger.warning(
-                            "extraction.page_robots_blocked",
-                            extra={
-                                "project_id": project_id,
-                                "page_id": page.id,
-                                "url": validated_url,
-                                "reason": "robots_unavailable",
-                            },
-                        )
-                        processed_pages += 1
-                        continue
 
                     effective_render_mode = project.render_mode.value
                     if (

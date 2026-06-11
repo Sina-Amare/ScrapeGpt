@@ -10,7 +10,6 @@ import logging
 
 from app.db.database import async_session_factory
 from app.models.scrape_task import ScrapeTask, TaskState
-from app.services.robots_service import RobotsResult, check_robots
 from app.services.scraper import scrape_url, ScrapeError
 from app.services.llm_processor import process_with_llm, LLMError
 from app.services.task_state import (
@@ -71,31 +70,6 @@ async def execute_scrape_pipeline(task_id: int, user_id: int) -> None:
                     "url": url,
                     "reason": exc.reason.value,
                 },
-            )
-            return
-
-        # Phase 0.5: Check robots.txt (mirrors project pipeline).
-        robots = await check_robots(validated_url)
-        if robots.result == RobotsResult.BLOCKED:
-            await transition_to_failed(
-                task_id,
-                f"robots.txt disallows fetching: {robots.reason}",
-                expected_states={TaskState.PERMISSION_GRANTED},
-            )
-            logger.warning(
-                "pipeline.robots_blocked",
-                extra={"task_id": task_id, "url": validated_url},
-            )
-            return
-        if robots.result == RobotsResult.UNAVAILABLE:
-            await transition_to_failed(
-                task_id,
-                f"robots.txt unavailable and policy=deny: {robots.reason}",
-                expected_states={TaskState.PERMISSION_GRANTED},
-            )
-            logger.warning(
-                "pipeline.robots_unavailable",
-                extra={"task_id": task_id, "url": validated_url},
             )
             return
 

@@ -21,7 +21,6 @@ from app.services.job_state import (
     transition_job_to_awaiting_setup,
     transition_job_to_failed,
 )
-from app.services.robots_service import RobotsResult, check_robots
 from app.services.url_validator import URLValidationError, validate_url
 from app.services.provider_service import ProviderCallError, ProviderJSONError
 
@@ -73,24 +72,7 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
             await transition_job_to_failed(job_id, str(exc), exc.reason.value)
             return
 
-        # ---- Phase 3: Check robots.txt ----
-        robots = await check_robots(validated_url)
-        if robots.result == RobotsResult.BLOCKED:
-            await transition_job_to_failed(
-                job_id,
-                f"robots.txt disallows fetching this URL: {robots.reason}",
-                "ROBOTS_BLOCKED",
-            )
-            return
-        if robots.result == RobotsResult.UNAVAILABLE:
-            await transition_job_to_failed(
-                job_id,
-                f"robots.txt unavailable and policy=deny: {robots.reason}",
-                "ROBOTS_UNAVAILABLE",
-            )
-            return
-
-        # ---- Phase 4: Fetch page ----
+        # ---- Phase 3: Fetch page ----
         try:
             fetch_result = await fetch_url(validated_url, render_mode)
         except FetchError as exc:

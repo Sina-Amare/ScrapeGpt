@@ -606,7 +606,6 @@ async def test_execute_project_extraction_all_pages_failed_real_path(
     """The real executor marks all-page failure as FAILED/ALL_PAGES_FAILED."""
     from app.services import project_extraction
     from app.services.fetcher import FetchError
-    from app.services.robots_service import RobotsResult
 
     project = _extraction_project()
     spec = _extraction_spec()
@@ -640,9 +639,6 @@ async def test_execute_project_extraction_all_pages_failed_real_path(
     async def next_pending_page(db, project_id):
         return pending_pages.pop(0) if pending_pages else None
 
-    async def robots_allowed(url):
-        return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
-
     monkeypatch.setattr(
         project_extraction,
         "_project_was_canceled",
@@ -652,11 +648,6 @@ async def test_execute_project_extraction_all_pages_failed_real_path(
         project_extraction,
         "_pending_page",
         next_pending_page,
-    )
-    monkeypatch.setattr(
-        project_extraction,
-        "check_robots",
-        robots_allowed,
     )
 
     async def fake_fetch_url(url, render_mode, **kwargs):
@@ -678,7 +669,6 @@ async def test_execute_project_extraction_blocks_cloudflare_challenge(
 ):
     """Anti-bot challenge HTML must not count as a successful extracted page."""
     from app.services import project_extraction
-    from app.services.robots_service import RobotsResult
 
     project = _extraction_project()
     spec = _extraction_spec()
@@ -708,9 +698,6 @@ async def test_execute_project_extraction_blocks_cloudflare_challenge(
     async def next_pending_page(db, project_id):
         return pending_pages.pop(0) if pending_pages else None
 
-    async def robots_allowed(url):
-        return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
-
     async def fake_fetch_url(url, render_mode, **kwargs):
         return SimpleNamespace(
             html=(
@@ -723,7 +710,6 @@ async def test_execute_project_extraction_blocks_cloudflare_challenge(
 
     monkeypatch.setattr(project_extraction, "_project_was_canceled", not_canceled)
     monkeypatch.setattr(project_extraction, "_pending_page", next_pending_page)
-    monkeypatch.setattr(project_extraction, "check_robots", robots_allowed)
     monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
 
     await project_extraction.execute_project_extraction(project.id, spec.id)
@@ -742,7 +728,6 @@ async def test_execute_project_extraction_fails_structured_zero_records(
 ):
     """Structured extraction should not report success when no rows are found."""
     from app.services import project_extraction
-    from app.services.robots_service import RobotsResult
 
     project = _extraction_project()
     spec = _extraction_spec()
@@ -785,9 +770,6 @@ async def test_execute_project_extraction_fails_structured_zero_records(
     async def crawl_page_count(db, project_id):
         return 1
 
-    async def robots_allowed(url):
-        return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
-
     async def fake_fetch_url(url, render_mode, **kwargs):
         return SimpleNamespace(
             html="<html><body><p>No matching listing rows here.</p></body></html>",
@@ -797,7 +779,6 @@ async def test_execute_project_extraction_fails_structured_zero_records(
     monkeypatch.setattr(project_extraction, "_project_was_canceled", not_canceled)
     monkeypatch.setattr(project_extraction, "_pending_page", next_pending_page)
     monkeypatch.setattr(project_extraction, "_crawl_page_count", crawl_page_count)
-    monkeypatch.setattr(project_extraction, "check_robots", robots_allowed)
     monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
 
     await project_extraction.execute_project_extraction(project.id, spec.id)
@@ -816,7 +797,6 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
 ):
     """A watchdog-failed project must not be forced to COMPLETED."""
     from app.services import project_extraction
-    from app.services.robots_service import RobotsResult
 
     project = _extraction_project()
     spec = _extraction_spec()
@@ -857,9 +837,6 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
     async def crawl_page_count(db, project_id):
         return 1
 
-    async def robots_allowed(url):
-        return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
-
     async def fake_fetch_url(url, render_mode, **kwargs):
         return SimpleNamespace(
             html="<html><body>No records</body></html>",
@@ -880,11 +857,6 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
         project_extraction,
         "_crawl_page_count",
         crawl_page_count,
-    )
-    monkeypatch.setattr(
-        project_extraction,
-        "check_robots",
-        robots_allowed,
     )
     monkeypatch.setattr(
         project_extraction,
