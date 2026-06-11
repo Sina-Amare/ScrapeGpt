@@ -14,6 +14,7 @@ from app.models.job import ExtractionMode, Job, JobState, WorkflowMode
 from app.models.provider_config import ProviderConfig
 from app.services.analyzer import analyze_page
 from app.services.dom_summary import build_dom_summary
+from app.services.extraction_spec_service import validate_selectors_against_html
 from app.services.fetcher import FetchError, fetch_url
 from app.services.job_state import (
     transition_job_to_analysis_ready,
@@ -94,6 +95,10 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
         except (ProviderCallError, ProviderJSONError) as exc:
             await transition_job_to_failed(job_id, str(exc), "ANALYSIS_FAILED")
             return
+
+        # ---- Phase 6b: Validate selectors against actual HTML ----
+        # Runs even on cache hits so stale selectors are always re-checked.
+        analysis = validate_selectors_against_html(analysis, fetch_result.html)
 
         confidence = float(analysis.get("confidence", 0.0))
         warnings = list(analysis.get("warnings", []))
