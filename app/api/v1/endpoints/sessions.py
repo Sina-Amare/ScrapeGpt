@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -69,13 +70,15 @@ async def list_sessions(
 @router.delete(
     "/{session_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
     summary="Delete a browser session",
 )
 async def delete_session(
     session_id: int,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     deleted = await session_service.delete_session(db, user, session_id)
     if not deleted:
         raise HTTPException(
@@ -83,3 +86,4 @@ async def delete_session(
             detail="Session not found",
         )
     await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
