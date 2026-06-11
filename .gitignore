@@ -24,6 +24,9 @@ agents.md
 RTK.md
 plan.md
 *_plan.md
+agents/
+.agents/
+
 
 # ===========================
 # Python
@@ -81,6 +84,8 @@ secrets/
 *.log
 logs/
 *.pid
+.dev-pids
+
 
 # ===========================
 # Database
