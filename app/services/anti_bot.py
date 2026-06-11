@@ -16,7 +16,14 @@ def anti_bot_challenge_reason(html: str, final_url: str | None = None) -> str | 
     haystack = html[:100_000].lower()
     url = (final_url or "").lower()
 
-    if "cf-chl-" in haystack or "/cdn-cgi/challenge-platform/" in haystack:
+    if (
+        "cf-chl-" in haystack
+        or "_cf_chl_opt" in haystack
+        or "challenge-error-text" in haystack
+        or "/cdn-cgi/challenge-platform/" in haystack
+    ):
+        return "cloudflare_challenge"
+    if "enable javascript and cookies to continue" in haystack:
         return "cloudflare_challenge"
     if "just a moment" in haystack and "cloudflare" in haystack:
         return "cloudflare_challenge"

@@ -72,6 +72,13 @@ Open the frontend at [http://127.0.0.1:5173](http://127.0.0.1:5173).
 
 If `DEBUG=true`, API docs are available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
+**Shortcut:** use the dev scripts to start/stop both servers in background processes:
+
+```powershell
+.\dev-start.ps1   # starts backend + frontend
+.\dev-stop.ps1    # stops both
+```
+
 ## API Surface
 
 All API routes are under `/api/v1`.
@@ -130,11 +137,10 @@ Last recorded results:
 
 Start here:
 
-- [docs/README.md](docs/README.md) - documentation map.
-- [docs/STATUS.md](docs/STATUS.md) - current product state, known issues, verification.
-- [docs/product/strategic_redesign.md](docs/product/strategic_redesign.md) - product roadmap and long-term architecture.
-- [docs/learning/10_phase25_scope_frontier_trust.md](docs/learning/10_phase25_scope_frontier_trust.md) - Phase 2.5 implementation decisions.
-- [docs/reviews/03_phase25_validation.md](docs/reviews/03_phase25_validation.md) - E2E validation report.
+- [docs/README.md](docs/README.md) — documentation map and reading guide.
+- [docs/STATUS.md](docs/STATUS.md) — current product state, not-implemented items, and verification snapshot.
+- [docs/product/strategic_redesign.md](docs/product/strategic_redesign.md) — product roadmap and long-term architecture (Phases 3–6).
+- [AGENTS.md](AGENTS.md) — engineering standards, conventions, invariants, and agent guidance.
 
 ## Important Limitations
 

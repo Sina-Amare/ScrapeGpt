@@ -21,6 +21,7 @@ from app.models.job import (
     CrawlPageState,
     Export,
     ExtractedRecord,
+    ExtractionMode,
     ExtractionSpec,
     Project,
     ProjectState,
@@ -454,6 +455,28 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                             f"were blocked during extraction"
                         ),
                         "ALL_PAGES_FAILED",
+                    )
+                return
+
+            if spec.mode == ExtractionMode.STRUCTURED and total_records == 0:
+                logger.warning(
+                    "extraction.no_structured_records",
+                    extra={
+                        "project_id": project_id,
+                        "pages_attempted": processed_pages,
+                        "pages_extracted": pages_extracted,
+                    },
+                )
+                project = await db.get(Project, project_id)
+                if project and not project.is_terminal:
+                    await _mark_project_failed(
+                        db,
+                        project,
+                        (
+                            f"No records were extracted from {pages_extracted} "
+                            f"successfully fetched pages"
+                        ),
+                        "NO_RECORDS_EXTRACTED",
                     )
                 return
 

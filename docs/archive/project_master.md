@@ -1,6 +1,16 @@
-# ScrapGPT — Master Project Reference
+# [ARCHIVED] ScrapGPT — Pre-Redesign Reference (Phase 0)
 
-> Read this file to fully understand the project state, architecture, testing approach, and the complete roadmap. It is the single source of truth for onboarding or resuming work.
+> **ARCHIVED — do not use for current development.**
+> This document describes the original credit-gated single-task system before the strategic redesign.
+> It is preserved for historical context only.
+> The credit system, `system_state` table, partial unique index, and single-task constraint described here
+> have all been removed. The LLM stage described here was a stub; it has since been replaced.
+>
+> **Current documentation:** see `docs/STATUS.md`, `docs/README.md`, and `AGENTS.md` at the project root.
+
+---
+
+> ~~Read this file to fully understand the project state, architecture, testing approach, and the complete roadmap. It is the single source of truth for onboarding or resuming work.~~
 
 ---
 

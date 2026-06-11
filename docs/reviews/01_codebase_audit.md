@@ -4,6 +4,19 @@
 **Auditor scope:** code-first review of `app/`, `alembic/versions/`, `tests/`, `frontend/src/`. Documentation treated as potentially stale.
 **Verification principle:** every claim below cites a file path; if a doc and code disagree, the code wins.
 
+> **Post-audit resolution note (June 10, 2026):** The reliability hardening pass following this audit addressed the most critical open findings:
+>
+> | Finding in this report | Resolution |
+> |---|---|
+> | Legacy `/scrape` SSRF — no `validate_url()` call | Fixed: SSRF validation added at endpoint, executor, and redirect-hop levels. `robots.txt` checks also added to match the project pipeline. |
+> | `CrawlPage.lease_expires_at` written but never swept | Fixed: `cleanup_expired_crawl_page_leases()` added to watchdog, runs every 60 s. |
+> | Watchdog only handled `QUEUED/ANALYZING`; `DISCOVERING/EXTRACTING/EXPORTING` unguarded | Fixed: `cleanup_stuck_projects()` added with configurable timeouts for all three states. |
+> | All-pages-failed project incorrectly completes with zero records | Fixed: projects where all pages fail now transition to `FAILED` with `error_code = "ALL_PAGES_FAILED"`. |
+> | No-records-extracted project incorrectly completes as `COMPLETED` | Fixed: `NO_RECORDS_EXTRACTED` error code added. |
+> | CORS default missing Vite origin (`127.0.0.1:5173`) | Fixed: default now includes Vite dev origin. |
+>
+> Items listed as "not implemented" (visual field selection, concurrent workers, SSE, authenticated sessions, etc.) remain open and are tracked in `docs/STATUS.md`.
+
 ---
 
 ## 1. Executive Summary

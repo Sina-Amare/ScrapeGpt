@@ -506,7 +506,7 @@ def test_all_pages_failed_marks_project_as_failed():
     assert project.can_transition_to(ProjectState.FAILED)
 
 
-def test_partial_extraction_completes_normally():
+def test_extracted_pages_can_transition_to_exporting():
     """
     When some pages are extracted (even with zero records from
     those pages), the project should still complete — this is
@@ -732,6 +732,80 @@ async def test_execute_project_extraction_blocks_cloudflare_challenge(
     assert project.error_code == "ALL_PAGES_FAILED"
     assert page.state == CrawlPageState.BLOCKED
     assert page.block_reason == "ANTI_BOT_CHALLENGE"
+    assert page.lease_expires_at is None
+    assert db.added == []
+
+
+@pytest.mark.asyncio
+async def test_execute_project_extraction_fails_structured_zero_records(
+    monkeypatch,
+):
+    """Structured extraction should not report success when no rows are found."""
+    from app.services import project_extraction
+    from app.services.robots_service import RobotsResult
+
+    project = _extraction_project()
+    spec = _extraction_spec()
+    spec.fields = [
+        {
+            "name": "title",
+            "label": "Title",
+            "selector": "article.result h2",
+            "type": "string",
+            "selected": True,
+            "required": False,
+        }
+    ]
+    page = CrawlPage(
+        id=103,
+        project_id=project.id,
+        url=project.url,
+        normalized_url=project.normalized_url,
+        state=CrawlPageState.PENDING,
+        depth=0,
+        retry_count=0,
+    )
+    db = FakeExtractionDB(project, spec, pages_extracted=1)
+    pending_pages = [page]
+
+    monkeypatch.setattr(project_extraction, "async_session_factory", lambda: db)
+    monkeypatch.setattr(
+        project_extraction,
+        "settings",
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MIN_CRAWL_DELAY_MS=0),
+    )
+    monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
+
+    async def not_canceled(db, project_id):
+        return False
+
+    async def next_pending_page(db, project_id):
+        return pending_pages.pop(0) if pending_pages else None
+
+    async def crawl_page_count(db, project_id):
+        return 1
+
+    async def robots_allowed(url):
+        return SimpleNamespace(result=RobotsResult.ALLOWED, reason=None)
+
+    async def fake_fetch_url(url, render_mode):
+        return SimpleNamespace(
+            html="<html><body><p>No matching listing rows here.</p></body></html>",
+            final_url=url,
+        )
+
+    monkeypatch.setattr(project_extraction, "_project_was_canceled", not_canceled)
+    monkeypatch.setattr(project_extraction, "_pending_page", next_pending_page)
+    monkeypatch.setattr(project_extraction, "_crawl_page_count", crawl_page_count)
+    monkeypatch.setattr(project_extraction, "check_robots", robots_allowed)
+    monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
+
+    await project_extraction.execute_project_extraction(project.id, spec.id)
+
+    assert project.state == ProjectState.FAILED
+    assert project.error_code == "NO_RECORDS_EXTRACTED"
+    assert "No records were extracted" in project.error
+    assert page.state == CrawlPageState.EXTRACTED
     assert page.lease_expires_at is None
     assert db.added == []
 

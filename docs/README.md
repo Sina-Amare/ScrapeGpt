@@ -1,55 +1,55 @@
 # ScrapGPT Docs
 
-## Recommended Reading Path
+## Start Here
 
-Read these in order to understand what exists now and how it was built:
+These two files describe what the system does right now:
 
-1. [STATUS.md](STATUS.md) — current runnable product surface, verification snapshot, and what is not implemented yet.
-2. [product/strategic_redesign.md](product/strategic_redesign.md) — product vision and remaining roadmap.
-3. [learning/02_phase_0_5_provider_foundation.md](learning/02_phase_0_5_provider_foundation.md) — BYOK provider model, credit removal, encrypted keys.
-4. [learning/03_showcase_frontend_phase05.md](learning/03_showcase_frontend_phase05.md) — first frontend shell and provider/task UX.
-5. [learning/06_phase1_analysis_jobs.md](learning/06_phase1_analysis_jobs.md) — Phase 1 analysis jobs: URL safety, robots, fetcher, DOM summary, cached LLM analysis, frontend jobs UI.
-6. [learning/07_frontend_robustness_and_polish.md](learning/07_frontend_robustness_and_polish.md) — final Phase 1 UX polish and browser error handling.
-7. [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) — Project workflow migration: Analyze → Fields → Preview → Extract → Results.
-8. [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) — real selector preview, same-site crawling, persisted records, and CSV/JSON/XLSX export.
-9. [learning/10_phase25_scope_frontier_trust.md](learning/10_phase25_scope_frontier_trust.md) — crawl scope, frontier preview, scope confirmation, trust signals, paginated results, and validation.
-10. [learning/11_logging_observability.md](learning/11_logging_observability.md) — structured logging with stdlib + contextvars: architecture, invariants, event catalog, security guarantees.
-11. [learning/12_reliability_hardening.md](learning/12_reliability_hardening.md) — Phase 2.5 closeout: legacy scrape SSRF (redirect-level), CrawlPage lease reaper, stuck-project watchdog, all-pages-failed semantics.
+- [STATUS.md](STATUS.md) — implemented features, not-yet-implemented items, known issues, and last verified test results. Read this first.
+- [product/strategic_redesign.md](product/strategic_redesign.md) — active forward roadmap (Phases 3–6) and architectural decisions. Read this second.
 
-Use the remaining learning docs when you need detail about the older legacy scrape pipeline or security fixes.
-
-## Product & Roadmap
-
-- [STATUS.md](STATUS.md) — Current implementation snapshot: what works, what is not built yet, and last verified commands.
-- [product/strategic_redesign.md](product/strategic_redesign.md) — **Active roadmap.** Full product vision, architecture decisions, phased plan (Phases 0.5–6), data model, API surface, risks. Start here.
-
-## Historical Reference
-
-- [archive/project_master.md](archive/project_master.md) — Phase 0 reference. Original credit-based system — architecture, setup, and testing for the pre-redesign codebase. Superseded by `product/strategic_redesign.md`.
-
-## Decision Logs
-
-Added after every non-trivial implementation task. Explain the *why*, not just the *what*.
-
-- [learning/01_phase0_security_fixes.md](learning/01_phase0_security_fixes.md) — Why: verified JWT rate-limit keying, refresh route limit, watchdog guard, ownership non-mutation.
-- [learning/02_phase_0_5_provider_foundation.md](learning/02_phase_0_5_provider_foundation.md) — Why: remove credits, add BYOK provider configs, encrypt provider keys.
-- [learning/03_showcase_frontend_phase05.md](learning/03_showcase_frontend_phase05.md) — Why: first React frontend shell and backend-connected control surface.
-- [learning/04_polish_and_tests.md](learning/04_polish_and_tests.md) — Why: frontend polish and test hardening before Phase 1.
-- [learning/05_task_deletion_and_results_view.md](learning/05_task_deletion_and_results_view.md) — Why: task result viewing and terminal-task deletion.
-- [learning/06_phase1_analysis_jobs.md](learning/06_phase1_analysis_jobs.md) — Why: Phase 1 analysis jobs, SSRF-safe fetch, robots, DOM summary, cached LLM analysis.
-- [learning/07_frontend_robustness_and_polish.md](learning/07_frontend_robustness_and_polish.md) — Why: layout robustness, honest analysis-state copy, legacy nav demotion, browser error quality.
-- [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) — Why: migrate from jobs to projects and preserve compatibility while adding spec/preview/results contracts.
-- [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) — Why: replace seed/sample extraction with deterministic selector execution and bounded same-site crawling.
-- [learning/10_phase25_scope_frontier_trust.md](learning/10_phase25_scope_frontier_trust.md) — Why: add explicit crawl intent, preview what will be crawled, block unconfirmed broad crawls, and expose extraction quality.
-- [learning/11_logging_observability.md](learning/11_logging_observability.md) — Why: establish structured logging with correlation IDs, fix silent exception blocks, add security audit trail for auth and key reveals.
-- [learning/12_reliability_hardening.md](learning/12_reliability_hardening.md) — Why: close legacy scrape SSRF at redirect level, add crawl-page lease recovery, add stuck-project watchdog, fix zero-record COMPLETED misclassification.
-
-## Reviews & Validation
-
-- [reviews/01_codebase_audit.md](reviews/01_codebase_audit.md) — Code-first project audit before Phase 2.5.
-- [reviews/02_product_ux_strategy.md](reviews/02_product_ux_strategy.md) — Product UX and architecture strategy review.
-- [reviews/03_phase25_validation.md](reviews/03_phase25_validation.md) — Post-Step-4 validation report with 8/8 E2E scenarios passing.
+---
 
 ## Operations
 
-- [ops/health.md](ops/health.md) — Operator guide for `/health/ready` — probe steps, reason codes, debugging.
+- [ops/health.md](ops/health.md) — operator guide for `/health/ready`: probe steps, reason codes, and debugging checklist.
+
+---
+
+## Implementation Decision Logs (`learning/`)
+
+Added after every non-trivial implementation task. Explain the *why*, not just the *what*.
+Read the ones most relevant to the code you are working on.
+
+| # | Document | Covers |
+|---|---|---|
+| 01 | [learning/01_phase0_security_fixes.md](learning/01_phase0_security_fixes.md) | JWT signature verification in rate-limit key; refresh endpoint rate limiting. |
+| 02 | [learning/02_phase_0_5_provider_foundation.md](learning/02_phase_0_5_provider_foundation.md) | BYOK provider model, credit removal, Fernet-encrypted keys. |
+| 03 | [learning/03_showcase_frontend_phase05.md](learning/03_showcase_frontend_phase05.md) | First React frontend shell and provider/task UX. |
+| 04 | [learning/04_polish_and_tests.md](learning/04_polish_and_tests.md) | Frontend polish and test hardening before Phase 1. |
+| 05 | [learning/05_task_deletion_and_results_view.md](learning/05_task_deletion_and_results_view.md) | Task result viewing and terminal-task deletion. |
+| 06 | [learning/06_phase1_analysis_jobs.md](learning/06_phase1_analysis_jobs.md) | Phase 1 analysis jobs: URL safety, robots, fetcher, DOM summary, cached LLM analysis, frontend jobs UI. |
+| 07 | [learning/07_frontend_robustness_and_polish.md](learning/07_frontend_robustness_and_polish.md) | Final Phase 1 UX polish and browser error handling. |
+| 08 | [learning/08_project_workflow_migration.md](learning/08_project_workflow_migration.md) | Project workflow migration: Analyze → Fields → Preview → Extract → Results. |
+| 09 | [learning/09_phase2_real_extraction_engine.md](learning/09_phase2_real_extraction_engine.md) | Real selector preview, same-site crawling, persisted records, and CSV/JSON/XLSX export. |
+| 10 | [learning/10_phase25_scope_frontier_trust.md](learning/10_phase25_scope_frontier_trust.md) | Crawl scope, frontier preview, scope confirmation, trust signals, paginated results, and validation. |
+| 11 | [learning/11_logging_observability.md](learning/11_logging_observability.md) | Structured logging with stdlib + contextvars: architecture, invariants, event catalog, security guarantees. |
+| 12 | [learning/12_reliability_hardening.md](learning/12_reliability_hardening.md) | Phase 2.5 closeout: legacy scrape SSRF (all levels), CrawlPage lease reaper, stuck-project watchdog, all-pages-failed semantics. |
+
+---
+
+## Reviews and Validation (`reviews/`)
+
+Point-in-time audits and validation reports. Each includes a resolution note where findings have since been addressed.
+
+- [reviews/01_codebase_audit.md](reviews/01_codebase_audit.md) — Code-first project audit (June 9, 2026). Critical findings resolved in the Phase 2.5 hardening pass; resolution table at the top.
+- [reviews/02_product_ux_strategy.md](reviews/02_product_ux_strategy.md) — Product UX and architecture strategy review. SSRF and lease-reaper items marked resolved.
+- [reviews/03_phase25_validation.md](reviews/03_phase25_validation.md) — Post-Phase 2.5 E2E validation: 8/8 scenarios passed.
+
+---
+
+## Archive (`archive/`)
+
+Historical material, preserved for context but not authoritative for current development.
+
+- [archive/project_master.md](archive/project_master.md) — **ARCHIVED.** Pre-redesign reference (Phase 0). Describes the original credit-gated single-task system. Do not use for current development.
+- [archive/scraping_capabilities_fa.md](archive/scraping_capabilities_fa.md) — **ARCHIVED.** Phase 2 scraping capabilities document written in Persian. Superseded by `STATUS.md` and `strategic_redesign.md`.

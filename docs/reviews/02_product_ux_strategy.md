@@ -4,6 +4,8 @@
 **Phase context:** written before Phase 2.5 implementation; updated notes mark what Phase 2.5 addressed.  
 **Scope:** crawl boundaries, AI analysis context, competitive positioning, advanced settings UX, future risks.
 
+> **Post-review update (June 10, 2026):** R1 (legacy `/scrape` SSRF) and R2 (crawl-page lease reaper) were fixed in the reliability hardening pass. See `docs/STATUS.md` and `docs/learning/12_reliability_hardening.md` for details. The remaining open risks (R3–R10) stand as written.
+
 ---
 
 ## Executive Summary
@@ -195,20 +197,20 @@ Technical controls (render mode, provider override, page limit, url patterns) be
 | 6 | Selector drift on site template changes | Medium-High | No — no scheduled re-crawl or drift detection |
 | 7 | Multi-template sites produce inconsistent records | Medium | No — one spec applied globally |
 | 8 | Crash mid-extraction strands pages | Medium | No — `lease_expires_at` still not swept by watchdog |
-| 9 | Legacy `/scrape` SSRF vulnerability | High (security) | No — still present; requires fix before public deploy |
+| 9 | Legacy `/scrape` SSRF vulnerability | High (security) | **Resolved** — SSRF validation added at endpoint, executor, and redirect-hop levels |
 | 10 | Multi-worker deploys not supported | Medium | No — in-process BackgroundTasks + APScheduler still single-process |
 
 ### Top-priority items that remain open
 
-**R1 — Fix legacy `/scrape` SSRF.** `app/services/scraper.py:42-50` calls httpx with no URL validation. Add `validate_url()` call at `app/api/v1/endpoints/scrape.py:91`, or remove the legacy pipeline. This is the only actively exploitable security issue.
+~~**R1 — Fix legacy `/scrape` SSRF.**~~ **Resolved.** Fixed in reliability hardening: `validate_url()` + robots checks added at endpoint, executor, and redirect-hop levels.
 
-**R2 — Add crawl page lease reaper.** `CrawlPage.lease_expires_at` is written by the executor but never swept. A crashed extraction leaves pages in `FETCHING` indefinitely. Extend `app/services/watchdog.py` to reap stale leases.
+~~**R2 — Add crawl page lease reaper.**~~ **Resolved.** Fixed in reliability hardening: `cleanup_expired_crawl_page_leases()` added to `app/services/watchdog.py`, runs every 60 s.
 
 **R3 — Enrich the DOM summary.** Move to rich structural summary (5 container samples, full JSON-LD, microdata, no heading cap). Bump `ANALYZER_VERSION` to `"2"`.
 
 **R4 — Add per-field yield tracking.** Surface "title: 100%, price: 47%" after extraction. Trigger `NEEDS_REVIEW` state when any selected field is below threshold.
 
-**R5 — Add watchdog sweep for `DISCOVERING/EXTRACTING/EXPORTING` states.** Current watchdog only handles `QUEUED/ANALYZING`.
+~~**R5 — Add watchdog sweep for `DISCOVERING/EXTRACTING/EXPORTING` states.**~~ **Resolved.** `cleanup_stuck_projects()` added, handles all three states with configurable timeouts.
 
 ---
 

@@ -64,6 +64,8 @@ Last verified: June 10, 2026 (reliability hardening complete).
   - CrawlPage lease reaper: `cleanup_expired_crawl_page_leases()` resets FETCHING pages with expired leases back to PENDING, only within active projects. Runs every 60 seconds via the watchdog scheduler.
   - Stuck-project watchdog: `cleanup_stuck_projects()` fails projects stuck in DISCOVERING/EXTRACTING/EXPORTING beyond configurable timeouts (10/60/10 minutes). Uses atomic UPDATE with WHERE-clause state guards for concurrency safety.
   - Extraction completion semantics: projects where all pages fail or are blocked now transition to FAILED with `error_code = "ALL_PAGES_FAILED"` instead of COMPLETED with zero records. Partial success (some pages extracted) still completes normally with quality assessment.
+  - Anti-bot challenge pages (Cloudflare/captcha markers such as OATD's `Just a moment...` / `Enable JavaScript and cookies to continue` response) are classified as blocked extraction input, not extracted content.
+  - Structured extraction with fetched pages but zero extracted rows now fails with `error_code = "NO_RECORDS_EXTRACTED"` instead of producing a misleading "Results ready" empty export.
   - CORS default now includes `http://127.0.0.1:5173` (Vite dev server origin).
   - `CRAWL_CONCURRENCY` setting description clarified as "Reserved for future use" since the executor is sequential.
   - See `docs/learning/12_reliability_hardening.md` for decision log.
@@ -97,16 +99,17 @@ The older Legacy Scrape page still exists for the `/scrape` pipeline, but it is 
 - Rich DOM summary (microdata, full JSON-LD, multi-sample containers) — `ANALYZER_VERSION` still `"1"`.
 - Docker/docker-compose one-command setup.
 - CAPTCHA solving, stealth browser patches, proxy evasion, or challenge bypass (permanent non-goals).
+  - OATD currently returns Cloudflare HTTP 403 challenge pages to ScrapGPT from this dev environment; these are detected and failed clearly rather than bypassed.
 
 ## Known Issues
 
 - **DNS rebinding is a known limitation of URL validation.** `validate_url()` blocks private/loopback/metadata IPs at the DNS resolution stage, but a malicious server could rebinding DNS after validation passes. This is a known limitation acknowledged in the URL validator comments, not a new fix item.
-
+
 ## Verification Snapshot
 
 Commands last run successfully:
 
-```bash
+```powershell
 # Backend
 venv\Scripts\python.exe -m pytest -q
 
@@ -126,7 +129,7 @@ Results:
 
 E2E validation:
 
-```bash
+```powershell
 venv\Scripts\python.exe tests/validation/run_validation.py
 ```
 

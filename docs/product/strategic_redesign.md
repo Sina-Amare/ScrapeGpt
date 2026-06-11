@@ -1,8 +1,8 @@
 # ScrapGPT — Strategic Redesign: Open-Source BYOK Extraction Platform
 
-> **Last updated:** Round 2 review incorporated. See `docs/reviews/` history in git if you need the reasoning behind specific decisions.
+> **Last updated:** June 11, 2026. See `docs/reviews/` history in git for the reasoning behind specific decisions.
 >
-> **Implementation status as of June 10, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, the Project workflow (Analyze → Field Selection → Preview → Extract → Results), Phase 2 real extraction, Phase 2.5 crawl scope/frontier preview/trust signals, structured logging (stdlib + contextvars; `docs/learning/11_logging_observability.md`), and reliability hardening (legacy scrape SSRF at redirect level, CrawlPage lease reaper, stuck-project watchdog, all-pages-failed semantics; `docs/learning/12_reliability_hardening.md`) are implemented. `/jobs` remains as a compatibility API over project rows. This document remains the forward-looking roadmap for template intelligence, visual interaction, durable worker recovery, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
+> **Implementation status as of June 11, 2026:** Phase 0, Phase 0.5, frontend v0, Phase 1 analysis jobs, the Project workflow (Analyze → Field Selection → Preview → Extract → Results), Phase 2 real extraction, Phase 2.5 crawl scope/frontier preview/trust signals, structured logging (stdlib + contextvars; `docs/learning/11_logging_observability.md`), and reliability hardening (legacy scrape SSRF at all levels, CrawlPage lease reaper, stuck-project watchdog, all-pages-failed semantics; `docs/learning/12_reliability_hardening.md`) are implemented. `/jobs` remains as a compatibility API over project rows. This document is the forward-looking roadmap for template intelligence, visual interaction, durable worker recovery, advanced exports, and authenticated-content phases. For the current runnable surface, see `docs/STATUS.md`.
 >
 > **Current Phase 2 state:** `build_dom_summary()` now includes repeated container HTML samples, table samples, `data-*` attributes, up to 15 repeated classes, and a 10,000-character cap. Preview and extraction now execute selectors against real fetched HTML. Remaining quality work is template detection, selector repair, visual selection, and durable multi-worker recovery.
 
@@ -421,7 +421,8 @@ Caches AI analysis results by `content_hash`. Avoids re-calling AI for pages wit
 | `PATCH` | `/projects/{id}/spec` | Save field/content selection, page limit, export format |
 | `POST` | `/projects/{id}/preview` | Execute saved selectors on the seed page |
 | `POST` | `/projects/{id}/extract` | Start background same-site crawl/extraction |
-| `GET` | `/projects/{id}/records` | Paginated extracted records |
+| `GET` | `/projects/{id}/records-page` | Server-side paginated records (preferred) |
+| `GET` | `/projects/{id}/records` | Legacy paginated records (compat) |
 | `GET` | `/projects/{id}/export?format=csv|json|xlsx` | Streaming file download |
 | `POST` | `/projects/{id}/cancel` | Cancel active project |
 | `DELETE` | `/projects/{id}` | Delete terminal project |
