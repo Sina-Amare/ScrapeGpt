@@ -191,6 +191,7 @@ async def test_browser_fetch_enforces_max_fetch_bytes(monkeypatch):
 
     fake_context = MagicMock()
     fake_context.route = AsyncMock()
+    fake_context.add_init_script = AsyncMock()
     fake_context.new_page = AsyncMock(return_value=fake_page)
     fake_context.close = AsyncMock()
 
@@ -260,6 +261,7 @@ async def test_browser_fetch_blocks_private_ip_via_route(monkeypatch):
 
     fake_context = MagicMock()
     fake_context.route = capture_route
+    fake_context.add_init_script = AsyncMock()
     fake_context.new_page = AsyncMock(return_value=fake_page)
     fake_context.close = AsyncMock()
 
@@ -309,6 +311,7 @@ async def test_browser_fetch_blank_exception_has_actionable_message(monkeypatch)
 
     fake_context = MagicMock()
     fake_context.route = AsyncMock()
+    fake_context.add_init_script = AsyncMock()
     fake_context.new_page = AsyncMock(return_value=fake_page)
     fake_context.close = AsyncMock()
 
@@ -369,3 +372,127 @@ async def test_browser_fetch_uses_threaded_path_when_required(monkeypatch):
 
     result = await _browser_fetch("https://example.com/")
     assert result is expected
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare challenge auto-retry
+# ---------------------------------------------------------------------------
+
+# HTML must exceed _is_sparse() threshold (500 stripped chars) so challenge
+# detection runs rather than the sparse-content browser fallback taking priority.
+_PADDING = b"x" * 600
+
+_CF_CHALLENGE_HTML = (
+    b"<html><head><title>Just a moment...</title></head>"
+    b"<body><p>Cloudflare</p><script src='/cdn-cgi/challenge-platform/h/g/orchestrate'></script>"
+    b"<!--" + _PADDING + b"--></body></html>"
+)
+_CF_TURNSTILE_HTML = (
+    b"<html><body>"
+    b"<div class='cf-turnstile' data-sitekey='xxx'></div>"
+    b"<script src='https://challenges.cloudflare.com/turnstile/v0/api.js'></script>"
+    b"<!--" + _PADDING + b"--></body></html>"
+)
+_REAL_PAGE_HTML = (
+    b"<html><body><p>Actual page content here.</p></body></html>"
+)
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_js_challenge_triggers_browser_retry(monkeypatch):
+    """AUTO mode must retry with browser when static fetch returns a CF JS challenge."""
+    import httpx
+    from unittest.mock import AsyncMock
+
+    from app.services.fetcher import FetchResult, RenderModeUsed
+
+    browser_result = FetchResult(
+        html=_REAL_PAGE_HTML.decode(),
+        content_hash="abc" * 21 + "d",
+        final_url="https://example.com/",
+        render_mode_used=RenderModeUsed.BROWSER,
+        status_code=200,
+        elapsed_ms=500,
+        fetch_metadata={},
+    )
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: _FakeClient(_FakeResponse(body=_CF_CHALLENGE_HTML))
+    )
+    monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+    monkeypatch.setattr(
+        "app.services.fetcher._browser_fetch",
+        AsyncMock(return_value=browser_result),
+    )
+
+    result = await fetch_url("https://example.com/", render_mode="AUTO")
+
+    assert result.render_mode_used == RenderModeUsed.BROWSER
+    assert "Actual page content" in result.html
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_challenge_not_retried_in_static_mode(monkeypatch):
+    """STATIC mode must never retry with browser, even on a CF challenge."""
+    import httpx
+    from unittest.mock import AsyncMock
+
+    browser_called = []
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: _FakeClient(_FakeResponse(body=_CF_CHALLENGE_HTML))
+    )
+    monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+    monkeypatch.setattr(
+        "app.services.fetcher._browser_fetch",
+        AsyncMock(side_effect=lambda url: browser_called.append(url)),
+    )
+
+    result = await fetch_url("https://example.com/", render_mode="STATIC")
+
+    assert result.render_mode_used == RenderModeUsed.STATIC
+    assert browser_called == []
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_turnstile_not_retried_with_browser(monkeypatch):
+    """Turnstile (interactive CAPTCHA) must NOT trigger browser retry."""
+    import httpx
+    from unittest.mock import AsyncMock
+
+    browser_called = []
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: _FakeClient(_FakeResponse(body=_CF_TURNSTILE_HTML))
+    )
+    monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+    monkeypatch.setattr(
+        "app.services.fetcher._browser_fetch",
+        AsyncMock(side_effect=lambda url: browser_called.append(url)),
+    )
+
+    result = await fetch_url("https://example.com/", render_mode="AUTO")
+
+    assert result.render_mode_used == RenderModeUsed.STATIC
+    assert browser_called == []
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_challenge_browser_unavailable_falls_back_to_static(monkeypatch):
+    """If browser is unavailable, fall back to the static CF challenge page and record it."""
+    import httpx
+    from unittest.mock import AsyncMock
+
+    from app.services.fetcher import FetchError
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: _FakeClient(_FakeResponse(body=_CF_CHALLENGE_HTML))
+    )
+    monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+    monkeypatch.setattr(
+        "app.services.fetcher._browser_fetch",
+        AsyncMock(side_effect=FetchError("no playwright", "BROWSER_UNAVAILABLE")),
+    )
+
+    result = await fetch_url("https://example.com/", render_mode="AUTO")
+
+    assert result.render_mode_used == RenderModeUsed.STATIC
+    assert result.fetch_metadata["browser_fallback_skipped"] is True
+    assert result.fetch_metadata["challenge_type"] == "cloudflare_challenge"

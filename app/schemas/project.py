@@ -247,6 +247,7 @@ class ProjectResponse(ProjectListItem):
     preview: PreviewResponse | None = None
     frontier_preview: FrontierPreviewResponse | None = None
     extraction_quality: ExtractionQuality | None = None
+    preview_stale: bool = False
     progress: ExtractionProgress = Field(default_factory=ExtractionProgress)
     created_at: datetime | None = None
     updated_at: datetime | None = None

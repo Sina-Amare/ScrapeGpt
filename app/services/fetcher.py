@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.services.anti_bot import anti_bot_challenge_reason
 from app.services.url_validator import (
     URLValidationError,
     validate_redirect_target,
@@ -23,6 +24,37 @@ from app.services.url_validator import (
 logger = logging.getLogger(__name__)
 
 _CONTENT_TYPE_ALLOWLIST = ("text/html", "text/plain", "application/xhtml+xml")
+
+# Challenge types that Playwright can resolve by executing the JS challenge.
+# Turnstile and CAPTCHA challenges require human interaction — skip those.
+_BROWSER_RETRYABLE_CHALLENGES = frozenset({"cloudflare_challenge"})
+
+# Full browser-like headers sent with every static request.
+# Sending only User-Agent triggers CDN fingerprinting heuristics on sites
+# like OATD that use Cloudflare.
+_STATIC_HEADERS = {
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;"
+        "q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+}
+
+# Playwright launch args that remove the most common automation markers
+# without requiring a third-party stealth library.
+_BROWSER_LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled"]
+
+# Init script injected before any page JS runs to hide navigator.webdriver.
+_HIDE_WEBDRIVER_SCRIPT = (
+    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+)
 
 
 def _format_browser_exception(exc: Exception) -> str:
@@ -98,7 +130,7 @@ async def _static_fetch(url: str) -> FetchResult:
     async with httpx.AsyncClient(
         timeout=settings.SCRAPE_TIMEOUT,
         follow_redirects=False,
-        headers={"User-Agent": settings.USER_AGENT},
+        headers={"User-Agent": settings.USER_AGENT, **_STATIC_HEADERS},
     ) as client:
         while True:
             try:
@@ -206,13 +238,22 @@ def _browser_fetch_sync(url: str) -> FetchResult:
     blocked: list[FetchError] = []
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = pw.chromium.launch(
+                headless=True,
+                args=_BROWSER_LAUNCH_ARGS,
+            )
             try:
                 context = browser.new_context(
                     user_agent=settings.USER_AGENT,
                     java_script_enabled=True,
+                    extra_http_headers={
+                        k: v for k, v in _STATIC_HEADERS.items()
+                        if k not in ("Accept-Encoding",)
+                    },
                 )
                 try:
+                    context.add_init_script(_HIDE_WEBDRIVER_SCRIPT)
+
                     def _route_handler(route: Any) -> None:
                         req_url = route.request.url
                         if not req_url.startswith(("http://", "https://")):
@@ -291,13 +332,22 @@ async def _browser_fetch_async(url: str) -> FetchResult:
     blocked: list[FetchError] = []
     try:
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=_BROWSER_LAUNCH_ARGS,
+            )
             try:
                 context = await browser.new_context(
                     user_agent=settings.USER_AGENT,
                     java_script_enabled=True,
+                    extra_http_headers={
+                        k: v for k, v in _STATIC_HEADERS.items()
+                        if k not in ("Accept-Encoding",)
+                    },
                 )
                 try:
+                    await context.add_init_script(_HIDE_WEBDRIVER_SCRIPT)
+
                     # SSRF prevention: intercept every outgoing request and block
                     # private / metadata IPs before the connection is established.
                     #
@@ -393,27 +443,44 @@ async def fetch_url(url: str, render_mode: str = "AUTO") -> FetchResult:
     """
     Fetch a URL according to render_mode.
 
-    AUTO: try static first; if content is sparse, attempt browser (no crash if unavailable).
+    AUTO: try static first; if content is sparse or a Playwright-solvable
+    bot challenge is detected, retry with browser (no crash if unavailable).
     STATIC: static only.
-    BROWSER: browser only; raises FetchError with BROWSER_UNAVAILABLE if not installed.
+    BROWSER: browser only; raises FetchError with BROWSER_UNAVAILABLE if
+    not installed.
     """
     if render_mode == "BROWSER":
         return await _browser_fetch(url)
 
     result = await _static_fetch(url)
 
-    if render_mode == "AUTO" and _is_sparse(result.html):
-        logger.info("fetcher.sparse_content_browser_fallback", extra={"url": url})
-        try:
-            result = await _browser_fetch(url)
-        except FetchError as exc:
-            if exc.error_code == "BROWSER_UNAVAILABLE":
-                logger.info(
-                    "fetcher.browser_unavailable_fallback_static",
-                    extra={"url": url},
-                )
-                result.fetch_metadata["browser_fallback_skipped"] = True
-            else:
-                raise
+    if render_mode != "AUTO":
+        return result
+
+    # Determine whether a browser retry is warranted.
+    challenge: str | None = None
+    if _is_sparse(result.html):
+        log_event = "fetcher.sparse_content_browser_fallback"
+    else:
+        challenge = anti_bot_challenge_reason(result.html, result.final_url)
+        if challenge in _BROWSER_RETRYABLE_CHALLENGES:
+            log_event = "fetcher.challenge_browser_retry"
+        else:
+            return result
+
+    logger.info(log_event, extra={"url": url, "challenge": challenge})
+    try:
+        result = await _browser_fetch(url)
+    except FetchError as exc:
+        if exc.error_code == "BROWSER_UNAVAILABLE":
+            logger.info(
+                "fetcher.browser_unavailable_fallback_static",
+                extra={"url": url, "challenge": challenge},
+            )
+            result.fetch_metadata["browser_fallback_skipped"] = True
+            if challenge:
+                result.fetch_metadata["challenge_type"] = challenge
+        else:
+            raise
 
     return result

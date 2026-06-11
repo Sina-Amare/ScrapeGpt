@@ -164,7 +164,11 @@ export type JobResponse = {
   provider_config_id: number | null;
   confidence: number | null;
   warnings: string[];
-  analysis: StructuredAnalysis | ContentAnalysis | Record<string, unknown> | null;
+  analysis:
+    | StructuredAnalysis
+    | ContentAnalysis
+    | Record<string, unknown>
+    | null;
   fetch_metadata: Record<string, unknown> | null;
   error: string | null;
   error_code: string | null;
@@ -219,8 +223,15 @@ export type FieldSpec = {
 // Crawl Scope (Phase 2.5)
 // ---------------------------------------------------------------------------
 
-export type CrawlScopeMode = "CURRENT_PAGE" | "PAGINATION" | "DATASET" | "FULL_SITE";
-export type CrawlScopeStatus = "AI_SUGGESTED" | "USER_CONFIRMED" | "SYSTEM_DEFAULTED";
+export type CrawlScopeMode =
+  | "CURRENT_PAGE"
+  | "PAGINATION"
+  | "DATASET"
+  | "FULL_SITE";
+export type CrawlScopeStatus =
+  | "AI_SUGGESTED"
+  | "USER_CONFIRMED"
+  | "SYSTEM_DEFAULTED";
 
 export type CrawlScopePagination = {
   selector: string | null;
@@ -373,12 +384,17 @@ export type ProjectResponse = ProjectListItem & {
   render_mode: RenderMode;
   provider_config_id: number | null;
   warnings: string[];
-  analysis: StructuredAnalysis | ContentAnalysis | Record<string, unknown> | null;
+  analysis:
+    | StructuredAnalysis
+    | ContentAnalysis
+    | Record<string, unknown>
+    | null;
   fetch_metadata: Record<string, unknown> | null;
   spec: ExtractionSpecResponse | null;
   preview: PreviewResponse | null;
   frontier_preview: FrontierPreviewResponse | null;
   extraction_quality: ExtractionQuality | null;
+  preview_stale: boolean;
   progress: ExtractionProgress;
   created_at: string;
   updated_at: string | null;

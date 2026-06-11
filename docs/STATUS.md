@@ -107,8 +107,8 @@ The older Legacy Scrape page still exists for the `/scrape` pipeline, but it is 
 - Docker/docker-compose one-command setup.
 - Selector validation at spec save (smoke-test selectors against seed page HTML).
 - Preview-before-extract soft gate (warn if no preview since last spec save).
-- CAPTCHA solving, stealth browser patches, proxy evasion, or challenge bypass (permanent non-goals).
-  - OATD currently returns Cloudflare HTTP 403 challenge pages to ScrapGPT from this dev environment; these are detected and failed clearly rather than bypassed.
+- CAPTCHA solving, interactive Turnstile/CAPTCHA bypass, proxy evasion (permanent non-goals).
+  - Cloudflare JS challenges (`cf-chl-*`, `/cdn-cgi/challenge-platform/`) are now automatically retried with the Playwright browser, which executes the JS challenge. Turnstile (interactive) and hCaptcha/reCAPTCHA are detected and failed cleanly — they require human interaction and are not retried.
 
 ## Known Issues
 
@@ -135,7 +135,7 @@ npm.cmd run build
 
 Results:
 
-- Backend: **374 passed**, 1 skipped, 47 warnings.
+- Backend: **379 passed**, 1 skipped, 47 warnings.
 - Frontend tests: **70 passed**.
 - Frontend typecheck, lint, and production build: passed (last verified June 10).
 

@@ -163,6 +163,13 @@ async def _project_response(db: AsyncSession, project: Project) -> ProjectRespon
     frontier_preview = await latest_frontier_preview(db, project.id)
     status_info = product_status_for(project)
     last_activity = project.updated_at or project.created_at
+    # Compute preview_stale: spec was updated after the last preview ran.
+    preview_stale = False
+    if spec is not None and preview is not None:
+        spec_updated = spec.updated_at or spec.created_at
+        preview_created = preview.created_at
+        if spec_updated is not None and preview_created is not None:
+            preview_stale = spec_updated > preview_created
     return ProjectResponse(
         id=project.id,
         url=project.url,
@@ -185,6 +192,7 @@ async def _project_response(db: AsyncSession, project: Project) -> ProjectRespon
         preview=_preview_response(preview),
         frontier_preview=_frontier_preview_response(frontier_preview),
         extraction_quality=_extraction_quality(spec),
+        preview_stale=preview_stale,
         progress=await _progress(db, project.id),
         last_activity=last_activity,
         error=project.error,
@@ -437,7 +445,29 @@ async def extract_project(
     preview = await latest_preview(db, project.id)
     extract_anyway = bool(payload.extract_anyway) if payload else False
     if preview is None and not extract_anyway:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Preview before extracting, or choose extract anyway")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Preview before extracting, or choose extract anyway",
+                "error_code": "NO_PREVIEW",
+            },
+        )
+    # Soft gate: warn if preview is stale (spec changed after last preview).
+    if preview is not None and not extract_anyway:
+        spec_updated = spec.updated_at or spec.created_at
+        preview_created = preview.created_at
+        if spec_updated is not None and preview_created is not None and spec_updated > preview_created:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": (
+                        "Extraction spec was updated after the last preview. "
+                        "Run preview again to verify selectors, or choose "
+                        "extract anyway."
+                    ),
+                    "error_code": "STALE_PREVIEW",
+                },
+            )
     if project.state not in {
         ProjectState.AWAITING_SETUP,
         ProjectState.ANALYSIS_READY,
@@ -701,6 +731,22 @@ async def delete_project(
 ) -> Response:
     project = await _owned_project(db, user, project_id)
     if project.state not in DELETABLE_PROJECT_STATES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete an active project")
-    await delete_project_tree(db, project)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete an active project",
+        )
+    try:
+        await delete_project_tree(db, project)
+    except Exception:
+        logger.exception(
+            "project.delete_failed",
+            extra={"project_id": project_id, "user_id": user.id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Failed to delete project. A background task may hold a row "
+                "lock; wait 30 seconds and try again."
+            ),
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

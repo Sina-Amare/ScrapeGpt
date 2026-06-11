@@ -186,3 +186,27 @@ async def test_delete_active_project_returns_400_without_deleting(async_client, 
     assert response.status_code == 400
     assert db.commits == 0
     assert db.deleted_tables == []
+
+
+class _DeleteFailingSession(FakeProjectSession):
+    """Session that raises on the first DELETE statement to simulate a DB error."""
+
+    async def execute(self, statement):
+        if getattr(statement, "table", None) is not None:
+            raise RuntimeError("deadlock detected — row lock held by background task")
+        return await super().execute(statement)
+
+
+@pytest.mark.asyncio
+async def test_delete_db_exception_returns_500_with_message(async_client, app):
+    project = _project()
+    project.state = ProjectState.COMPLETED
+    db = _DeleteFailingSession(project)
+    app.dependency_overrides[deps.get_current_user] = lambda: _user(user_id=1)
+    app.dependency_overrides[deps.get_db] = lambda: (yield db)
+
+    response = await async_client.delete("/api/v1/projects/1")
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "lock" in detail.lower() or "background" in detail.lower()
