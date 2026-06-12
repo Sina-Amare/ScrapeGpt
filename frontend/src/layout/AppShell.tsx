@@ -19,6 +19,7 @@ import { motion } from "motion/react";
 import { ReactNode, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
@@ -93,6 +94,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const { displayEmail, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const { dark, toggle } = useTheme();
   const health = useQuery({
     queryKey: ["health-ready"],
@@ -188,7 +190,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 </motion.div>
               </button>
-              <Button variant="secondary" onClick={logout}>
+              <Button variant="secondary" onClick={() => setShowLogoutConfirm(true)}>
                 <LogOut className="h-4 w-4" />
                 Logout
               </Button>
@@ -197,6 +199,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
         <main className="mx-auto max-w-7xl px-4 py-6 md:px-8">{children}</main>
       </div>
+
+      <ConfirmDialog
+        open={showLogoutConfirm}
+        title="Log out?"
+        message="You'll be returned to the sign-in page. Any unsaved changes on this screen won't be kept."
+        confirmLabel="Log out"
+        variant="primary"
+        onConfirm={() => {
+          setShowLogoutConfirm(false);
+          logout();
+        }}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
     </div>
   );
 }
