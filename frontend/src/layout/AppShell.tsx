@@ -52,7 +52,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                 item.legacy && isActive
                   ? "border border-line bg-porcelain text-ink"
                   : isActive
-                  ? "bg-teal-soft text-teal"
+                  ? "bg-teal/[0.1] text-ink"
                   : item.legacy
                   ? "text-muted/80 hover:bg-porcelain hover:text-ink"
                   : "text-muted hover:bg-porcelain hover:text-ink"

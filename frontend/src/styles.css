@@ -116,7 +116,28 @@ select {
   display: none;
 }
 
-/* ─── Auth input (dark glassmorphism) ─────────────────────────────────────── */
+/* ─── Autofill override: app inputs (light + dark) ───────────────────────── */
+/* Browser autofill applies its own background; override with box-shadow inset */
+.autofill-surface:-webkit-autofill,
+.autofill-surface:-webkit-autofill:hover,
+.autofill-surface:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--c-surface) inset !important;
+  -webkit-text-fill-color: var(--c-ink) !important;
+  caret-color: var(--c-ink);
+  transition: background-color 9999s ease !important;
+}
+
+/* ─── Autofill override: auth inputs (always dark) ───────────────────────── */
+.auth-input:-webkit-autofill,
+.auth-input:-webkit-autofill:hover,
+.auth-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #18181E inset !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.85) !important;
+  caret-color: #fff;
+  transition: background-color 9999s ease !important;
+}
+
+/* ─── Auth input (dark) ───────────────────────────────────────────────────── */
 .auth-input {
   height: 2.75rem;
   width: 100%;
