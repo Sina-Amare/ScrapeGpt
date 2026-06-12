@@ -235,6 +235,7 @@ async def _project_response(db: AsyncSession, project: Project) -> ProjectRespon
         workflow_mode=project.workflow_mode.value,
         render_mode=project.render_mode.value,
         provider_config_id=project.provider_config_id,
+        browser_session_id=project.browser_session_id,
         warnings=project.warnings or [],
         analysis=project.analysis,
         fetch_metadata=project.fetch_metadata,

@@ -259,6 +259,7 @@ class ProjectResponse(ProjectListItem):
     workflow_mode: str
     render_mode: str
     provider_config_id: int | None = None
+    browser_session_id: int | None = None
     warnings: list[str] = Field(default_factory=list)
     analysis: StructuredAnalysis | ContentAnalysis | dict[str, Any] | None = None
     fetch_metadata: dict[str, Any] | None = None

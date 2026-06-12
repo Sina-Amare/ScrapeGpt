@@ -20,7 +20,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { ApiError, api } from "../lib/api";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject } from "../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation, scopeModeLabel } from "../lib/scopeCopy";
-import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, ProjectRecord } from "../types";
+import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, ProjectRecord, ProjectState } from "../types";
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const pct = value == null ? 0 : Math.round(value * 100);
@@ -471,6 +471,9 @@ export function ProjectDetailPage() {
 
   const isCompleted = project?.system_state === "COMPLETED";
   const isActive = project ? ACTIVE_PROJECT_STATES.has(project.system_state) : false;
+  const isExtracting = project
+    ? (["DISCOVERING", "EXTRACTING", "EXPORTING"] as ProjectState[]).includes(project.system_state)
+    : false;
 
   // Legacy records fallback (used in sample preview only)
   const legacyRecordsQuery = useQuery({
@@ -647,7 +650,7 @@ export function ProjectDetailPage() {
                     </li>
                   ))}
                 </ul>
-                <p className="mt-2 text-xs text-muted">Use the Retry button to re-attempt failed pages.</p>
+                <p className="mt-2 text-xs text-muted">Use Retry above to reopen the project, then start extraction again.</p>
               </details>
             )}
             {project.warnings.length ? (
@@ -774,7 +777,7 @@ export function ProjectDetailPage() {
               </div>
               <Button
                 onClick={() => { setExtractGateError(null); extractMutation.mutate(false); }}
-                loading={isActive}
+                loading={isExtracting}
                 disabled={
                   !project.preview ||
                   extractMutation.isPending ||
@@ -784,7 +787,7 @@ export function ProjectDetailPage() {
                 title={scopeNeedsConfirmation ? "Confirm the crawl scope before extracting" : undefined}
               >
                 <Download className="h-4 w-4" />
-                {isActive ? "Extracting…" : "Extract"}
+                {isExtracting ? "Extracting…" : "Extract"}
               </Button>
             </div>
 
