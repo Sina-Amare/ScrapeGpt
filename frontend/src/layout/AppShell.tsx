@@ -15,9 +15,9 @@ import {
   Sun,
   X
 } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { ReactNode, useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -93,7 +93,6 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const { displayEmail, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const location = useLocation();
   const { dark, toggle } = useTheme();
   const health = useQuery({
     queryKey: ["health-ready"],
@@ -196,19 +195,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
         </header>
-        <main className="mx-auto max-w-7xl px-4 py-6 md:px-8">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.18 }}
-            >
-              {children}
-            </motion.div>
-          </AnimatePresence>
-        </main>
+        <main className="mx-auto max-w-7xl px-4 py-6 md:px-8">{children}</main>
       </div>
     </div>
   );
