@@ -144,7 +144,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       ) : null}
 
       <div className="md:pl-64">
-        <header className="sticky top-0 z-30 border-b border-line bg-surface/95 backdrop-blur">
+        <header className="sticky top-0 z-30 border-b border-line bg-surface">
           <div className="flex h-16 items-center justify-between gap-3 px-4 md:px-8">
             <div className="flex items-center gap-3">
               <button

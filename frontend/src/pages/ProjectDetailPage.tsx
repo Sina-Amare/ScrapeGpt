@@ -61,7 +61,7 @@ function ProjectTabs({ activeTab }: { activeTab: string }) {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
   return (
-    <div className="sticky top-16 z-20 -mx-4 mb-6 border-b border-line bg-surface/95 backdrop-blur px-4 md:-mx-8 md:px-8">
+    <div className="sticky top-16 z-20 -mx-4 mb-6 border-b border-line bg-surface px-4 md:-mx-8 md:px-8">
       <div className="flex gap-1 overflow-x-auto scrollbar-none">
         {TABS.map((tab) => (
           <button
