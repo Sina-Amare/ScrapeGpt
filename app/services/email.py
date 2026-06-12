@@ -20,12 +20,15 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-def _send_sync(to_email: str, subject: str, body: str) -> None:
+def _send_sync(to_email: str, subject: str, body: str, html: str | None = None) -> None:
     message = EmailMessage()
     message["From"] = settings.SMTP_FROM_EMAIL or settings.SMTP_USERNAME
     message["To"] = to_email
     message["Subject"] = subject
+    # Plain-text part is the fallback; the HTML alternative renders when supported.
     message.set_content(body)
+    if html:
+        message.add_alternative(html, subtype="html")
 
     with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as smtp:
         if settings.SMTP_USE_TLS:
@@ -35,13 +38,16 @@ def _send_sync(to_email: str, subject: str, body: str) -> None:
         smtp.send_message(message)
 
 
-async def send_email(to_email: str, subject: str, body: str) -> bool:
-    """Send an email. Returns True on success, False on failure. Never raises."""
+async def send_email(
+    to_email: str, subject: str, body: str, html: str | None = None
+) -> bool:
+    """Send an email (optionally with an HTML part). Returns True on success,
+    False on failure. Never raises."""
     if not settings.smtp_configured:
         logger.warning("email.skipped", extra={"reason": "smtp_unconfigured"})
         return False
     try:
-        await asyncio.to_thread(_send_sync, to_email, subject, body)
+        await asyncio.to_thread(_send_sync, to_email, subject, body, html)
         logger.info("email.sent")
         return True
     except Exception as exc:

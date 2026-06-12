@@ -28,6 +28,7 @@ from app.core.security import hash_password, verify_password
 from app.models.password_reset import PasswordResetCode
 from app.models.user import User
 from app.services.email import send_email
+from app.services.email_templates import password_reset_email
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +93,10 @@ async def request_password_reset(db: AsyncSession, email: str) -> None:
 
     logger.info("auth.password_reset_requested", extra={"matched": True, "user_id": user.id})
 
-    subject = "Your ScrapeGPT password reset code"
-    body = (
-        f"Use this code to reset your ScrapeGPT password:\n\n"
-        f"    {code}\n\n"
-        f"It expires in {settings.PASSWORD_RESET_CODE_TTL_MINUTES} minutes. "
-        f"If you did not request this, you can safely ignore this email."
+    subject, text, html = password_reset_email(
+        code, settings.PASSWORD_RESET_CODE_TTL_MINUTES
     )
-    sent = await send_email(user.email, subject, body)
+    sent = await send_email(user.email, subject, text, html)
     if not sent and settings.is_development:
         # Dev-only fallback so the flow is usable locally without SMTP. The
         # code is logged at WARNING. Never reached in production (where the

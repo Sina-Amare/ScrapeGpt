@@ -9,7 +9,7 @@ Endpoints:
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +38,8 @@ from app.schemas.auth import (
     UserRegisterRequest,
     UserResponse,
 )
+from app.services.email import send_email
+from app.services.email_templates import welcome_email
 from app.services.password_reset import (
     PasswordResetError,
     confirm_password_reset,
@@ -64,6 +66,7 @@ logger = logging.getLogger(__name__)
 async def register(
     request: Request,
     payload: UserRegisterRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
     """
@@ -110,6 +113,12 @@ async def register(
     logger.info(
         "auth.register_success",
         extra={"user_id": user.id},
+    )
+
+    # Welcome email — best-effort, sent after the response (no-op without SMTP).
+    welcome_subject, welcome_text, welcome_html = welcome_email(user.email)
+    background_tasks.add_task(
+        send_email, user.email, welcome_subject, welcome_text, welcome_html
     )
 
     # Generate tokens
