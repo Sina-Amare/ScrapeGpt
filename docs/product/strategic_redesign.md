@@ -1,4 +1,4 @@
-# ScrapGPT — Strategic Redesign: Open-Source BYOK Extraction Platform
+# ScrapeGPT — Strategic Redesign: Open-Source BYOK Extraction Platform
 
 > **Last updated:** June 11, 2026. See `docs/reviews/` history in git for the reasoning behind specific decisions.
 >
@@ -46,7 +46,7 @@ The key distinction from other tools: **AI is the analyst, not the crawler.** AI
 
 Crawl4AI and ScrapeGraphAI call the LLM on every page — expensive, slow, and unreliable at scale. Browse AI has non-technical UX but is SaaS-only. Firecrawl is closest in product feel but is SaaS-first, converts pages to unstructured Markdown (losing field-level structure), and has no visual field selection. The architectural insight — **AI understands the site once, code extracts all pages** — is the right one, and no open-source self-hosted tool has executed it with a non-technical UX.
 
-**The cost argument matters at scale:** A 500-page structured extraction with Firecrawl or Crawl4AI costs 500 LLM calls. With ScrapGPT it costs 1–3 (analysis + optional repairs). At 1,500 free requests/day on Google AI Studio, a user can analyze 500 sites per day rather than 3.
+**The cost argument matters at scale:** A 500-page structured extraction with Firecrawl or Crawl4AI costs 500 LLM calls. With ScrapeGPT it costs 1–3 (analysis + optional repairs). At 1,500 free requests/day on Google AI Studio, a user can analyze 500 sites per day rather than 3.
 
 ---
 
@@ -85,7 +85,7 @@ Alternative considered: Build custom provider abstraction. Rejected — LiteLLM 
 | Ollama (local) | Unlimited | CPU-bound | ⚠️ Model-dependent | Good for privacy, slow |
 | OpenAI / Anthropic (paid) | — | — | ✅ Reliable | Best quality, paid only |
 
-Because ScrapGPT calls AI at most a few times per project (not per page), the Google AI Studio free tier (1,500 RPD) is sufficient for meaningful daily usage even without any payment. This should be the recommended starting point in the onboarding docs. OpenRouter free tier is not recommended for production use due to endemic 429 errors and a 50 RPD hard cap that a single retry loop can exhaust.
+Because ScrapeGPT calls AI at most a few times per project (not per page), the Google AI Studio free tier (1,500 RPD) is sufficient for meaningful daily usage even without any payment. This should be the recommended starting point in the onboarding docs. OpenRouter free tier is not recommended for production use due to endemic 429 errors and a 50 RPD hard cap that a single retry loop can exhaust.
 
 ### 3.2 AI Role: Used Sparingly, Not Per-Page
 

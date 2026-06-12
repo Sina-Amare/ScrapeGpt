@@ -57,28 +57,28 @@ function Pipeline() {
 export function HelpPage() {
   return (
     <>
-      <PageHeader title="Help & About" eyebrow="ScrapGPT guide" />
+      <PageHeader title="Help & About" eyebrow="ScrapeGPT guide" />
 
       <div className="grid gap-4 max-w-3xl">
         {/* Pipeline overview */}
-        <Section title="How ScrapGPT works">
+        <Section title="How ScrapeGPT works">
           <p className="mb-4 text-muted">
-            ScrapGPT automates web scraping in six steps:
+            ScrapeGPT automates web scraping in six steps:
           </p>
           <Pipeline />
           <ol className="mt-4 space-y-2 text-muted">
             <li><strong className="text-ink">1. URL</strong> — You paste the page you want to scrape.</li>
-            <li><strong className="text-ink">2. Fetch</strong> — ScrapGPT downloads the page (with optional browser rendering for JS-heavy sites).</li>
+            <li><strong className="text-ink">2. Fetch</strong> — ScrapeGPT downloads the page (with optional browser rendering for JS-heavy sites).</li>
             <li><strong className="text-ink">3. AI Analysis</strong> — The LLM reads the HTML and identifies what structured data exists and how to extract it.</li>
             <li><strong className="text-ink">4. Field Setup</strong> — You review the detected fields, rename them, and choose which to include.</li>
-            <li><strong className="text-ink">5. Extract</strong> — ScrapGPT crawls the pages in the scope you selected and extracts data using CSS selectors.</li>
+            <li><strong className="text-ink">5. Extract</strong> — ScrapeGPT crawls the pages in the scope you selected and extracts data using CSS selectors.</li>
             <li><strong className="text-ink">6. Export</strong> — Download results as CSV, JSON, or a styled XLSX file.</li>
           </ol>
         </Section>
 
         {/* Crawl scopes */}
         <Section title="Crawl scopes explained">
-          <p className="mb-3 text-muted">Choose how many pages ScrapGPT will crawl.</p>
+          <p className="mb-3 text-muted">Choose how many pages ScrapeGPT will crawl.</p>
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="border-b border-line text-left text-xs font-bold uppercase tracking-widest text-muted">
@@ -169,7 +169,7 @@ export function HelpPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-lg border border-line bg-porcelain p-4">
               <p className="font-bold text-ink">Page preview</p>
-              <p className="mt-1 text-muted">Shows the <em>list of URLs</em> ScrapGPT will crawl based on your scope. Run this first to verify the right pages are included. Catches scope misconfiguration before you spend time extracting.</p>
+              <p className="mt-1 text-muted">Shows the <em>list of URLs</em> ScrapeGPT will crawl based on your scope. Run this first to verify the right pages are included. Catches scope misconfiguration before you spend time extracting.</p>
             </div>
             <div className="rounded-lg border border-line bg-porcelain p-4">
               <p className="font-bold text-ink">Sample preview</p>
@@ -181,7 +181,7 @@ export function HelpPage() {
         {/* Extraction quality */}
         <Section title="Extraction quality panel">
           <div className="space-y-2 text-muted">
-            <p>After extraction, ScrapGPT computes a quality summary:</p>
+            <p>After extraction, ScrapeGPT computes a quality summary:</p>
             <ul className="ml-4 list-disc space-y-1">
               <li><strong className="text-ink">Good</strong> — All selected fields appeared on 70%+ of records.</li>
               <li><strong className="text-ink">Needs review</strong> — One or more fields had a low fill rate.</li>
@@ -196,7 +196,7 @@ export function HelpPage() {
           <div className="space-y-5 text-muted">
             <div>
               <p className="font-semibold text-ink">Why is my project stuck at "Analyzing"?</p>
-              <p>The AI provider may be slow or rate-limited. ScrapGPT enforces a 120-second timeout. If it stays stuck, check your provider's status page. Free-tier providers like OpenRouter sometimes queue requests for several minutes.</p>
+              <p>The AI provider may be slow or rate-limited. ScrapeGPT enforces a 120-second timeout. If it stays stuck, check your provider's status page. Free-tier providers like OpenRouter sometimes queue requests for several minutes.</p>
             </div>
             <div>
               <p className="font-semibold text-ink">Why are rows missing from my results?</p>
@@ -212,7 +212,7 @@ export function HelpPage() {
             </div>
             <div>
               <p className="font-semibold text-ink">Can I add my own API key?</p>
-              <p>Yes — go to <strong>Providers</strong> in the sidebar. ScrapGPT is a BYOK (Bring Your Own Key) platform. Add a provider config (OpenAI, Anthropic, OpenRouter, etc.) and it will be used for all AI analysis and extraction.</p>
+              <p>Yes — go to <strong>Providers</strong> in the sidebar. ScrapeGPT is a BYOK (Bring Your Own Key) platform. Add a provider config (OpenAI, Anthropic, OpenRouter, etc.) and it will be used for all AI analysis and extraction.</p>
             </div>
           </div>
         </Section>

@@ -5,7 +5,7 @@ from __future__ import annotations
 # Human-readable messages for each challenge type.
 CHALLENGE_MESSAGES: dict[str, str] = {
     "cloudflare_challenge": (
-        "Cloudflare JS challenge detected. ScrapGPT tried camoufox and "
+        "Cloudflare JS challenge detected. ScrapeGPT tried camoufox and "
         "stealth Playwright. If still blocked, run FlareSolverr: "
         "  docker run -d -p 8191:8191 flaresolverr/flaresolverr:latest "
         "then set FLARESOLVERR_URL=http://localhost:8191 in .env. "

@@ -5,15 +5,18 @@ against the project's real PostgreSQL instance.
 """
 
 import asyncio
+import os
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 
 async def main() -> None:
-    engine = create_async_engine(
-        "postgresql+asyncpg://postgres:Sina13810994@localhost:5432/scrapegpt"
+    db_url = os.environ.get(
+        "DATABASE_URL",
+        "postgresql+asyncpg://postgres:password@localhost:5432/scrapegpt",
     )
+    engine = create_async_engine(db_url)
     async with engine.begin() as conn:
         rev = (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalar()
         print(f"alembic_version: {rev}")

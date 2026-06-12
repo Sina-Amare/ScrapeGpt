@@ -118,7 +118,7 @@ export function SessionsPage() {
         </Button>
       </PageHeader>
       <p className="mb-6 text-sm text-muted">
-        Store your browser cookies so ScrapGPT can access sites you have legitimate access to.
+        Store your browser cookies so ScrapeGPT can access sites you have legitimate access to.
       </p>
 
       {isLoading && <Skeleton className="mt-6 h-24 w-full" />}

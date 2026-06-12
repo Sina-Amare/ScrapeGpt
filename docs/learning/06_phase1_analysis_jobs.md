@@ -2,7 +2,7 @@
 
 ## Problem / Purpose
 
-Phase 1 introduces the *Analysis Jobs* pipeline — the first step in ScrapGPT's redesigned BYOK extraction workflow. Before Phase 1, the platform had a single-purpose scrape pipeline (scrape URL → call LLM → return raw text summary). Phase 1 replaces that with an intelligent analysis system:
+Phase 1 introduces the *Analysis Jobs* pipeline — the first step in ScrapeGPT's redesigned BYOK extraction workflow. Before Phase 1, the platform had a single-purpose scrape pipeline (scrape URL → call LLM → return raw text summary). Phase 1 replaces that with an intelligent analysis system:
 
 1. Validate and safely fetch a URL
 2. Check `robots.txt` consent

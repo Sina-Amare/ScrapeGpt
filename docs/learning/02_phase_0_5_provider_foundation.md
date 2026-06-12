@@ -10,7 +10,7 @@
 
 ## 1. Why This Phase Exists
 
-The original ScrapGPT backend was a credit-gated SaaS product. Every user had a `credits_remaining`
+The original ScrapeGPT backend was a credit-gated SaaS product. Every user had a `credits_remaining`
 counter and a daily limit. A background APScheduler job reset credits at midnight. A partial unique
 index in PostgreSQL prevented any user from having more than one active task at a time. Credits were
 deducted atomically at the `SCRAPED → LLM_PROCESSING` transition.

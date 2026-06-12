@@ -1,5 +1,5 @@
 """
-Rate limiting configuration for ScrapGPT.
+Rate limiting configuration for ScrapeGPT.
 
 Implements per-user rate limiting to prevent abuse.
 Uses slowapi (production-ready, based on flask-limiter).

@@ -1,6 +1,6 @@
-# ScrapGPT
+# ScrapeGPT
 
-ScrapGPT is a self-hosted, BYOK AI-assisted web data extraction app. It combines a FastAPI backend, PostgreSQL persistence, and a React frontend for the workflow:
+ScrapeGPT is a self-hosted, BYOK AI-assisted web data extraction app. It combines a FastAPI backend, PostgreSQL persistence, and a React frontend for the workflow:
 
 `URL -> Understand Data -> Choose Fields -> Preview -> Extract -> Results`
 

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 class User(TimestampMixin, Base):
     """
-    User model for the ScrapGPT platform.
+    User model for the ScrapeGPT platform.
 
     Handles authentication, account status, scrape task ownership, and provider
     configuration ownership.

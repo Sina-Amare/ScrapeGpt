@@ -1,5 +1,5 @@
 # ==============================================================================
-# ScrapGPT - Python Dependencies
+# ScrapeGPT - Python Dependencies
 # ==============================================================================
 # Production-ready FastAPI web scraping platform
 # Python 3.11+ recommended

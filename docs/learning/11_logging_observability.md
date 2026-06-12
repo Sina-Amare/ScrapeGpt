@@ -8,7 +8,7 @@
 
 ## Problem and Purpose
 
-Before this implementation, ScrapGPT had no deliberate observability strategy:
+Before this implementation, ScrapeGPT had no deliberate observability strategy:
 
 - `LOG_LEVEL` and `LOG_FORMAT` settings existed in `config.py` but were never applied.
 - `main.py` used bare `print()` for startup events. The root logger had no configured

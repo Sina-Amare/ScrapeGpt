@@ -1,4 +1,4 @@
-# ScrapGPT Status
+# ScrapeGPT Status
 
 Last verified: June 11, 2026 (Phase 2.5+ hardening: export cap, cache TTL, state machine fix, timeout reduction).
 

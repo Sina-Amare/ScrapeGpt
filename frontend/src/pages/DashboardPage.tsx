@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -143,10 +144,13 @@ function ProjectsSection() {
           </div>
         ) : (
           <Table headings={["#", "URL", "Type", "Status", "Date", ""]}>
-            {projects.map((project) => (
-              <tr
+            {projects.map((project, index) => (
+              <motion.tr
                 key={project.id}
                 className="transition-colors hover:bg-teal-soft/40"
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: Math.min(index, 7) * 0.04, duration: 0.25 }}
               >
                 <td className="px-4 py-3 font-mono text-sm font-semibold text-ink">
                   {project.id}
@@ -200,7 +204,7 @@ function ProjectsSection() {
                     </button>
                   </div>
                 </td>
-              </tr>
+              </motion.tr>
             ))}
           </Table>
         )}

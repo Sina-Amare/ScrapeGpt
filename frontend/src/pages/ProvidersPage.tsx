@@ -13,7 +13,8 @@ import {
   X,
   XCircle
 } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
+import { FormEvent, useEffect, useState } from "react";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -103,10 +104,10 @@ function CapFlag({ label, ok }: { label: string; ok: boolean }) {
 }
 
 // ---------------------------------------------------------------------------
-// Capability panel (shown after test)
+// Capability panel (shown after test) — animated sequential reveal
 // ---------------------------------------------------------------------------
 
-function CapabilityPanel({
+function AnimatedCapabilityPanel({
   providerName,
   result,
   onClose
@@ -115,9 +116,31 @@ function CapabilityPanel({
   result: ProviderTestResponse;
   onClose: () => void;
 }) {
+  const [revealed, setRevealed] = useState(0);
   const flags = result.capability_flags as Record<string, unknown>;
+
+  useEffect(() => {
+    const timers = [
+      setTimeout(() => setRevealed(1), 0),
+      setTimeout(() => setRevealed(2), 600),
+      setTimeout(() => setRevealed(3), 1100),
+    ];
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  const capFlags = [
+    { label: "Connectivity", ok: !!flags.connectivity },
+    { label: "JSON output validated", ok: !!flags.validated_json },
+    { label: `Native JSON mode${flags.native_json ? "" : " (prompt-based fallback)"}`, ok: !!flags.native_json },
+  ];
+
   return (
-    <div className="rounded-xl border border-line bg-surface p-5 shadow-panel">
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      className="rounded-xl border border-line bg-surface p-5 shadow-panel"
+    >
       <div className="mb-4 flex items-start justify-between gap-2">
         <div>
           <p className="text-xs font-bold uppercase tracking-widest text-muted">Test result</p>
@@ -132,28 +155,59 @@ function CapabilityPanel({
         </button>
       </div>
 
-      <div className="grid gap-2">
-        <CapFlag label="Connectivity" ok={!!flags.connectivity} />
-        <CapFlag label="JSON output validated" ok={!!flags.validated_json} />
-        <CapFlag
-          label={`Native JSON mode${flags.native_json ? "" : " (prompt-based fallback)"}`}
-          ok={!!flags.native_json}
-        />
+      <div className="space-y-3">
+        {capFlags.map((flag, i) => (
+          <div key={flag.label} className="min-h-[1.5rem]">
+            <AnimatePresence mode="wait">
+              {i < revealed ? (
+                <motion.div
+                  key="revealed"
+                  initial={{ opacity: 0, x: -12, height: 0 }}
+                  animate={{ opacity: 1, x: 0, height: "auto" }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <CapFlag label={flag.label} ok={flag.ok} />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="skeleton"
+                  initial={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="flex items-center gap-2"
+                >
+                  <div className="h-4 w-4 animate-pulse rounded-full bg-line" />
+                  <div className="h-3 w-32 animate-pulse rounded bg-line" />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        ))}
       </div>
 
-      {!result.ok && result.error ? (
-        <div className="mt-4 rounded-lg border border-red-100 bg-red-50 p-3 text-xs text-red-700">
-          <span className="font-semibold">
-            {(flags.error_type as string) ?? "Error"}:{" "}
-          </span>
-          {result.error}
-        </div>
-      ) : (
-        <div className="mt-4 rounded-lg border border-green-100 bg-green-50 p-3 text-xs text-green-700">
-          Provider is ready for use in the extraction pipeline.
-        </div>
-      )}
-    </div>
+      <AnimatePresence>
+        {revealed >= 3 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.15 }}
+            className={`mt-4 rounded-lg p-3 text-xs font-medium ${
+              result.ok
+                ? "border border-green-100 bg-green-50 text-green-700"
+                : "border border-red-100 bg-red-50 text-red-700"
+            }`}
+          >
+            {result.ok ? (
+              "Provider is ready for use in the extraction pipeline."
+            ) : (
+              <>
+                <span className="font-semibold">{(flags.error_type as string) ?? "Error"}: </span>
+                {result.error}
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }
 
@@ -500,7 +554,7 @@ export function ProvidersPage() {
       {/* Capability panel — shown after a test run */}
       {lastTest ? (
         <div className="mt-3">
-          <CapabilityPanel
+          <AnimatedCapabilityPanel
             providerName={lastTest.name}
             result={lastTest.result}
             onClose={() => setLastTest(null)}

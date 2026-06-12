@@ -1,7 +1,7 @@
 """
-ScrapGPT - FastAPI Application Entry Point
+ScrapeGPT - FastAPI Application Entry Point
 
-This is the main entry point for the ScrapGPT API.
+This is the main entry point for the ScrapeGPT API.
 It initializes the FastAPI application with all middleware,
 routes, and lifecycle handlers.
 

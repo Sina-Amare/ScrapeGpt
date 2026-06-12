@@ -1,4 +1,4 @@
-# ScrapGPT — Product, UX, and Strategy Review
+# ScrapeGPT — Product, UX, and Strategy Review
 
 **Review date:** June 9, 2026  
 **Phase context:** written before Phase 2.5 implementation; updated notes mark what Phase 2.5 addressed.  
@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-ScrapGPT's core architectural thesis — *AI understands the site once, code extracts every page* — is sound and differentiating. The product has a working end-to-end loop. The weakness identified in this review was that the system treated crawl discovery as a technical same-origin problem, while users think in terms of datasets, pages, pagination, categories, and sites.
+ScrapeGPT's core architectural thesis — *AI understands the site once, code extracts every page* — is sound and differentiating. The product has a working end-to-end loop. The weakness identified in this review was that the system treated crawl discovery as a technical same-origin problem, while users think in terms of datasets, pages, pagination, categories, and sites.
 
 **Phase 2.5 addressed the most critical gap:** crawl scope is now a first-class object, frontier preview exists, and extraction requires explicit scope confirmation for non-current-page modes. The remaining work described here feeds into Phase 3 and beyond.
 
@@ -138,9 +138,9 @@ Bump `ANALYZER_VERSION` (currently `"1"` in `app/services/analyzer.py`) when the
 | **ScrapeGraphAI** | Yes | Basic (depth/breadth/include/exclude) | No | Yes | Yes |
 | **Browse AI** | No | Visual workflow (no explicit scope) | Yes | No | No |
 | **Apify** | No | Very rich (globs/pseudoURLs/strategies) | No | No | Actors only |
-| **ScrapGPT** | Yes | Semantic modes + confirmation + preview | Partial (Phase 3) | Yes | Yes |
+| **ScrapeGPT** | Yes | Semantic modes + confirmation + preview | Partial (Phase 3) | Yes | Yes |
 
-ScrapGPT's niche: *BYOK + self-hosted + semantic scope + deterministic extraction + non-technical UX (Phase 3)*. No competitor combines all five.
+ScrapeGPT's niche: *BYOK + self-hosted + semantic scope + deterministic extraction + non-technical UX (Phase 3)*. No competitor combines all five.
 
 ### 3.3 What to build for defensible differentiation
 

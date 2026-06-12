@@ -1,4 +1,4 @@
-# [ARCHIVED] ScrapGPT — Pre-Redesign Reference (Phase 0)
+# [ARCHIVED] ScrapeGPT — Pre-Redesign Reference (Phase 0)
 
 > **ARCHIVED — do not use for current development.**
 > This document describes the original credit-gated single-task system before the strategic redesign.
@@ -16,7 +16,7 @@
 
 ## Table of Contents
 
-1. [What ScrapGPT Is](#1-what-scrapegpt-is)
+1. [What ScrapeGPT Is](#1-what-scrapegpt-is)
 2. [Setup & Running Locally](#2-setup--running-locally)
 3. [Current Implementation Status](#3-current-implementation-status)
 4. [Architecture Deep Dive](#4-architecture-deep-dive)
@@ -27,9 +27,9 @@
 
 ---
 
-## 1. What ScrapGPT Is
+## 1. What ScrapeGPT Is
 
-ScrapGPT is an async FastAPI backend for authenticated, credit-gated URL scraping with an AI post-processing stage. The full vision is:
+ScrapeGPT is an async FastAPI backend for authenticated, credit-gated URL scraping with an AI post-processing stage. The full vision is:
 
 - User enters a URL
 - Backend fetches and renders the page (static or Playwright browser)

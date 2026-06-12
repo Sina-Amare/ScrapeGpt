@@ -98,7 +98,7 @@ export function NewProjectPage() {
             <div>
               <h2 className="font-bold text-ink">Analyze a page</h2>
               <p className="text-sm text-muted">
-                Paste a URL and ScrapGPT will find extractable data.
+                Paste a URL and ScrapeGPT will find extractable data.
               </p>
             </div>
           </div>
@@ -120,12 +120,12 @@ export function NewProjectPage() {
               />
             </Field>
 
-            <Field label="What are you extracting?" hint="Leave blank and ScrapGPT will decide.">
+            <Field label="What are you extracting?" hint="Leave blank and ScrapeGPT will decide.">
               <Select
                 value={extractionMode}
                 onChange={(event) => setExtractionMode(event.target.value as ExtractionMode | "")}
               >
-                <option value="">Let ScrapGPT decide</option>
+                <option value="">Let ScrapeGPT decide</option>
                 <option value="STRUCTURED">Structured data - products, listings, directories, tables</option>
                 <option value="CONTENT">Content - articles, docs, knowledge pages</option>
               </Select>

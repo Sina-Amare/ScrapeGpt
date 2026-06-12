@@ -13,8 +13,9 @@ import {
   Settings2,
   X
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { ReactNode, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -44,24 +45,41 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             end={item.end}
             onClick={onNavigate}
             className={({ isActive }) =>
-              `flex h-10 items-center gap-3 rounded-md px-3 text-sm font-semibold transition ${
+              `relative flex h-10 items-center gap-3 rounded-md px-3 text-sm font-semibold transition ${
                 item.legacy && isActive
                   ? "border border-line bg-porcelain text-ink"
                   : isActive
-                  ? "bg-teal text-white"
+                  ? "bg-teal-soft text-teal"
                   : item.legacy
                   ? "text-muted/80 hover:bg-porcelain hover:text-ink"
                   : "text-muted hover:bg-porcelain hover:text-ink"
               }`
             }
           >
-            <Icon className="h-4 w-4" />
-            <span className="min-w-0 flex-1 truncate">{item.label}</span>
-            {item.legacy ? (
-              <span className="rounded border border-line px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted">
-                old
-              </span>
-            ) : null}
+            {({ isActive }) => (
+              <>
+                {isActive && !item.legacy && (
+                  <motion.div
+                    layoutId="sidebar-active-indicator"
+                    className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-teal"
+                    transition={{ type: "spring", stiffness: 500, damping: 40 }}
+                  />
+                )}
+                <Icon className="h-4 w-4" />
+                <motion.span
+                  className="min-w-0 flex-1 truncate"
+                  whileHover={{ x: 2 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                >
+                  {item.label}
+                </motion.span>
+                {item.legacy ? (
+                  <span className="rounded border border-line px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted">
+                    old
+                  </span>
+                ) : null}
+              </>
+            )}
           </NavLink>
         );
       })}
@@ -72,6 +90,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const { displayEmail, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const location = useLocation();
   const health = useQuery({
     queryKey: ["health-ready"],
     queryFn: () => api.getHealth("/health/ready"),
@@ -88,7 +107,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div>
             <div className="text-sm font-bold uppercase tracking-wide text-ink">
-              ScrapGPT
+              ScrapeGPT
             </div>
             <div className="text-xs font-medium text-muted">BYOK Console</div>
           </div>
@@ -105,7 +124,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <DatabaseZap className="h-5 w-5" />
                 </div>
                 <span className="text-sm font-bold uppercase tracking-wide">
-                  ScrapGPT
+                  ScrapeGPT
                 </span>
               </div>
               <button
@@ -153,7 +172,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
         </header>
-        <main className="mx-auto max-w-7xl px-4 py-6 md:px-8">{children}</main>
+        <main className="mx-auto max-w-7xl px-4 py-6 md:px-8">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18 }}
+            >
+              {children}
+            </motion.div>
+          </AnimatePresence>
+        </main>
       </div>
     </div>
   );

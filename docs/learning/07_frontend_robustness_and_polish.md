@@ -1,10 +1,10 @@
 # 07 — Frontend Robustness and Polish
 
-This document details the design decisions and changes made to resolve frontend layout overlapping, select element overflows, sidebar active link styling, legacy navigation prominence, and misleading Phase 1 review copy in ScrapGPT.
+This document details the design decisions and changes made to resolve frontend layout overlapping, select element overflows, sidebar active link styling, legacy navigation prominence, and misleading Phase 1 review copy in ScrapeGPT.
 
 ## Purpose & Context
 
-While using the ScrapGPT BYOK Console, layout issues were encountered where long select option texts forced `Select` components to expand beyond the bounds of their parent `<section>` card, overlapping other page components. Additionally, the sidebar navigation allowed multiple links to be styled as "active" simultaneously.
+While using the ScrapeGPT BYOK Console, layout issues were encountered where long select option texts forced `Select` components to expand beyond the bounds of their parent `<section>` card, overlapping other page components. Additionally, the sidebar navigation allowed multiple links to be styled as "active" simultaneously.
 
 After Phase 1 was tested manually, two product-copy issues remained:
 

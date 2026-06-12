@@ -52,7 +52,7 @@ export function FrontierPreviewPanel({ preview, loading, error, stale, disabled,
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted">
-          See what pages ScrapGPT will visit before extraction begins.
+          See what pages ScrapeGPT will visit before extraction begins.
         </p>
         <Button onClick={onGenerate} disabled={disabled || loading} variant="secondary">
           <Eye className="h-4 w-4" />

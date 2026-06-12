@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Application Settings
     # -------------------------------------------------------------------------
-    APP_NAME: str = "ScrapGPT"
+    APP_NAME: str = "ScrapeGPT"
     ENVIRONMENT: str = Field(default="development", pattern="^(development|staging|production)$")
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
@@ -145,7 +145,7 @@ class Settings(BaseSettings):
         default="",
         description=(
             "Optional FlareSolverr instance URL (e.g. http://localhost:8191). "
-            "When set, ScrapGPT uses FlareSolverr as a last-resort fallback for "
+            "When set, ScrapeGPT uses FlareSolverr as a last-resort fallback for "
             "Cloudflare JS challenges that survive camoufox/stealth-Playwright. "
             "Run with: docker run -d -p 8191:8191 flaresolverr/flaresolverr:latest"
         ),

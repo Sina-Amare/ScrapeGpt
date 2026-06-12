@@ -1,4 +1,4 @@
-# ScrapGPT — Codebase Audit Report
+# ScrapeGPT — Codebase Audit Report
 
 **Audit date:** 2026-06-09
 **Auditor scope:** code-first review of `app/`, `alembic/versions/`, `tests/`, `frontend/src/`. Documentation treated as potentially stale.
@@ -23,7 +23,7 @@
 
 ### What the system actually is today
 
-ScrapGPT is a **FastAPI + React** web application for **BYOK AI-assisted web data extraction**. Users authenticate, register an AI provider (BYOK, Fernet-encrypted API key), submit a URL, and the system runs a stateful **project** through an analysis → preview → extraction → export pipeline. The system calls the user's AI provider exactly once per project (to analyze the seed page) and then performs deterministic CSS-selector extraction across the discovered pages. No external broker, no hosted SaaS dependency for the data path.
+ScrapeGPT is a **FastAPI + React** web application for **BYOK AI-assisted web data extraction**. Users authenticate, register an AI provider (BYOK, Fernet-encrypted API key), submit a URL, and the system runs a stateful **project** through an analysis → preview → extraction → export pipeline. The system calls the user's AI provider exactly once per project (to analyze the seed page) and then performs deterministic CSS-selector extraction across the discovered pages. No external broker, no hosted SaaS dependency for the data path.
 
 **Concretely (verified from code):**
 

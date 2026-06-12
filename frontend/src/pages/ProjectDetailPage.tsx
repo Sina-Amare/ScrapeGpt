@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, Check, Download, Info, RefreshCw, Save, XCircle } from "lucide-react";
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { motion } from "motion/react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { AnalysisPipeline } from "../components/project/AnalysisPipeline";
@@ -27,14 +28,60 @@ function ConfidenceBar({ value }: { value: number | null }) {
   return (
     <div className="flex items-center gap-3">
       <div className="relative h-2 flex-1 min-w-0 overflow-hidden rounded-full bg-gray-100">
-        <div
-          className={`absolute inset-y-0 left-0 rounded-full transition-all ${color}`}
-          style={{ width: `${pct}%` }}
+        <motion.div
+          className={`absolute inset-y-0 left-0 rounded-full ${color}`}
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
         />
       </div>
       <span className="w-12 shrink-0 text-right text-sm font-bold text-ink">
         {value == null ? "-" : `${pct}%`}
       </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sticky tab navigation with scroll-spy
+// ---------------------------------------------------------------------------
+
+const TABS = [
+  { label: "Overview", id: "overview" },
+  { label: "Scope",    id: "scope" },
+  { label: "Fields",   id: "fields" },
+  { label: "Preview",  id: "preview" },
+  { label: "Extract",  id: "extract" },
+  { label: "Quality",  id: "quality" },
+  { label: "Results",  id: "results" },
+];
+
+function ProjectTabs({ activeTab }: { activeTab: string }) {
+  function scrollTo(id: string) {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  return (
+    <div className="sticky top-16 z-20 -mx-4 mb-6 border-b border-line bg-surface/95 backdrop-blur px-4 md:-mx-8 md:px-8">
+      <div className="flex gap-1 overflow-x-auto scrollbar-none">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => scrollTo(tab.id)}
+            className={`relative shrink-0 px-4 py-3 text-sm font-semibold transition ${
+              activeTab === tab.id ? "text-teal" : "text-muted hover:text-ink"
+            }`}
+          >
+            {tab.label}
+            {activeTab === tab.id && (
+              <motion.div
+                layoutId="tab-underline"
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-teal"
+                transition={{ type: "spring", stiffness: 500, damping: 40 }}
+              />
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -204,6 +251,8 @@ export function ProjectDetailPage() {
   const [showDeveloper, setShowDeveloper] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
   // Crawl scope draft state
   const [draftMode, setDraftMode] = useState<CrawlScopeMode | null>(null);
@@ -272,6 +321,25 @@ export function ProjectDetailPage() {
       setDraftMode(project.spec.crawl_scope.mode);
     }
   }, [project?.spec?.fields, project?.spec?.id, project?.spec?.page_limit, project?.spec?.export_format, project?.spec?.crawl_scope?.mode, draftMode]);
+
+  useEffect(() => {
+    observerRef.current?.disconnect();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) setActiveTab(visible[0].target.id);
+      },
+      { rootMargin: "-20% 0px -70% 0px", threshold: 0 }
+    );
+    observerRef.current = observer;
+    TABS.forEach(({ id }) => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, [project]);
 
   const saveSpec = useMutation({
     mutationFn: () =>
@@ -374,7 +442,7 @@ export function ProjectDetailPage() {
         const message = raw?.detail?.message;
         if (code === "SCOPE_NOT_CONFIRMED") {
           setExtractScopeError(
-            "Confirm what ScrapGPT should crawl before extraction."
+            "Confirm what ScrapeGPT should crawl before extraction."
           );
           return;
         }
@@ -462,9 +530,10 @@ export function ProjectDetailPage() {
         <Alert tone="danger">Could not load project.</Alert>
       ) : project ? (
         <div className="grid gap-6">
+          <ProjectTabs activeTab={activeTab} />
 
           {/* Overview */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="overview" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
               <div className="min-w-0">
                 <h2 className="break-all text-xl font-bold text-ink">{project.url}</h2>
@@ -501,7 +570,7 @@ export function ProjectDetailPage() {
                 {project.error_code === "BOT_PROTECTION_BLOCKED" && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
                     <p className="font-medium text-amber-800">
-                      ScrapGPT cannot pass this bot protection automatically.
+                      ScrapeGPT cannot pass this bot protection automatically.
                     </p>
                     {(() => {
                       const domain = (() => {
@@ -582,10 +651,10 @@ export function ProjectDetailPage() {
           )}
 
           {/* Crawl Scope */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="scope" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4">
               <h2 className="font-bold text-ink">Crawl scope</h2>
-              <p className="text-sm text-muted">Choose what ScrapGPT should crawl before extraction.</p>
+              <p className="text-sm text-muted">Choose what ScrapeGPT should crawl before extraction.</p>
             </div>
             {saveScopeMutation.error ? (
               <div className="mb-4"><Alert tone="danger">{saveScopeMutation.error.message}</Alert></div>
@@ -622,10 +691,10 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Frontier Preview */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="preview" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4">
               <h2 className="font-bold text-ink">Page preview</h2>
-              <p className="text-sm text-muted">Verify which URLs ScrapGPT will actually visit before committing to a full extraction. Catches scope misconfiguration early.</p>
+              <p className="text-sm text-muted">Verify which URLs ScrapeGPT will actually visit before committing to a full extraction. Catches scope misconfiguration early.</p>
               <p className="mt-1 text-xs text-teal">Generate this before extracting — it shows the exact URL list so you can spot if the wrong pages are included.</p>
             </div>
             <FrontierPreviewPanel
@@ -639,7 +708,7 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Fields */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="fields" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-bold text-ink">Fields</h2>
@@ -655,7 +724,7 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Sample Preview */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="sample" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-bold text-ink">Sample preview <span className="text-xs font-normal text-muted">(optional)</span></h2>
@@ -682,7 +751,7 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Extraction */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="extract" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-bold text-ink">Extraction</h2>
@@ -763,7 +832,7 @@ export function ProjectDetailPage() {
                 <span className="font-normal text-xs text-muted">Maximum pages to crawl</span>
               </label>
               <div className="rounded-lg border border-line bg-porcelain p-4 text-sm text-muted">
-                ScrapGPT will crawl pages within the selected scope, up to the safety limit.
+                ScrapeGPT will crawl pages within the selected scope, up to the safety limit.
                 Scope is set in the "Crawl scope" section above.
               </div>
             </div>
@@ -802,7 +871,7 @@ export function ProjectDetailPage() {
           </section>
 
           {/* Extraction Quality */}
-          <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
+          <section id="quality" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4">
               <h2 className="font-bold text-ink">Extraction quality</h2>
               <p className="text-sm text-muted">Trust signals for the extracted data.</p>

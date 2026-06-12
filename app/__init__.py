@@ -1,6 +1,6 @@
-# ScrapGPT - app package
+# ScrapeGPT - app package
 """
-ScrapGPT: Professional FastAPI Web Scraping Platform
+ScrapeGPT: Professional FastAPI Web Scraping Platform
 
 A production-ready web scraping API with AI capabilities,
 featuring JWT authentication, async PostgreSQL, and job queues.

@@ -1,4 +1,5 @@
 import { Check, Loader2, X } from "lucide-react";
+import { motion } from "motion/react";
 import type { ProjectState } from "../../types";
 
 type StepStatus = "pending" | "active" | "done" | "error";
@@ -58,7 +59,12 @@ function StepIcon({ status }: { status: StepStatus }) {
   }
   if (status === "active") {
     return (
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal text-white">
+      <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal text-white">
+        <motion.div
+          className="absolute inset-0 rounded-full border-2 border-teal"
+          animate={{ scale: [1, 1.6, 1], opacity: [0.7, 0, 0.7] }}
+          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+        />
         <Loader2 className="h-4 w-4 animate-spin" />
       </div>
     );

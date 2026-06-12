@@ -7,7 +7,7 @@ const toneClasses: Record<BadgeTone, string> = {
   warning: "border-amber-200 bg-amber-50 text-warning",
   danger: "border-red-200 bg-red-50 text-danger",
   neutral: "border-line bg-porcelain text-muted",
-  accent: "border-orange-200 bg-orange-50 text-accent"
+  accent: "border-indigo-200 bg-indigo-50 text-teal"
 };
 
 export function Badge({

@@ -8,7 +8,7 @@
 
 ## Problem and Purpose
 
-Before Phase 2.5, ScrapGPT had no first-class representation of crawl intent. A user submitting `https://calories.info/food/potato-products` would silently receive records from the entire site (Pizza, Meat, Beer, Fruit categories) because the crawler treated every same-origin link as a valid target. The user had no way to say "extract only this paginated list." `url_patterns` existed as a low-level glob list but was not connected to any product-level concept.
+Before Phase 2.5, ScrapeGPT had no first-class representation of crawl intent. A user submitting `https://calories.info/food/potato-products` would silently receive records from the entire site (Pizza, Meat, Beer, Fruit categories) because the crawler treated every same-origin link as a valid target. The user had no way to say "extract only this paginated list." `url_patterns` existed as a low-level glob list but was not connected to any product-level concept.
 
 Three concrete gaps:
 

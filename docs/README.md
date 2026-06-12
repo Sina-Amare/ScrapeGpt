@@ -1,4 +1,4 @@
-# ScrapGPT Docs
+# ScrapeGPT Docs
 
 ## Start Here
 
