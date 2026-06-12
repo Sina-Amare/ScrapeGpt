@@ -423,8 +423,14 @@ export const api = {
     return apiRequest<ProjectResponse>(`/projects/${id}/cancel`, { method: "POST" });
   },
 
-  retryProject(id: number): Promise<ProjectResponse> {
-    return apiRequest<ProjectResponse>(`/projects/${id}/retry`, { method: "POST" });
+  retryProject(id: number, providerConfigId?: number | null): Promise<ProjectResponse> {
+    return apiRequest<ProjectResponse>(`/projects/${id}/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        providerConfigId != null ? { provider_config_id: providerConfigId } : {}
+      )
+    });
   },
 
   setProjectSession(id: number, sessionId: number | null): Promise<ProjectResponse> {

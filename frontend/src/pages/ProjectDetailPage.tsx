@@ -15,9 +15,11 @@ import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
+import { ProviderSelect } from "../components/ui/ProviderSelect";
 import { Select } from "../components/ui/Select";
 import { Skeleton } from "../components/ui/Skeleton";
 import { ApiError, api } from "../lib/api";
+import { canRetryWithProvider, errorHelp } from "../lib/errorHelp";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject } from "../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation, scopeModeLabel } from "../lib/scopeCopy";
 import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, ProjectRecord, ProjectState } from "../types";
@@ -252,6 +254,7 @@ export function ProjectDetailPage() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
+  const [retryProviderId, setRetryProviderId] = useState<number | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
 
   // Crawl scope draft state
@@ -395,12 +398,24 @@ export function ProjectDetailPage() {
   });
 
   const retryMutation = useMutation({
-    mutationFn: () => api.retryProject(projectId),
+    mutationFn: (providerConfigId?: number | null) =>
+      api.retryProject(projectId, providerConfigId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
   });
+
+  // Clear a stale retry error (e.g. an old "Internal Server Error") once the
+  // project is no longer FAILED, so it doesn't linger after retry starts working.
+  const projectState = project?.system_state;
+  useEffect(() => {
+    if (projectState && projectState !== "FAILED") {
+      retryMutation.reset();
+    }
+    // retryMutation.reset is stable; intentionally excluded from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectState]);
 
   // Start a sibling project for the same URL in the other extraction mode, so a
   // page with both kinds of data doesn't force the user to choose one.
@@ -600,23 +615,64 @@ export function ProjectDetailPage() {
             })()}
             {project.error ? (
               <div className="mt-5 flex flex-col gap-2">
-                <Alert tone="danger">
-                  <div className="flex items-start justify-between gap-4">
-                    <span>{project.error}</span>
-                    {project.system_state === "FAILED" && (
-                      <Button
-                        variant="secondary"
-                        onClick={() => retryMutation.mutate()}
-                        disabled={retryMutation.isPending}
-                      >
-                        {retryMutation.isPending ? "Retrying…" : "Retry"}
-                      </Button>
-                    )}
-                  </div>
-                </Alert>
-                {retryMutation.error && (
-                  <Alert tone="danger">{retryMutation.error.message}</Alert>
-                )}
+                {(() => {
+                  const help = errorHelp(project.error_code);
+                  const providerRetryable =
+                    project.system_state === "FAILED" &&
+                    canRetryWithProvider(Boolean(project.analysis));
+                  return (
+                    <Alert tone="danger">
+                      <div className="flex flex-col gap-3">
+                        <div>
+                          <p className="font-semibold">{help.title}</p>
+                          <p className="mt-0.5 text-sm">{help.guidance}</p>
+                          {project.error && project.error !== help.guidance ? (
+                            <p className="mt-1 text-xs opacity-70">Details: {project.error}</p>
+                          ) : null}
+                          {project.analysis ? (
+                            <p className="mt-1 text-xs opacity-80">
+                              Your analysis is kept — retry continues from field setup without
+                              re-analyzing.
+                            </p>
+                          ) : null}
+                        </div>
+                        {project.system_state === "FAILED" ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {providerRetryable ? (
+                              <>
+                                <span className="text-sm">Retry with provider:</span>
+                                <ProviderSelect
+                                  value={retryProviderId ?? project.provider_config_id}
+                                  onChange={setRetryProviderId}
+                                  className="min-w-[200px]"
+                                />
+                              </>
+                            ) : null}
+                            <Button
+                              variant="secondary"
+                              className="shrink-0"
+                              onClick={() =>
+                                retryMutation.mutate(
+                                  providerRetryable
+                                    ? retryProviderId ?? project.provider_config_id ?? undefined
+                                    : undefined
+                                )
+                              }
+                              disabled={retryMutation.isPending}
+                            >
+                              {retryMutation.isPending ? "Retrying…" : "Retry"}
+                            </Button>
+                          </div>
+                        ) : null}
+                        {retryMutation.error ? (
+                          <p className="text-xs text-danger">
+                            Retry failed: {retryMutation.error.message}. Please try again.
+                          </p>
+                        ) : null}
+                      </div>
+                    </Alert>
+                  );
+                })()}
                 {project.error_code === "BOT_PROTECTION_BLOCKED" && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
                     <p className="font-medium text-amber-800">
