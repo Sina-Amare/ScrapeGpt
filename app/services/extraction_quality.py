@@ -241,7 +241,7 @@ def _selected_field_names(spec: Any) -> list[str]:
             continue
         if not field.get("selected", True):
             continue
-        name = field.get("name") or field.get("user_label") or field.get("label")
+        name = field.get("user_label") or field.get("label") or field.get("name")
         if name:
             out.append(str(name))
     return out

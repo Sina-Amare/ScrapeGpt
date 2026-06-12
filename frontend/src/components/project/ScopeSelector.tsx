@@ -69,6 +69,7 @@ export function ScopeSelector({ crawlScope, disabled, onModeChange, onConfirm }:
                 ) : null}
               </span>
               <span className="mt-0.5 block text-xs text-muted">{info.description}</span>
+              <span className="mt-0.5 block text-xs italic text-muted/70">{info.example}</span>
             </span>
           </button>
         );

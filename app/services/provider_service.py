@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -331,7 +332,18 @@ async def _completion(
         if response_format is not None:
             kwargs["response_format"] = response_format
 
-        response = await litellm.acompletion(**kwargs)
+        # asyncio.wait_for guarantees the timeout fires even when LiteLLM's
+        # internal HTTP client does not raise (e.g. slow free-tier models that
+        # queue the request without ever timing out at the TCP layer).
+        try:
+            response = await asyncio.wait_for(
+                litellm.acompletion(**kwargs),
+                timeout=settings.LLM_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise ProviderCallError(
+                f"Provider did not respond within {settings.LLM_TIMEOUT}s (timeout)."
+            )
         return _extract_message_content(response)
     except ProviderServiceError:
         raise

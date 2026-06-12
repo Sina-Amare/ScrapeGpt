@@ -10,9 +10,11 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Skeleton } from "../components/ui/Skeleton";
 import { StatTile } from "../components/ui/StatTile";
@@ -44,6 +46,7 @@ function truncateUrl(url: string, max = 52): string {
 
 function ProjectsSection() {
   const queryClient = useQueryClient();
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -62,10 +65,13 @@ function ProjectsSection() {
   const deleteMutation = useMutation({
     mutationFn: api.deleteProject,
     onSuccess: () => {
+      setDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project deleted");
     },
     onError: (err) => {
-      alert(err instanceof Error ? err.message : "Failed to delete project");
+      setDeleteTarget(null);
+      toast.error(err instanceof Error ? err.message : "Failed to delete project");
     },
   });
 
@@ -183,7 +189,7 @@ function ProjectsSection() {
                       </button>
                     </Link>
                     <button
-                      onClick={() => deleteMutation.mutate(project.id)}
+                      onClick={() => setDeleteTarget(project.id)}
                       disabled={
                         !TERMINAL_PROJECT_STATES.has(project.system_state)
                       }
@@ -199,6 +205,16 @@ function ProjectsSection() {
           </Table>
         )}
       </section>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete project"
+        message="This will permanently delete the project and all its records. This cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={() => deleteTarget !== null && deleteMutation.mutate(deleteTarget)}
+        onCancel={() => setDeleteTarget(null)}
+        isPending={deleteMutation.isPending}
+      />
     </div>
   );
 }
@@ -224,9 +240,11 @@ function LegacyScrapeSection() {
       void queryClient.invalidateQueries({ queryKey: ["task-history"] });
       void queryClient.invalidateQueries({ queryKey: ["current-task"] });
       setDeleteTaskTarget(null);
+      toast.success("Task deleted");
     },
     onError: (err) => {
-      alert(err instanceof Error ? err.message : "Failed to delete task");
+      setDeleteTaskTarget(null);
+      toast.error(err instanceof Error ? err.message : "Failed to delete task");
     },
   });
 

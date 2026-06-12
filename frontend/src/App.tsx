@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
+import { Toaster } from "sonner";
 import { AppShell } from "./layout/AppShell";
 import { ProtectedRoute, PublicRoute } from "./layout/RouteGuards";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { LoginPage, RegisterPage } from "./pages/AuthPages";
 import { DashboardPage } from "./pages/DashboardPage";
 import { HealthPage } from "./pages/HealthPage";
+import { HelpPage } from "./pages/HelpPage";
 import { NewProjectPage } from "./pages/NewProjectPage";
 import { NewScrapePage } from "./pages/NewScrapePage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
@@ -39,6 +41,7 @@ function ProtectedShell() {
         <Route path="sessions" element={<SessionsPage />} />
         <Route path="scrape/new" element={<NewScrapePage />} />
         <Route path="health" element={<HealthPage />} />
+        <Route path="help" element={<HelpPage />} />
         <Route path="*" element={<FallbackRedirect />} />
       </Routes>
     </AppShell>
@@ -59,6 +62,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <Toaster position="bottom-right" richColors />
         <Routes>
           <Route element={<PublicRoute />}>
             <Route path="/login" element={<LoginPage />} />

@@ -1,18 +1,20 @@
-import { AlertCircle, CheckCircle2, Info } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { ReactNode } from "react";
 
-type AlertTone = "info" | "success" | "danger";
+type AlertTone = "info" | "success" | "danger" | "warning";
 
 const toneClasses: Record<AlertTone, string> = {
   info: "border-line bg-white text-ink",
   success: "border-green-200 bg-green-50 text-success",
-  danger: "border-red-200 bg-red-50 text-danger"
+  danger: "border-red-200 bg-red-50 text-danger",
+  warning: "border-amber-200 bg-amber-50 text-amber-800"
 };
 
 const icons = {
   info: Info,
   success: CheckCircle2,
-  danger: AlertCircle
+  danger: AlertCircle,
+  warning: AlertTriangle
 };
 
 export function Alert({

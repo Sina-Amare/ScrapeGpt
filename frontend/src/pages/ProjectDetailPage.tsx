@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, Check, Download, RefreshCw, Save, XCircle } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, Download, Info, RefreshCw, Save, XCircle } from "lucide-react";
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
+import { AnalysisPipeline } from "../components/project/AnalysisPipeline";
 import { FrontierPreviewPanel } from "../components/project/FrontierPreviewPanel";
 import { PaginatedResultsTable } from "../components/project/PaginatedResultsTable";
 import { ScopeSelector } from "../components/project/ScopeSelector";
@@ -9,6 +11,7 @@ import { TrustSummaryPanel } from "../components/project/TrustSummaryPanel";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
@@ -23,10 +26,15 @@ function ConfidenceBar({ value }: { value: number | null }) {
   const color = pct >= 80 ? "bg-success" : pct >= 60 ? "bg-warning" : "bg-danger";
   return (
     <div className="flex items-center gap-3">
-      <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
+      <div className="relative h-2 flex-1 min-w-0 overflow-hidden rounded-full bg-gray-100">
+        <div
+          className={`absolute inset-y-0 left-0 rounded-full transition-all ${color}`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
-      <span className="w-12 text-right text-sm font-bold text-ink">{value == null ? "-" : `${pct}%`}</span>
+      <span className="w-12 shrink-0 text-right text-sm font-bold text-ink">
+        {value == null ? "-" : `${pct}%`}
+      </span>
     </div>
   );
 }
@@ -89,14 +97,36 @@ function FieldEditor({
   }
 
   return (
+    <div className="space-y-3">
     <div className="overflow-x-auto rounded-lg border border-line">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-line bg-porcelain text-left text-xs font-bold uppercase tracking-widest text-muted">
-            <th className="px-4 py-2.5">Use</th>
+            <th className="px-4 py-2.5">
+              <span className="flex items-center gap-1">
+                Use
+                <span title="Include this field in your output. Uncheck to skip it entirely." className="cursor-help">
+                  <Info className="h-3.5 w-3.5 text-muted/60" />
+                </span>
+              </span>
+            </th>
             <th className="px-4 py-2.5">Field name</th>
-            <th className="px-4 py-2.5">Type</th>
-            <th className="px-4 py-2.5">Required</th>
+            <th className="px-4 py-2.5">
+              <span className="flex items-center gap-1">
+                Type
+                <span title="Auto-detected by AI — change only if the type is wrong." className="cursor-help">
+                  <Info className="h-3.5 w-3.5 text-muted/60" />
+                </span>
+              </span>
+            </th>
+            <th className="px-4 py-2.5">
+              <span className="flex items-center gap-1">
+                Required
+                <span title="Discard any row where this field is empty. Only check for fields that must appear on every row." className="cursor-help">
+                  <Info className="h-3.5 w-3.5 text-muted/60" />
+                </span>
+              </span>
+            </th>
             <th className="px-4 py-2.5">Confidence</th>
             <th className="px-4 py-2.5">Samples</th>
           </tr>
@@ -121,7 +151,11 @@ function FieldEditor({
                 />
               </td>
               <td className="min-w-36 px-4 py-3">
-                <Select value={field.type} onChange={(event) => updateField(index, { type: event.target.value })}>
+                <Select
+                  value={field.type}
+                  title="Auto-detected by AI — change only if incorrect"
+                  onChange={(event) => updateField(index, { type: event.target.value })}
+                >
                   <option value="string">Text</option>
                   <option value="number">Number</option>
                   <option value="url">URL</option>
@@ -151,6 +185,10 @@ function FieldEditor({
         </tbody>
       </table>
     </div>
+    <p className="text-xs text-muted">
+      <strong>Tip:</strong> Check <strong>Use</strong> for every field you want in your output. Only mark <strong>Required</strong> for fields like title or ID that must appear on every row — rows missing a required field are dropped from the results.
+    </p>
+    </div>
   );
 }
 
@@ -164,6 +202,8 @@ export function ProjectDetailPage() {
   const [pageLimit, setPageLimit] = useState(500);
   const [exportFormat, setExportFormat] = useState("csv");
   const [showDeveloper, setShowDeveloper] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Crawl scope draft state
   const [draftMode, setDraftMode] = useState<CrawlScopeMode | null>(null);
@@ -400,7 +440,12 @@ export function ProjectDetailPage() {
             Refresh
           </Button>
           {isActive ? (
-            <Button variant="danger" onClick={() => cancelMutation.mutate()}>
+            <Button
+              variant="danger"
+              onClick={() => setShowCancelConfirm(true)}
+              disabled={cancelMutation.isPending}
+              loading={cancelMutation.isPending}
+            >
               <XCircle className="h-4 w-4" />
               Cancel
             </Button>
@@ -531,6 +576,11 @@ export function ProjectDetailPage() {
             ) : null}
           </section>
 
+          {/* Analysis Pipeline (shown while AI is working) */}
+          {(project.system_state === "QUEUED" || project.system_state === "ANALYZING") && (
+            <AnalysisPipeline state={project.system_state} />
+          )}
+
           {/* Crawl Scope */}
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4">
@@ -575,7 +625,8 @@ export function ProjectDetailPage() {
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4">
               <h2 className="font-bold text-ink">Page preview</h2>
-              <p className="text-sm text-muted">See what pages will be crawled before starting extraction.</p>
+              <p className="text-sm text-muted">Verify which URLs ScrapGPT will actually visit before committing to a full extraction. Catches scope misconfiguration early.</p>
+              <p className="mt-1 text-xs text-teal">Generate this before extracting — it shows the exact URL list so you can spot if the wrong pages are included.</p>
             </div>
             <FrontierPreviewPanel
               preview={project.frontier_preview}
@@ -607,8 +658,8 @@ export function ProjectDetailPage() {
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="font-bold text-ink">Sample preview</h2>
-                <p className="text-sm text-muted">Check sample data before running extraction.</p>
+                <h2 className="font-bold text-ink">Sample preview <span className="text-xs font-normal text-muted">(optional)</span></h2>
+                <p className="text-sm text-muted">Runs the extraction on one page so you can verify field values before the full run.</p>
               </div>
               <Button onClick={() => previewMutation.mutate()} disabled={!project.spec || previewMutation.isPending}>
                 <Check className="h-4 w-4" />
@@ -781,7 +832,18 @@ export function ProjectDetailPage() {
                   </label>
                   <Button
                     variant="secondary"
-                    onClick={() => void api.exportProject(project.id, exportFormat as "csv" | "json" | "xlsx")}
+                    loading={isExporting}
+                    onClick={async () => {
+                      setIsExporting(true);
+                      try {
+                        await api.exportProject(project.id, exportFormat as "csv" | "json" | "xlsx");
+                        toast.success("Export downloaded");
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Export failed");
+                      } finally {
+                        setIsExporting(false);
+                      }
+                    }}
                   >
                     <Download className="h-4 w-4" />
                     Download
@@ -796,16 +858,18 @@ export function ProjectDetailPage() {
             />
           </section>
 
-          {/* Developer Details */}
+          {/* Raw Debug Data */}
           <section className="rounded-lg border border-line bg-surface p-6 shadow-panel">
             <button
               type="button"
-              className="text-sm font-bold text-muted transition hover:text-ink"
+              className="text-xs text-muted/70 transition hover:text-muted"
               onClick={() => setShowDeveloper((value) => !value)}
             >
-              {showDeveloper ? "Hide developer details" : "Show developer details"}
+              {showDeveloper ? "Hide raw debug data" : "Show raw debug data"}
             </button>
             {showDeveloper ? (
+              <>
+              <p className="mt-1 text-xs text-muted/60">Technical details for debugging or support. Not needed for normal use.</p>
               <pre className="mt-4 overflow-x-auto rounded-lg border border-line bg-porcelain p-4 text-xs text-ink">
                 {JSON.stringify(
                   {
@@ -821,10 +885,25 @@ export function ProjectDetailPage() {
                   2
                 )}
               </pre>
+              </>
             ) : null}
           </section>
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={showCancelConfirm}
+        title="Cancel extraction"
+        message="This will stop the current extraction run. Partial results will be kept. Continue?"
+        confirmLabel="Yes, cancel"
+        variant="primary"
+        onConfirm={() => {
+          setShowCancelConfirm(false);
+          cancelMutation.mutate();
+        }}
+        onCancel={() => setShowCancelConfirm(false)}
+        isPending={cancelMutation.isPending}
+      />
     </>
   );
 }

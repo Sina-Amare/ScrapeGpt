@@ -5,9 +5,11 @@ import io
 import json
 import logging
 import time
-import zipfile
-from html import escape
 from typing import Any
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from fastapi import (
     APIRouter,
@@ -647,6 +649,10 @@ async def export_project(
                 "duration_ms": duration_ms,
             },
         )
+        # Resolve spec-defined field order: user_label priority matches the extractor's _field_key.
+        spec = await latest_spec(db, project_id)
+        field_order = _spec_field_order(spec)
+
         if format == "json":
             return Response(
                 content=json.dumps(data),
@@ -655,13 +661,13 @@ async def export_project(
             )
         if format == "xlsx":
             return Response(
-                content=_xlsx_bytes(data),
+                content=_xlsx_bytes(data, field_order=field_order),
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={"Content-Disposition": f'attachment; filename="project-{project_id}.xlsx"'},
             )
 
         output = io.StringIO()
-        fieldnames = sorted({key for row in data for key in row.keys()})
+        fieldnames = _ordered_columns(data, field_order)
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(data)
@@ -682,72 +688,92 @@ async def export_project(
         raise
 
 
-def _xlsx_bytes(rows: list[dict]) -> bytes:
-    """Generate a small XLSX workbook using the stdlib zipfile module."""
-    columns = sorted({key for row in rows for key in row.keys()})
-    sheet_rows = [_xlsx_row(1, columns)]
-    for index, row in enumerate(rows, start=2):
-        sheet_rows.append(_xlsx_row(index, [row.get(column, "") for column in columns]))
+def _spec_field_order(spec: Any | None) -> list[str]:
+    """Return the user-visible field labels in spec order (user_label > label > name)."""
+    if spec is None:
+        return []
+    out: list[str] = []
+    for field in spec.fields or []:
+        if not isinstance(field, dict) or not field.get("selected", True):
+            continue
+        key = field.get("user_label") or field.get("label") or field.get("name")
+        if key:
+            out.append(str(key))
+    return out
 
-    sheet_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        "<sheetData>"
-        + "".join(sheet_rows)
-        + "</sheetData></worksheet>"
-    )
-    workbook_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        '<sheets><sheet name="Results" sheetId="1" r:id="rId1"/></sheets></workbook>'
-    )
-    rels_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
-        "</Relationships>"
-    )
-    workbook_rels_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-        "</Relationships>"
-    )
-    content_types_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        '<Default Extension="xml" ContentType="application/xml"/>'
-        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-        "</Types>"
-    )
+
+def _ordered_columns(rows: list[dict], field_order: list[str]) -> list[str]:
+    """Merge spec field order with any extra keys found in the data.
+
+    Priority: spec fields first (in spec order), then extras alphabetically,
+    with ``source_url`` always last so the data columns are front-and-centre.
+    """
+    all_keys: set[str] = {key for row in rows for key in row.keys()}
+    ordered = [k for k in field_order if k in all_keys]
+    ordered_set = set(ordered)
+    extras = sorted(k for k in all_keys if k not in ordered_set and k != "source_url")
+    if "source_url" in all_keys:
+        extras.append("source_url")
+    return ordered + extras
+
+
+_HEADER_FILL = PatternFill("solid", fgColor="1F618D")
+_HEADER_FONT = Font(bold=True, color="FFFFFF", size=11, name="Calibri")
+_HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_DATA_ALIGN = Alignment(vertical="top", wrap_text=False)
+_ALT_FILL = PatternFill("solid", fgColor="EBF5FB")
+_THIN = Side(border_style="thin", color="D0D3D4")
+_CELL_BORDER = Border(left=_THIN, right=_THIN, bottom=_THIN)
+
+
+def _xlsx_bytes(rows: list[dict], *, field_order: list[str] | None = None) -> bytes:
+    """Generate a styled XLSX workbook with openpyxl."""
+    columns = _ordered_columns(rows, field_order or [])
+    if not columns:
+        columns = sorted({key for row in rows for key in row.keys()})
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Results"
+
+    # Header row
+    for col_idx, col_name in enumerate(columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.font = _HEADER_FONT
+        cell.fill = _HEADER_FILL
+        cell.alignment = _HEADER_ALIGN
+        cell.border = _CELL_BORDER
+    ws.row_dimensions[1].height = 28
+
+    # Data rows with alternating row shading
+    for row_idx, row in enumerate(rows, start=2):
+        fill = _ALT_FILL if row_idx % 2 == 0 else None
+        for col_idx, col_name in enumerate(columns, start=1):
+            value = row.get(col_name, "")
+            if value is None:
+                value = ""
+            elif not isinstance(value, (int, float, bool)):
+                value = str(value)
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.alignment = _DATA_ALIGN
+            cell.border = _CELL_BORDER
+            if fill:
+                cell.fill = fill
+
+    # Auto-fit column widths (capped to keep the sheet readable)
+    for col_idx, col_name in enumerate(columns, start=1):
+        max_len = len(col_name)
+        for row in rows:
+            val = row.get(col_name)
+            if val is not None:
+                max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max(max_len + 2, 12), 55)
+
+    ws.freeze_panes = "A2"
+
     output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", content_types_xml)
-        archive.writestr("_rels/.rels", rels_xml)
-        archive.writestr("xl/workbook.xml", workbook_xml)
-        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
-        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    wb.save(output)
     return output.getvalue()
-
-
-def _xlsx_row(index: int, values: list) -> str:
-    cells = []
-    for col_index, value in enumerate(values, start=1):
-        ref = f"{_excel_column(col_index)}{index}"
-        text = escape("" if value is None else str(value))
-        cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{text}</t></is></c>')
-    return f'<row r="{index}">' + "".join(cells) + "</row>"
-
-
-def _excel_column(index: int) -> str:
-    label = ""
-    while index:
-        index, remainder = divmod(index - 1, 26)
-        label = chr(65 + remainder) + label
-    return label
 
 
 @router.post("/{project_id}/cancel", response_model=ProjectResponse, summary="Cancel active project")

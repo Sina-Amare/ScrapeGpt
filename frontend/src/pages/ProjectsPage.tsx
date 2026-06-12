@@ -2,9 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Skeleton } from "../components/ui/Skeleton";
 import { Table } from "../components/ui/Table";
@@ -27,7 +29,7 @@ function truncateUrl(url: string, max = 58): string {
 
 export function ProjectsPage() {
   const queryClient = useQueryClient();
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
   const projects = useQuery({
     queryKey: ["projects"],
@@ -38,15 +40,17 @@ export function ProjectsPage() {
   const deleteMutation = useMutation({
     mutationFn: api.deleteProject,
     onSuccess: () => {
-      setDeleteError(null);
+      setDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project deleted");
     },
     onError: (error) => {
+      setDeleteTarget(null);
       if (error instanceof ApiError && error.status === 400) {
-        setDeleteError("Active projects cannot be deleted. Cancel or wait for completion first.");
+        toast.error("Active projects cannot be deleted. Cancel or wait for completion first.");
         return;
       }
-      setDeleteError(error instanceof Error ? error.message : "Could not delete project");
+      toast.error(error instanceof Error ? error.message : "Could not delete project");
     }
   });
 
@@ -66,8 +70,6 @@ export function ProjectsPage() {
           </Link>
         </div>
       </PageHeader>
-
-      {deleteError ? <Alert tone="danger">{deleteError}</Alert> : null}
 
       {projects.isLoading ? (
         <div className="grid gap-3">
@@ -129,7 +131,7 @@ export function ProjectsPage() {
                     </button>
                   </Link>
                   <button
-                    onClick={() => deleteMutation.mutate(project.id)}
+                    onClick={() => setDeleteTarget(project.id)}
                     disabled={!TERMINAL_PROJECT_STATES.has(project.system_state) || deleteMutation.isPending}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-red-500/70 transition hover:border-danger hover:bg-red-50 hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-surface disabled:hover:text-red-500/50"
                     title="Delete project"
@@ -142,6 +144,16 @@ export function ProjectsPage() {
           ))}
         </Table>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete project"
+        message="This will permanently delete the project and all its records. This cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={() => deleteTarget !== null && deleteMutation.mutate(deleteTarget)}
+        onCancel={() => setDeleteTarget(null)}
+        isPending={deleteMutation.isPending}
+      />
     </>
   );
 }

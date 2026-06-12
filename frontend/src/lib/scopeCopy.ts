@@ -3,6 +3,7 @@ import type { CrawlScopeMode } from "../types";
 export type ScopeModeInfo = {
   label: string;
   description: string;
+  example: string;
   confirmLabel: string;
   warnStrong: boolean;
 };
@@ -10,25 +11,29 @@ export type ScopeModeInfo = {
 const SCOPE_MODE_INFO: Record<CrawlScopeMode, ScopeModeInfo> = {
   CURRENT_PAGE: {
     label: "This page only",
-    description: "Fastest and safest. Links on the page will not be crawled.",
+    description: "Scrapes only the URL you pasted. Best for a single page or for testing your fields before a bigger run.",
+    example: "e.g. arxiv.org/abs/2301.00001 — one paper",
     confirmLabel: "Use this page only",
     warnStrong: false,
   },
   PAGINATION: {
-    label: "This list across pages",
-    description: "Use this when page 2, page 3, or next links continue the same list.",
+    label: "Paginated list",
+    description: "Follows Next / page 2 / page 3 links to scrape the same list across multiple pages. Use when all results live on one list that spans pages.",
+    example: "e.g. arxiv.org/search/… pages 1–40",
     confirmLabel: "Confirm list pages",
     warnStrong: false,
   },
   DATASET: {
-    label: "This dataset",
-    description: "Use this when item/detail pages belong to the same dataset.",
+    label: "Listing + detail pages",
+    description: "Follows links from this page to each item's own page and scrapes both. Use when each result has a detail URL with more data.",
+    example: "e.g. arxiv.org search → each /abs/ paper page",
     confirmLabel: "Confirm dataset scope",
     warnStrong: false,
   },
   FULL_SITE: {
-    label: "The whole site",
-    description: "Use only when you truly want the website explored broadly.",
+    label: "Entire website",
+    description: "Crawls every discoverable page on the domain. Very slow — only use when you need everything on the site.",
+    example: "e.g. all pages on docs.example.com",
     confirmLabel: "Confirm whole-site crawl",
     warnStrong: true,
   },

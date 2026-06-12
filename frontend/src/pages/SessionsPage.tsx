@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { FormEvent, useState } from "react";
+import { toast } from "sonner";
 import { Alert } from "../components/ui/Alert";
 import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Dialog } from "../components/ui/Dialog";
 import { Field, Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -18,9 +20,11 @@ function emptyForm() {
 function SessionRow({
   session,
   onDelete,
+  isPending,
 }: {
   session: BrowserSession;
   onDelete: () => void;
+  isPending?: boolean;
 }) {
   return (
     <tr>
@@ -41,7 +45,7 @@ function SessionRow({
         </span>
       </td>
       <td className="py-2 text-right">
-        <Button variant="ghost" onClick={onDelete}>
+        <Button variant="ghost" onClick={onDelete} disabled={isPending}>
           <Trash2 className="h-4 w-4 text-red-500" />
         </Button>
       </td>
@@ -54,6 +58,7 @@ export function SessionsPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<BrowserSession | null>(null);
 
   const { data: sessions, isLoading } = useQuery<BrowserSession[]>({
     queryKey: ["sessions"],
@@ -74,6 +79,7 @@ export function SessionsPage() {
       setShowAdd(false);
       setForm(emptyForm());
       setFormError(null);
+      toast.success("Session saved");
     },
     onError: (err) => {
       setFormError(err instanceof Error ? err.message : "Failed to save session");
@@ -83,7 +89,13 @@ export function SessionsPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.deleteSession(id),
     onSuccess: () => {
+      setDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      toast.success("Session deleted");
+    },
+    onError: (err) => {
+      setDeleteTarget(null);
+      toast.error(err instanceof Error ? err.message : "Failed to delete session");
     },
   });
 
@@ -128,7 +140,8 @@ export function SessionsPage() {
             <SessionRow
               key={s.id}
               session={s}
-              onDelete={() => deleteMutation.mutate(s.id)}
+              onDelete={() => setDeleteTarget(s)}
+              isPending={deleteMutation.isPending && deleteTarget?.id === s.id}
             />
           ))}
         </Table>
@@ -139,6 +152,7 @@ export function SessionsPage() {
           <Field label="Name" hint="A label for this session, e.g. 'OATD account'">
             <Input
               value={form.name}
+              disabled={createMutation.isPending}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               placeholder="My OATD session"
             />
@@ -149,6 +163,7 @@ export function SessionsPage() {
           >
             <Input
               value={form.domain}
+              disabled={createMutation.isPending}
               onChange={(e) => setForm((f) => ({ ...f, domain: e.target.value }))}
               placeholder="oatd.org"
             />
@@ -158,9 +173,10 @@ export function SessionsPage() {
             hint='Paste a JSON cookie array from Cookie-Editor, or "name=value; name2=value2" from DevTools.'
           >
             <textarea
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs focus:border-blue-500 focus:outline-none"
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs focus:border-blue-500 focus:outline-none disabled:opacity-60"
               rows={5}
               value={form.cookies_raw}
+              disabled={createMutation.isPending}
               onChange={(e) => setForm((f) => ({ ...f, cookies_raw: e.target.value }))}
               placeholder={'[{"name":"cf_clearance","value":"abc...","domain":".oatd.org","path":"/"}]'}
             />
@@ -168,6 +184,7 @@ export function SessionsPage() {
           <Field label="User-Agent" hint="Optional — leave blank to use the global default.">
             <Input
               value={form.user_agent}
+              disabled={createMutation.isPending}
               onChange={(e) => setForm((f) => ({ ...f, user_agent: e.target.value }))}
               placeholder="Leave blank to use default"
             />
@@ -176,6 +193,7 @@ export function SessionsPage() {
             <Input
               type="datetime-local"
               value={form.expires_at}
+              disabled={createMutation.isPending}
               onChange={(e) => setForm((f) => ({ ...f, expires_at: e.target.value }))}
             />
           </Field>
@@ -183,15 +201,25 @@ export function SessionsPage() {
           {formError && <Alert tone="danger">{formError}</Alert>}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" type="button" onClick={() => setShowAdd(false)}>
+            <Button variant="ghost" type="button" disabled={createMutation.isPending} onClick={() => setShowAdd(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Saving…" : "Save session"}
+            <Button type="submit" loading={createMutation.isPending}>
+              Save session
             </Button>
           </div>
         </form>
       </Dialog>}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete session"
+        message={`Delete the session "${deleteTarget?.name ?? ""}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        onCancel={() => setDeleteTarget(null)}
+        isPending={deleteMutation.isPending}
+      />
     </div>
   );
 }

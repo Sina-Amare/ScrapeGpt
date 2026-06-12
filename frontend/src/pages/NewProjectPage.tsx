@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { BrainCog, ChevronDown, ChevronRight, Globe2, RefreshCw } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
+import { AnalysisPipeline } from "../components/project/AnalysisPipeline";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -218,10 +219,10 @@ export function NewProjectPage() {
                 <Link className="text-sm font-bold text-teal hover:text-teal-dark" to={`/projects/${current.id}`}>
                   Continue to field selection -&gt;
                 </Link>
+              ) : current.system_state === "FAILED" || current.system_state === "CANCELED" ? (
+                <Alert tone="danger">{current.error ?? "Analysis failed."}</Alert>
               ) : (
-                <div className="rounded-lg border border-line bg-porcelain p-5 text-sm text-muted">
-                  ScrapGPT is validating the URL, fetching the page, and analyzing extractable data.
-                </div>
+                <AnalysisPipeline state={current.system_state} />
               )}
             </div>
           )}

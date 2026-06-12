@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { ReactNode, useEffect } from "react";
 import { X } from "lucide-react";
 
 export function Dialog({
@@ -10,9 +10,23 @@ export function Dialog({
   children: ReactNode;
   onClose: () => void;
 }) {
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4 sm:p-6">
-      <section className="flex w-full max-w-xl max-h-full flex-col overflow-hidden rounded-md border border-line bg-surface shadow-panel">
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4 sm:p-6"
+      onClick={onClose}
+    >
+      <section
+        className="flex w-full max-w-xl max-h-full flex-col overflow-hidden rounded-md border border-line bg-surface shadow-panel"
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="flex shrink-0 items-center justify-between border-b border-line px-5 py-4">
           <h2 className="text-base font-semibold text-ink">{title}</h2>
           <button
