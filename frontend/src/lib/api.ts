@@ -6,6 +6,7 @@ import {
   CrawlScope,
   MessageResponse,
   PasswordResetConfirmInput,
+  ProjectEvent,
   ExtractionSpecResponse,
   FieldSpec,
   FrontierPreviewResponse,
@@ -353,6 +354,14 @@ export const api = {
 
   getProject(id: number): Promise<ProjectResponse> {
     return apiRequest<ProjectResponse>(`/projects/${id}`);
+  },
+
+  getProjectEvents(id: number): Promise<ProjectEvent[]> {
+    return apiRequest<ProjectEvent[]>(`/projects/${id}/events`);
+  },
+
+  getDashboardEvents(limit = 100): Promise<ProjectEvent[]> {
+    return apiRequest<ProjectEvent[]>(`/dashboard/events?limit=${limit}`);
   },
 
   updateProjectSpec(

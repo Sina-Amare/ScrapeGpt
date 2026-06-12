@@ -455,3 +455,19 @@ export type ProjectRecord = {
   warnings: unknown[];
   created_at: string;
 };
+
+// ---------------------------------------------------------------------------
+// Activity Log
+// ---------------------------------------------------------------------------
+
+export type ProjectEventLevel = "info" | "warning" | "error" | string;
+
+export type ProjectEvent = {
+  id: number;
+  project_id: number;
+  event_type: string;
+  level: ProjectEventLevel;
+  message: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};

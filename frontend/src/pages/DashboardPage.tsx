@@ -26,6 +26,7 @@ import { TaskDetailDialog } from "../components/ui/TaskDetailDialog";
 import { ApiError, api } from "../lib/api";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject, TERMINAL_PROJECT_STATES } from "../lib/projectPolling";
 import { shouldPollTask, stateTone } from "../lib/taskPolling";
+import { ProjectEvent } from "../types";
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -220,6 +221,144 @@ function ProjectsSection() {
         isPending={deleteMutation.isPending}
       />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Activity log section
+// ---------------------------------------------------------------------------
+
+const EVENT_LABELS: Record<string, string> = {
+  "analysis.started": "Analysis started",
+  "analysis.ready": "Analysis ready",
+  "analysis.failed": "Analysis failed",
+  "extraction.started": "Extraction started",
+  "extraction.completed": "Extraction completed",
+  "extraction.failed": "Extraction failed",
+  "project.canceled": "Canceled",
+  "project.retried": "Retried"
+};
+
+function eventLabel(type: string): string {
+  return EVENT_LABELS[type] ?? type;
+}
+
+function levelDot(level: string): string {
+  if (level === "error") return "bg-danger";
+  if (level === "warning") return "bg-warning";
+  return "bg-teal";
+}
+
+type ActivityFilter = "all" | "errors" | "warnings" | "completed";
+
+function matchesFilter(event: ProjectEvent, filter: ActivityFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "errors") return event.level === "error";
+  if (filter === "warnings") return event.level === "warning";
+  return event.event_type.endsWith("completed") || event.event_type === "analysis.ready";
+}
+
+function ActivityLogSection() {
+  const [filter, setFilter] = useState<ActivityFilter>("all");
+
+  const eventsQuery = useQuery({
+    queryKey: ["dashboard-events"],
+    queryFn: () => api.getDashboardEvents(100),
+    refetchInterval: 10000,
+    retry: false
+  });
+
+  const allEvents = Array.isArray(eventsQuery.data) ? eventsQuery.data : [];
+  const filtered = allEvents.filter((event) => matchesFilter(event, filter));
+
+  // Group by project, preserving the newest-first ordering from the API.
+  const groups: { projectId: number; events: ProjectEvent[] }[] = [];
+  const groupIndex = new Map<number, number>();
+  for (const event of filtered) {
+    let idx = groupIndex.get(event.project_id);
+    if (idx === undefined) {
+      idx = groups.length;
+      groupIndex.set(event.project_id, idx);
+      groups.push({ projectId: event.project_id, events: [] });
+    }
+    groups[idx].events.push(event);
+  }
+
+  const filters: { key: ActivityFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "errors", label: "Errors" },
+    { key: "warnings", label: "Warnings" },
+    { key: "completed", label: "Completed" }
+  ];
+
+  return (
+    <section className="rounded-xl border border-line bg-surface shadow-panel">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-muted">Activity log</h2>
+        <div className="flex items-center gap-1">
+          {filters.map((option) => (
+            <button
+              key={option.key}
+              onClick={() => setFilter(option.key)}
+              className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                filter === option.key
+                  ? "bg-teal text-white"
+                  : "text-muted hover:bg-porcelain hover:text-ink"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {eventsQuery.isLoading ? (
+        <div className="grid gap-3 p-6">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-8 w-full" />
+        </div>
+      ) : eventsQuery.error ? (
+        <div className="p-6">
+          <Alert tone="danger">Could not load activity.</Alert>
+        </div>
+      ) : groups.length === 0 ? (
+        <p className="px-6 py-10 text-center text-sm text-muted">
+          {filter === "all" ? "No activity yet." : "No matching activity."}
+        </p>
+      ) : (
+        <div className="divide-y divide-line">
+          {groups.map((group) => (
+            <div key={group.projectId} className="px-6 py-4">
+              <Link
+                to={`/projects/${group.projectId}`}
+                className="mb-2 inline-block text-sm font-bold text-ink transition hover:text-teal"
+              >
+                Project #{group.projectId}
+              </Link>
+              <ul className="grid gap-1.5">
+                {group.events.map((event) => (
+                  <li key={event.id} className="flex items-start gap-3 text-sm">
+                    <span
+                      className={`mt-1.5 h-2 w-2 flex-none rounded-full ${levelDot(event.level)}`}
+                      aria-hidden="true"
+                    />
+                    <span className="w-28 flex-none whitespace-nowrap text-xs text-muted">
+                      {formatDate(event.created_at)}
+                    </span>
+                    <span className="flex-none font-semibold text-ink">
+                      {eventLabel(event.event_type)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-muted" title={event.message}>
+                      {event.message}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -483,6 +622,10 @@ export function DashboardPage() {
       </PageHeader>
 
       <ProjectsSection />
+
+      <div className="mt-6">
+        <ActivityLogSection />
+      </div>
 
       {/* Legacy scrape — collapsible */}
       <div className="mt-10">
