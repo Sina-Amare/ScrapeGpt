@@ -11,14 +11,14 @@ export default {
         ink: "var(--c-ink)",
         muted: "var(--c-muted)",
         line: "var(--c-line)",
-        // Brand accent — violet. Components use "teal" class names (historical alias).
+        // Brand accent — electric blue. Components use "teal" class names (historical alias).
         teal: {
-          DEFAULT: "#8B5CF6",
-          dark: "#7C3AED",
-          soft: "var(--c-teal-soft)",
-          subtle: "#C4B5FD",
+          DEFAULT: "#2272FF",
+          dark:    "#1A5FE8",
+          soft:    "var(--c-teal-soft)",
+          subtle:  "#BFDBFE",
         },
-        accent: "#8B5CF6",
+        accent: "#2272FF",
         success: "#15803D",
         warning: "#B45309",
         danger: "#B91C1C",

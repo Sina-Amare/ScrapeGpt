@@ -6,8 +6,8 @@
   --c-muted:      #64748B;
   --c-line:       #E2E8F0;
   --c-body:       #F5F6FC;
-  --c-grid:       rgba(139, 92, 246, 0.03);
-  --c-teal-soft:  #F5F3FF;
+  --c-grid:       rgba(34, 114, 255, 0.03);
+  --c-teal-soft:  #EEF4FF;
 }
 
 /* ─── Design tokens: dark mode ───────────────────────────────────────────── */
@@ -19,7 +19,7 @@ html.dark {
   --c-line:       #25252D;
   --c-body:       #0E0E13;
   --c-grid:       rgba(255, 255, 255, 0.018);
-  --c-teal-soft:  #1E1A30;
+  --c-teal-soft:  #111A38;
 }
 
 @font-face {
@@ -97,8 +97,8 @@ select {
   transition: box-shadow 0.22s ease, transform 0.22s ease !important;
 }
 .card-hover:hover {
-  box-shadow: 0 8px 32px -4px rgba(139, 92, 246, 0.14),
-              0 4px 12px -2px rgba(139, 92, 246, 0.08);
+  box-shadow: 0 8px 32px -4px rgba(34, 114, 255, 0.13),
+              0 4px 12px -2px rgba(34, 114, 255, 0.07);
   transform: translateY(-1px);
 }
 
@@ -133,8 +133,8 @@ select {
   color: rgba(255, 255, 255, 0.22);
 }
 .auth-input:focus {
-  border-color: rgba(139, 92, 246, 0.7);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18);
+  border-color: rgba(34, 114, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(34, 114, 255, 0.16);
 }
 
 /* ─── Primary button shimmer sweep ───────────────────────────────────────── */
@@ -156,4 +156,39 @@ select {
 }
 .btn-primary-shimmer:not(:disabled):hover::after {
   left: 120%;
+}
+
+/* ─── Auth page background animations ────────────────────────────────────── */
+
+/* Two slow-breathing gradient glows */
+.auth-glow {
+  animation: auth-breathe 14s ease-in-out infinite;
+}
+.auth-glow-alt {
+  animation: auth-breathe 14s ease-in-out infinite reverse;
+  animation-delay: -7s;
+}
+@keyframes auth-breathe {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%       { opacity: 1;    transform: scale(1.12); }
+}
+
+/* Scan line — sweeps top→bottom, on-brand for a web scraper */
+.auth-scanline {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(34, 114, 255, 0.10) 20%,
+    rgba(34, 114, 255, 0.22) 50%,
+    rgba(34, 114, 255, 0.10) 80%,
+    transparent 100%
+  );
+  animation: auth-scan 9s linear infinite;
+}
+@keyframes auth-scan {
+  0%   { transform: translateY(0);     opacity: 0; }
+  4%   { opacity: 1; }
+  96%  { opacity: 0.5; }
+  100% { transform: translateY(100vh); opacity: 0; }
 }

@@ -1,10 +1,11 @@
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Moon, Sun } from "lucide-react";
 import { motion } from "motion/react";
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Alert } from "../components/ui/Alert";
 import { Button } from "../components/ui/Button";
 import { useAuth } from "../lib/auth";
+import { useTheme } from "../lib/useTheme";
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -95,7 +96,7 @@ function LogoMark({ size = 32 }: { size?: number }) {
   return (
     <div
       style={{ width: size, height: size, borderRadius: Math.round(size * 0.28) }}
-      className="grid flex-shrink-0 place-items-center bg-violet-600"
+      className="grid flex-shrink-0 place-items-center bg-teal"
     >
       <svg
         width={size * 0.5}
@@ -127,20 +128,59 @@ function AuthFrame({
   subtitle: string;
   children: React.ReactNode;
 }) {
+  const { dark, toggle } = useTheme();
+
   return (
-    <div className="relative min-h-screen text-white" style={{ background: "#0E0E12" }}>
-      {/* Very subtle top accent — barely perceptible, not orb-like */}
+    <div className="relative min-h-screen overflow-hidden text-white" style={{ background: "#0E0E12" }}>
+
+      {/* ── Background animations ── */}
+
+      {/* Glow 1 — upper-left */}
       <div
-        className="pointer-events-none absolute inset-x-0 top-0 h-96"
+        className="auth-glow pointer-events-none absolute"
         style={{
-          background:
-            "radial-gradient(ellipse 70% 55% at 50% -5%, rgba(139,92,246,0.07) 0%, transparent 100%)",
+          top: "-10%", left: "-5%",
+          width: 600, height: 500,
+          borderRadius: "50%",
+          background: "radial-gradient(ellipse, rgba(34,114,255,0.07) 0%, transparent 70%)",
+        }}
+      />
+      {/* Glow 2 — lower-right */}
+      <div
+        className="auth-glow-alt pointer-events-none absolute"
+        style={{
+          bottom: "-15%", right: "-8%",
+          width: 500, height: 440,
+          borderRadius: "50%",
+          background: "radial-gradient(ellipse, rgba(34,114,255,0.05) 0%, transparent 70%)",
         }}
       />
 
+      {/* Scan line — slides top→bottom */}
+      <div className="auth-scanline pointer-events-none absolute inset-x-0 top-0" />
+
+      {/* ── Theme toggle — top right ── */}
+      <div className="absolute right-5 top-5 z-20">
+        <button
+          onClick={toggle}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-white/40 backdrop-blur-sm transition hover:border-white/20 hover:bg-white/[0.09] hover:text-white/70"
+          aria-label="Toggle theme"
+        >
+          <motion.div
+            key={dark ? "moon" : "sun"}
+            initial={{ rotate: -20, scale: 0.7, opacity: 0 }}
+            animate={{ rotate: 0, scale: 1, opacity: 1 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+          >
+            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </motion.div>
+        </button>
+      </div>
+
+      {/* ── Content ── */}
       <div className="relative z-10 mx-auto grid min-h-screen max-w-5xl items-center gap-12 px-6 py-12 lg:grid-cols-[1fr_400px] lg:gap-16">
 
-        {/* ── Left: brand — desktop only ── */}
+        {/* Left: brand — desktop only */}
         <motion.section
           className="hidden lg:flex flex-col gap-12"
           initial={{ opacity: 0, x: -10 }}
@@ -168,14 +208,14 @@ function AuthFrame({
               "Export to JSON, CSV, or XLSX",
             ].map((f) => (
               <li key={f} className="flex items-center gap-3">
-                <span className="h-px w-5 flex-shrink-0 bg-violet-500/50" />
+                <span className="h-px w-5 flex-shrink-0 bg-teal/50" />
                 {f}
               </li>
             ))}
           </ul>
         </motion.section>
 
-        {/* ── Right: form card ── */}
+        {/* Right: form card */}
         <motion.section
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -267,7 +307,7 @@ export function LoginPage() {
         <p className="text-center text-sm text-white/28">
           New here?{" "}
           <Link
-            className="font-semibold text-violet-400 transition-colors hover:text-violet-300"
+            className="font-semibold text-teal-subtle transition-colors hover:text-white/80"
             to="/register"
           >
             Create an account
@@ -352,7 +392,7 @@ export function RegisterPage() {
         <p className="text-center text-sm text-white/28">
           Already have access?{" "}
           <Link
-            className="font-semibold text-violet-400 transition-colors hover:text-violet-300"
+            className="font-semibold text-teal-subtle transition-colors hover:text-white/80"
             to="/login"
           >
             Sign in
