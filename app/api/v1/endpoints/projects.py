@@ -56,6 +56,7 @@ from app.schemas.project import (
     RecordResponse,
 )
 from app.services.crawl_scope import ScopeConfirmationError
+from app.services.extraction_mode import resolve_extraction_mode
 from app.services.extraction_spec_service import ensure_default_spec, latest_spec, selected_field_count
 from app.services.frontierpreview import create_frontier_preview, latest_frontier_preview
 from app.services.job_admission import JobAdmissionError, JobAdmissionErrorType, admit_job
@@ -278,7 +279,10 @@ async def analyze_project(
     result = await admit_job(
         user=user,
         url=str(payload.url),
-        extraction_mode=advanced.extraction_mode if advanced and advanced.extraction_mode else "STRUCTURED",
+        extraction_mode=resolve_extraction_mode(
+            str(payload.url),
+            advanced.extraction_mode if advanced else None,
+        ),
         workflow_mode=advanced.workflow_mode if advanced and advanced.workflow_mode else "GUIDED",
         render_mode=advanced.render_mode if advanced and advanced.render_mode else "AUTO",
         provider_config_id=advanced.provider_config_id if advanced else None,

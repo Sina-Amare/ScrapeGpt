@@ -1,5 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { BrainCog, ChevronDown, ChevronRight, Globe2, RefreshCw } from "lucide-react";
+import {
+  BrainCog,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Globe2,
+  RefreshCw,
+  Sparkles,
+  Table2
+} from "lucide-react";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnalysisPipeline } from "../components/project/AnalysisPipeline";
@@ -12,6 +22,84 @@ import { Select } from "../components/ui/Select";
 import { ApiError, api } from "../lib/api";
 import { projectTone, shouldPollProject } from "../lib/projectPolling";
 import { ExtractionMode, ProjectResponse, RenderMode } from "../types";
+
+const EXTRACTION_CHOICES: {
+  value: ExtractionMode | "";
+  title: string;
+  desc: string;
+  icon: typeof Table2;
+  secondary?: boolean;
+}[] = [
+  {
+    value: "STRUCTURED",
+    title: "Structured data",
+    desc: "Products, listings, tables, directories — extracted as rows and columns.",
+    icon: Table2
+  },
+  {
+    value: "CONTENT",
+    title: "Content / documents",
+    desc: "GitHub READMEs, docs, articles, blog posts — extracted as clean text.",
+    icon: FileText
+  },
+  {
+    value: "",
+    title: "Let ScrapeGPT decide",
+    desc: "Detect the most likely mode from the page automatically.",
+    icon: Sparkles,
+    secondary: true
+  }
+];
+
+function ExtractionModeCards({
+  value,
+  onChange
+}: {
+  value: ExtractionMode | "";
+  onChange: (value: ExtractionMode | "") => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      {EXTRACTION_CHOICES.map((choice) => {
+        const Icon = choice.icon;
+        const active = value === choice.value;
+        return (
+          <button
+            key={choice.value || "auto"}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(choice.value)}
+            className={`flex items-start gap-3 rounded-lg border p-3 text-left transition ${
+              active
+                ? "border-teal bg-teal-soft/60 ring-1 ring-teal/30"
+                : "border-line bg-surface hover:border-teal/50 hover:bg-porcelain"
+            }`}
+          >
+            <span
+              className={`mt-0.5 grid h-8 w-8 flex-shrink-0 place-items-center rounded-md ${
+                active ? "bg-teal text-white" : "bg-porcelain text-muted"
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-ink">{choice.title}</span>
+                {choice.secondary ? (
+                  <span className="rounded border border-line px-1 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted">
+                    auto
+                  </span>
+                ) : null}
+              </span>
+              <span className="mt-0.5 block text-xs text-muted">{choice.desc}</span>
+            </span>
+            {active ? <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-teal" /> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function admissionError(error: unknown): string {
   if (error instanceof ApiError && error.status === 409) {
@@ -131,28 +219,26 @@ export function NewProjectPage() {
 
             {connectionOpen ? (
               <div className="grid gap-4 rounded-lg border border-line bg-porcelain p-4">
-                <Field label="What are you extracting?" hint="Leave blank and ScrapeGPT will decide automatically.">
-                  <Select
-                    value={extractionMode}
-                    onChange={(event) => setExtractionMode(event.target.value as ExtractionMode | "")}
-                  >
-                    <option value="">Let ScrapeGPT decide</option>
-                    <option value="STRUCTURED">Structured data - products, listings, directories, tables</option>
-                    <option value="CONTENT">Content - articles, docs, knowledge pages</option>
-                  </Select>
-                </Field>
+                <div className="grid gap-2">
+                  <span className="text-sm font-semibold text-ink">What are you extracting?</span>
+                  <ExtractionModeCards value={extractionMode} onChange={setExtractionMode} />
+                  <p className="text-xs text-muted">
+                    Scraping GitHub, docs, or articles? Choose{" "}
+                    <span className="font-semibold text-ink">Content / documents</span>.
+                  </p>
+                </div>
 
                 <Field
-                  label="Page rendering"
-                  hint="Use browser rendering if the page is empty or heavily JS-driven."
+                  label="How should ScrapeGPT load the page?"
+                  hint="Use browser rendering if the preview comes back empty or the page is heavily JavaScript-driven (e.g. GitHub-style apps)."
                 >
                   <Select
                     value={renderMode}
                     onChange={(event) => setRenderMode(event.target.value as RenderMode)}
                   >
-                    <option value="AUTO">Automatic</option>
-                    <option value="STATIC">Static HTML only</option>
-                    <option value="BROWSER">Browser rendering</option>
+                    <option value="AUTO">Automatic (recommended)</option>
+                    <option value="STATIC">Static HTML — fastest, for simple pages</option>
+                    <option value="BROWSER">Browser rendering — for JavaScript-heavy pages</option>
                   </Select>
                 </Field>
 
