@@ -567,6 +567,11 @@ export function ProvidersPage() {
     // cache (via useMutationState) regardless of which page is mounted.
     mutationKey: ["provider-test"],
     mutationFn: (id: number) => api.testProvider(id),
+    // Observer-level handler: only runs while this page is mounted. Surface a
+    // request error (network/auth/server) in the durable in-page alert, the
+    // same way create/update/remove do. When unmounted this won't fire, so
+    // meta.notifyError toasts instead.
+    onError: (err) => setError(providerError(err)),
     // meta.notify runs from the global MutationCache, so completion is reported
     // even if the user navigated away from this page while the test ran.
     meta: {
@@ -587,6 +592,9 @@ export function ProvidersPage() {
       },
       notifyError: (err: unknown) => {
         void invalidate();
+        // In-page alert (observer onError) handles this when we're here; only
+        // toast when the user has navigated away.
+        if (providersPageMounted) return;
         toast.error(err instanceof Error ? err.message : "Provider test failed");
       }
     }
