@@ -23,15 +23,15 @@ describe("scopeCopy — mode labels", () => {
   });
 
   it("PAGINATION renders user label", () => {
-    assert.equal(scopeModeLabel("PAGINATION"), "This list across pages");
+    assert.equal(scopeModeLabel("PAGINATION"), "Paginated list");
   });
 
   it("DATASET renders user label", () => {
-    assert.equal(scopeModeLabel("DATASET"), "This dataset");
+    assert.equal(scopeModeLabel("DATASET"), "Listing + detail pages");
   });
 
   it("FULL_SITE renders user label", () => {
-    assert.equal(scopeModeLabel("FULL_SITE"), "The whole site");
+    assert.equal(scopeModeLabel("FULL_SITE"), "Entire website");
   });
 
   it("raw enum names are never the label for known modes", () => {
