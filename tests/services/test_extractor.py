@@ -97,3 +97,71 @@ def test_working_selectors_take_precedence_over_table_fallback():
     )
     titles = {r.normalized_data["Title"] for r in records}
     assert titles == {"Real Title A", "Real Title B"}
+
+
+def _rows(html_rows: str, headers: str = "") -> str:
+    head = f"<thead><tr>{headers}</tr></thead>" if headers else ""
+    return f"<html><body><table>{head}<tbody>{html_rows}</tbody></table></body></html>"
+
+
+def test_table_exact_header_beats_substring():
+    """field 'ID' must map to the exact 'ID' column, not 'Video ID' by substring."""
+    html = _rows(
+        "<tr><td>V123</td><td>42</td></tr>",
+        headers="<th>Video ID</th><th>ID</th>",
+    )
+    fields = [{"selected": True, "label": "ID", "type": "string", "selector": ".x"}]
+    records = extract_records_from_html(
+        html, source_url="https://x.test/", project=_project(), spec=_spec(fields)
+    )
+    assert records[0].normalized_data["ID"] == "42"  # exact 'ID' column, not 'V123'
+
+
+def test_table_does_not_swap_columns_on_substring():
+    """'title' is a substring of 'subtitle' — exact matches must prevent a swap."""
+    html = _rows(
+        "<tr><td>MyTitle</td><td>MySub</td></tr>",
+        headers="<th>Title</th><th>Subtitle</th>",
+    )
+    fields = [
+        {"selected": True, "label": "Subtitle", "type": "string", "selector": ".a"},
+        {"selected": True, "label": "Title", "type": "string", "selector": ".b"},
+    ]
+    records = extract_records_from_html(
+        html, source_url="https://x.test/", project=_project(), spec=_spec(fields)
+    )
+    rec = records[0].normalized_data
+    assert rec["Title"] == "MyTitle"
+    assert rec["Subtitle"] == "MySub"
+
+
+def test_table_alias_maps_kcal_column_to_calories_field():
+    html = _rows(
+        "<tr><td>Beef</td><td>143</td></tr>",
+        headers="<th>Food</th><th>kcal</th>",
+    )
+    fields = [
+        {"selected": True, "label": "Food", "type": "string", "selector": ".a"},
+        {"selected": True, "label": "Calories", "type": "number", "selector": ".b"},
+    ]
+    records = extract_records_from_html(
+        html, source_url="https://x.test/", project=_project(), spec=_spec(fields)
+    )
+    assert records[0].normalized_data["Calories"] == 143
+
+
+def test_table_short_header_does_not_falsely_match_long_field():
+    """Short header 'cal' is a substring of 'physical' but must NOT confidently match it."""
+    html = _rows(
+        "<tr><td>Walking</td><td>5</td></tr>",
+        headers="<th>Physical Activity</th><th>cal</th>",
+    )
+    fields = [
+        {"selected": True, "label": "Physical Activity", "type": "string", "selector": ".a"},
+    ]
+    records = extract_records_from_html(
+        html, source_url="https://x.test/", project=_project(), spec=_spec(fields)
+    )
+    # Only one field: it should map to the first/best column ('Physical Activity'),
+    # not be dragged to the 'cal' column by a loose substring.
+    assert records[0].normalized_data["Physical Activity"] == "Walking"

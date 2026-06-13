@@ -210,8 +210,8 @@ def _best_data_table(soup: BeautifulSoup) -> Tag | None:
     return best
 
 
-def _table_header_norms(table: Tag) -> list[str]:
-    """Normalized header texts for a table, or [] when it has no header row."""
+def _table_headers(table: Tag) -> list[str]:
+    """Raw header texts for a table, or [] when it has no header row."""
     header_row = None
     thead = table.find("thead")
     if thead:
@@ -222,27 +222,72 @@ def _table_header_norms(table: Tag) -> list[str]:
             header_row = first
     if header_row is None:
         return []
-    return [_norm_text(_text(c)) for c in header_row.find_all(["th", "td"])]
+    return [_text(c) for c in header_row.find_all(["th", "td"])]
+
+
+# Common unit-abbreviation synonyms so e.g. a "kcal" column maps to a
+# "Calories" field. Kept deliberately small and unambiguous.
+_HEADER_ALIASES = {
+    "kcal": "calories",
+    "kj": "kilojoules",
+}
+
+
+def _match_tokens(s: str) -> set[str]:
+    """Word tokens of a label, expanded with known unit synonyms."""
+    tokens = {t for t in re.split(r"[^a-z0-9]+", s.lower()) if t}
+    return tokens | {_HEADER_ALIASES[t] for t in tokens if t in _HEADER_ALIASES}
+
+
+def _column_match_score(field_key: str, header: str) -> int:
+    """Score a field<->header match. 0 means "do not match".
+
+    Strict on purpose: short headers (id, no, kj, cal) must not match by loose
+    substring, which previously produced plausible-but-wrong columns. Order:
+    exact normalized equality > shared whole word/token > length-guarded substring.
+    """
+    fk, hk = _norm_text(field_key), _norm_text(header)
+    if not fk or not hk:
+        return 0
+    if fk == hk:
+        return 100
+    shared = _match_tokens(field_key) & _match_tokens(header)
+    if shared:
+        return 50 + sum(len(t) for t in shared)
+    # Length-guarded substring only: avoids "cal" in "physical", "id" in "video".
+    short, long = (hk, fk) if len(hk) <= len(fk) else (fk, hk)
+    if len(short) >= 5 and short in long:
+        return 10
+    return 0
 
 
 def _map_fields_to_columns(
-    fields: list[dict[str, Any]], header_norms: list[str], n_cols: int
+    fields: list[dict[str, Any]], headers: list[str], n_cols: int
 ) -> list[int | None]:
-    """Assign each selected field a table column: by header text, then by position."""
-    used: set[int] = set()
+    """Assign each selected field a table column: best scored header, then position."""
     assignments: list[int | None] = [None] * len(fields)
-    for i, fld in enumerate(fields):
-        key = _norm_text(_field_key(fld))
-        if not key or not header_norms:
-            continue
-        for ci, header in enumerate(header_norms):
-            if ci in used or not header:
+    if headers:
+        scored: list[tuple[int, int, int]] = []
+        for fi, fld in enumerate(fields):
+            key = _field_key(fld)
+            for hi, header in enumerate(headers):
+                if hi >= n_cols:
+                    continue
+                score = _column_match_score(key, header)
+                if score > 0:
+                    scored.append((score, fi, hi))
+        # Greedy best-first; each field and header used at most once.
+        scored.sort(key=lambda x: (-x[0], x[1], x[2]))
+        used_fields: set[int] = set()
+        used_headers: set[int] = set()
+        for _score, fi, hi in scored:
+            if fi in used_fields or hi in used_headers:
                 continue
-            if header == key or key in header or header in key:
-                assignments[i] = ci
-                used.add(ci)
-                break
-    free_cols = [c for c in range(n_cols) if c not in used]
+            assignments[fi] = hi
+            used_fields.add(fi)
+            used_headers.add(hi)
+    used_cols = {a for a in assignments if a is not None}
+    free_cols = [c for c in range(n_cols) if c not in used_cols]
     fi = 0
     for i in range(len(fields)):
         if assignments[i] is None and fi < len(free_cols):
@@ -268,12 +313,12 @@ def _extract_from_tables(
     table = _best_data_table(soup)
     if table is None:
         return []
-    header_norms = _table_header_norms(table)
+    headers = _table_headers(table)
     data_rows = [r for r in table.find_all("tr") if r.find_all("td")]
     if not data_rows:
         return []
     n_cols = max(len(r.find_all(["td", "th"])) for r in data_rows)
-    assignments = _map_fields_to_columns(fields, header_norms, n_cols)
+    assignments = _map_fields_to_columns(fields, headers, n_cols)
 
     payloads: list[ExtractedPayload] = []
     for tr in data_rows[:max_records]:
