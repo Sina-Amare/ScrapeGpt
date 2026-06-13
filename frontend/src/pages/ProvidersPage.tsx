@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   CheckCircle2,
@@ -447,7 +447,13 @@ export function ProvidersPage() {
   const [dialog, setDialog] = useState<"create" | "edit" | null>(null);
   const [selected, setSelected] = useState<ProviderConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [testingId, setTestingId] = useState<number | null>(null);
+  // Which providers are currently being tested, read from the mutation cache so
+  // it survives navigating away and back (local state would reset on remount and
+  // wrongly re-enable the Test button while the request is still running).
+  const pendingTestIds = useMutationState({
+    filters: { mutationKey: ["provider-test"], status: "pending" },
+    select: (mutation) => mutation.state.variables as number
+  });
   const [lastTest, setLastTest] = useState<{
     name: string;
     result: ProviderTestResponse;
@@ -519,6 +525,9 @@ export function ProvidersPage() {
   });
 
   const test = useMutation({
+    // Stable key so the in-progress state is discoverable from the mutation
+    // cache (via useMutationState) regardless of which page is mounted.
+    mutationKey: ["provider-test"],
     mutationFn: (id: number) => api.testProvider(id),
     // meta.notify runs from the global MutationCache, so completion is reported
     // even if the user navigated away from this page while the test ran.
@@ -539,14 +548,12 @@ export function ProvidersPage() {
         void invalidate();
       }
     },
-    onMutate: (id) => setTestingId(id),
     onSuccess: (result, id) => {
       // In-page detail panel — only relevant while still on this page.
       const name = providers.data?.find((p) => p.id === id)?.name ?? `Provider #${id}`;
       setLastTest({ name, result });
     },
     onError: (err) => setError(providerError(err)),
-    onSettled: () => setTestingId(null),
   });
 
   const reveal = useMutation({
@@ -617,11 +624,11 @@ export function ProvidersPage() {
                       variant="secondary"
                       className="h-9 px-3 sm:min-w-[7rem] sm:justify-center"
                       onClick={() => test.mutate(provider.id)}
-                      loading={testingId === provider.id}
-                      disabled={test.isPending}
+                      loading={pendingTestIds.includes(provider.id)}
+                      disabled={pendingTestIds.length > 0}
                     >
                       <TestTube2 className="h-4 w-4" />
-                      {testingId === provider.id ? "Testing…" : "Test"}
+                      {pendingTestIds.includes(provider.id) ? "Testing…" : "Test"}
                     </Button>
                     <Button
                       variant="secondary"
