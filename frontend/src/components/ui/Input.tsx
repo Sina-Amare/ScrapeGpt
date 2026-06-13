@@ -10,7 +10,7 @@ export function Field({
   children: ReactNode;
 }) {
   return (
-    <label className="grid gap-1.5 text-sm font-medium text-ink min-w-0 w-full">
+    <label className="grid grid-cols-1 gap-1.5 text-sm font-medium text-ink min-w-0 w-full">
       <span>{label}</span>
       {children}
       {hint ? <span className="text-xs font-normal text-muted">{hint}</span> : null}
