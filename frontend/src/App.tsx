@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AppShell } from "./layout/AppShell";
@@ -22,7 +22,23 @@ const queryClient = new QueryClient({
       staleTime: 5000,
       refetchOnWindowFocus: false
     }
-  }
+  },
+  // Mutation completion handlers live at the client level, so they fire even
+  // when the page that started the mutation has unmounted (e.g. you navigated
+  // away while a provider test was running). A mutation opts in by setting
+  // `meta.notify` / `meta.notifyError` — typically a toast + cache invalidation.
+  mutationCache: new MutationCache({
+    onSuccess: (data, variables, _context, mutation) => {
+      (mutation.options.meta?.notify as
+        | ((d: unknown, v: unknown) => void)
+        | undefined)?.(data, variables);
+    },
+    onError: (error, variables, _context, mutation) => {
+      (mutation.options.meta?.notifyError as
+        | ((e: unknown, v: unknown) => void)
+        | undefined)?.(error, variables);
+    }
+  })
 });
 
 function ProtectedShell() {

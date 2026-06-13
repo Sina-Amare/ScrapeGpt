@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Alert } from "../components/ui/Alert";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -519,11 +520,30 @@ export function ProvidersPage() {
 
   const test = useMutation({
     mutationFn: (id: number) => api.testProvider(id),
+    // meta.notify runs from the global MutationCache, so completion is reported
+    // even if the user navigated away from this page while the test ran.
+    meta: {
+      notify: (data: unknown) => {
+        const result = data as ProviderTestResponse;
+        const name =
+          providers.data?.find((p) => p.id === result.provider_config_id)?.name ?? "Provider";
+        if (result.ok) {
+          toast.success(`${name} — provider test passed`);
+        } else {
+          toast.error(`${name} — test failed: ${result.error ?? "open Providers for details"}`);
+        }
+        void invalidate();
+      },
+      notifyError: (err: unknown) => {
+        toast.error(err instanceof Error ? err.message : "Provider test failed");
+        void invalidate();
+      }
+    },
     onMutate: (id) => setTestingId(id),
     onSuccess: (result, id) => {
+      // In-page detail panel — only relevant while still on this page.
       const name = providers.data?.find((p) => p.id === id)?.name ?? `Provider #${id}`;
       setLastTest({ name, result });
-      void invalidate();
     },
     onError: (err) => setError(providerError(err)),
     onSettled: () => setTestingId(null),
