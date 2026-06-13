@@ -448,15 +448,18 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                             ),
                         },
                     )
-                    page.state = CrawlPageState.EXTRACTED
                     page.lease_expires_at = None
                     if extracted:
+                        page.state = CrawlPageState.EXTRACTED
                         page.error = None
                         page.block_reason = None
                     else:
-                        # Page fetched fine but selectors matched nothing — record
-                        # the cause so it's visible per-page (the project still
-                        # fails as NO_RECORDS_EXTRACTED if every page is empty).
+                        # Fetched fine, but selectors matched nothing. Mark it
+                        # non-success (FAILED + reason) so progress and the UI
+                        # don't show a misleading "extracted" page. The project
+                        # still ends as NO_RECORDS_EXTRACTED (not ALL_PAGES_FAILED)
+                        # because the post-loop counts these as fetched-OK pages.
+                        page.state = CrawlPageState.FAILED
                         page.block_reason = "SELECTOR_ZERO_MATCH"
                         page.error = "Selectors matched no elements on this page."
                     await db.commit()
@@ -494,8 +497,20 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 )
             )
             pages_extracted = int(pages_extracted or 0)
+            # Pages that fetched fine but whose selectors matched nothing are
+            # FAILED+SELECTOR_ZERO_MATCH. They still count as a successful fetch,
+            # so the project fails as NO_RECORDS_EXTRACTED (selectors), not
+            # ALL_PAGES_FAILED (couldn't fetch anything).
+            pages_zero_match = int(await db.scalar(
+                select(func.count(CrawlPage.id)).where(
+                    CrawlPage.project_id == project_id,
+                    CrawlPage.state == CrawlPageState.FAILED,
+                    CrawlPage.block_reason == "SELECTOR_ZERO_MATCH",
+                )
+            ) or 0)
+            pages_fetched_ok = pages_extracted + pages_zero_match
 
-            if pages_extracted == 0 and total_records == 0:
+            if pages_fetched_ok == 0 and total_records == 0:
                 logger.warning(
                     "extraction.all_pages_failed",
                     extra={
@@ -551,6 +566,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         "project_id": project_id,
                         "pages_attempted": processed_pages,
                         "pages_extracted": pages_extracted,
+                        "pages_zero_match": pages_zero_match,
                     },
                 )
                 project = await db.get(Project, project_id)
@@ -559,8 +575,9 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         db,
                         project,
                         (
-                            f"No records were extracted from {pages_extracted} "
-                            f"successfully fetched pages"
+                            f"No records were extracted from {pages_fetched_ok} "
+                            f"successfully fetched page(s) — the selectors matched "
+                            f"nothing. Adjust the fields and run Preview again."
                         ),
                         "NO_RECORDS_EXTRACTED",
                     )

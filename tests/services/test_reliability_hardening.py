@@ -536,10 +536,12 @@ class FakeExtractionDB:
         spec: ExtractionSpec,
         *,
         pages_extracted: int,
+        pages_zero_match: int = 0,
     ):
         self.project = project
         self.spec = spec
         self.pages_extracted = pages_extracted
+        self.pages_zero_match = pages_zero_match
         self.commits = 0
         self.added = []
 
@@ -566,6 +568,10 @@ class FakeExtractionDB:
         return FakeListResult([])
 
     async def scalar(self, statement):
+        # The zero-match count query filters on block_reason; everything else
+        # here is the EXTRACTED count.
+        if "block_reason" in str(statement):
+            return self.pages_zero_match
         return self.pages_extracted
 
     def add(self, obj):
@@ -750,7 +756,10 @@ async def test_execute_project_extraction_fails_structured_zero_records(
         depth=0,
         retry_count=0,
     )
-    db = FakeExtractionDB(project, spec, pages_extracted=1)
+    # The page fetches fine but its selectors match nothing: it becomes
+    # FAILED+SELECTOR_ZERO_MATCH (a fetched-OK page), so the project fails as
+    # NO_RECORDS_EXTRACTED, not ALL_PAGES_FAILED.
+    db = FakeExtractionDB(project, spec, pages_extracted=0, pages_zero_match=1)
     pending_pages = [page]
 
     monkeypatch.setattr(project_extraction, "async_session_factory", lambda: db)
@@ -786,7 +795,10 @@ async def test_execute_project_extraction_fails_structured_zero_records(
     assert project.state == ProjectState.FAILED
     assert project.error_code == "NO_RECORDS_EXTRACTED"
     assert "No records were extracted" in project.error
-    assert page.state == CrawlPageState.EXTRACTED
+    # Zero-record pages must not look "extracted": they are non-success with a
+    # precise reason so progress/UI surface them in the failed details.
+    assert page.state == CrawlPageState.FAILED
+    assert page.block_reason == "SELECTOR_ZERO_MATCH"
     assert page.lease_expires_at is None
     assert db.added == []
 
@@ -873,7 +885,10 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
 
     assert project.state == ProjectState.FAILED
     assert project.error_code == "EXTRACTION_FAILED"
-    assert page.state == CrawlPageState.EXTRACTED
+    # The page produced no records, so it is FAILED+SELECTOR_ZERO_MATCH; the key
+    # point is the watchdog-failed project is not forced to COMPLETED.
+    assert page.state == CrawlPageState.FAILED
+    assert page.block_reason == "SELECTOR_ZERO_MATCH"
     assert db.added == []
 
 
