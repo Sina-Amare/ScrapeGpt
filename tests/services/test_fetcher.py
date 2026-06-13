@@ -570,3 +570,37 @@ def test_decode_response_falls_back_to_utf8_on_unknown_codec():
     body = "plain ascii".encode("utf-8")
     resp = SimpleNamespace(charset_encoding="totally-not-a-codec")
     assert _decode_response(body, resp) == "plain ascii"
+
+
+@pytest.mark.asyncio
+async def test_auto_falls_back_to_browser_on_binary_static(monkeypatch):
+    """Undecodable/garbled static HTML must trigger the stealth cascade in AUTO."""
+    from unittest.mock import AsyncMock
+
+    # A long, non-sparse, status-200 body with no challenge markers: the only
+    # branch that can trigger a fallback here is the binary-content one.
+    big_body = ("<html><body>" + ("content " * 100) + "</body></html>").encode("utf-8")
+    resp = _FakeResponse(body=big_body)
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient(resp))
+    monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+
+    # Force the quality verdict to "binary" so we exercise the wiring, not the heuristic.
+    from app.services.dom_summary import HtmlQuality
+    monkeypatch.setattr(
+        "app.services.fetcher.assess_html_quality",
+        lambda html: HtmlQuality("binary", 0.9, 0, 0, ["forced"]),
+    )
+    # Browser tiers unavailable -> falls back to the static result, flagged.
+    monkeypatch.setattr(
+        "app.services.fetcher._camoufox_fetch",
+        AsyncMock(side_effect=FetchError("no camoufox", "BROWSER_UNAVAILABLE")),
+    )
+    monkeypatch.setattr(
+        "app.services.fetcher._browser_fetch",
+        AsyncMock(side_effect=FetchError("no playwright", "BROWSER_UNAVAILABLE")),
+    )
+
+    result = await fetch_url("https://example.com/", render_mode="AUTO")
+    assert result.fetch_metadata["browser_fallback_skipped"] is True

@@ -209,9 +209,21 @@ async def analyze_page(
         },
     )
 
-    async with async_session_factory() as db:
-        await _store_cache(
-            db, content_hash, extraction_mode, provider, model, analysis_dict, normalized_url
+    # Don't cache an analysis derived from a binary/garbled summary — callers
+    # should fail before reaching here, but this stops a hallucinated result from
+    # being pinned to the content hash if one ever slips through. (Only the binary
+    # signal applies: a DOM summary is plain text, so the structure check doesn't.)
+    from app.services.dom_summary import assess_html_quality
+
+    if not assess_html_quality(dom_summary).is_binary:
+        async with async_session_factory() as db:
+            await _store_cache(
+                db, content_hash, extraction_mode, provider, model, analysis_dict, normalized_url
+            )
+    else:
+        logger.warning(
+            "analyzer.cache_skipped_binary_summary",
+            extra={"content_hash": content_hash[:8], "mode": extraction_mode.value},
         )
 
     return analysis_dict

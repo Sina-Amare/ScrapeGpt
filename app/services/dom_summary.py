@@ -4,11 +4,79 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup, Tag
 
 _NOISE_TAGS = {"script", "style", "noscript", "head", "meta", "link", "svg", "iframe"}
 _MAX_SUMMARY_CHARS = 10000
+
+# --- HTML quality assessment ------------------------------------------------
+# Cheap (no full parse) gate so undecodable/empty fetches never reach the LLM
+# (which would hallucinate selectors) or the analysis cache.
+_QUALITY_SAMPLE_CHARS = 20000
+# Compressed/binary bytes decoded with errors="replace" become mostly U+FFFD;
+# real HTML has ~0%. 5% cleanly separates the two without false positives.
+_BINARY_RATIO_THRESHOLD = 0.05
+
+
+@dataclass
+class HtmlQuality:
+    """Verdict on fetched text: usable HTML, undecodable binary, or empty/structureless."""
+
+    label: str  # "ok" | "binary" | "structureless"
+    replacement_ratio: float
+    tag_count: int
+    text_length: int
+    reasons: list[str] = field(default_factory=list)
+
+    @property
+    def is_binary(self) -> bool:
+        return self.label == "binary"
+
+    @property
+    def is_usable(self) -> bool:
+        return self.label == "ok"
+
+
+def assess_html_quality(html: str) -> HtmlQuality:
+    """Classify fetched text before it reaches the DOM summary / LLM.
+
+    "binary"       — high ratio of replacement/control bytes (wrong or undecoded
+                     compression/encoding). Caller should fail PAGE_DECODE_FAILED
+                     or retry via the stealth browser.
+    "structureless"— decoded cleanly but essentially empty (no tags / no text).
+                     Caller should treat as FETCH_HTML_QUALITY_FAILED after retries.
+    "ok"           — usable.
+    """
+    if not html or not html.strip():
+        return HtmlQuality("structureless", 0.0, 0, 0, ["empty response body"])
+
+    sample = html[:_QUALITY_SAMPLE_CHARS]
+    bad = sum(
+        1
+        for ch in sample
+        if ch == "�" or ord(ch) == 0 or (ord(ch) < 0x20 and ch not in "\t\n\r\f")
+    )
+    ratio = bad / len(sample)
+    if ratio > _BINARY_RATIO_THRESHOLD:
+        return HtmlQuality(
+            "binary",
+            ratio,
+            0,
+            0,
+            [f"{ratio:.0%} undecodable bytes — wrong or undecoded compression/encoding"],
+        )
+
+    tag_count = len(re.findall(r"<[a-zA-Z!/][^>]*>", sample))
+    text_only = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
+    # Conservative: only flag genuinely empty responses, not sparse JS shells
+    # (those are already handled by the fetcher's sparse -> browser fallback).
+    if tag_count < 2 and len(text_only) < 30:
+        return HtmlQuality(
+            "structureless", ratio, tag_count, len(text_only), ["no HTML structure or text"]
+        )
+    return HtmlQuality("ok", ratio, tag_count, len(text_only))
 _MAX_HEADINGS = 8
 _MAX_LINKS = 12
 _MAX_REPEAT_CLASSES = 15

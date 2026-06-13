@@ -27,6 +27,7 @@ from app.models.job import (
     ProjectState,
 )
 from app.services.anti_bot import CHALLENGE_MESSAGES, anti_bot_challenge_reason
+from app.services.dom_summary import assess_html_quality
 from app.services.session_service import get_cookies_for_session
 from app.services.crawl_scope import (
     CrawlScopeMode,
@@ -362,6 +363,28 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         processed_pages += 1
                         continue
 
+                    # Undecodable/garbled body — fail this page with a precise
+                    # cause instead of "extracting" 0 records from garbage.
+                    if assess_html_quality(fetched.html).is_binary:
+                        page.state = CrawlPageState.FAILED
+                        page.block_reason = "PAGE_DECODE_FAILED"
+                        page.error = (
+                            "Page could not be decoded "
+                            "(unsupported compression or encoding)."
+                        )
+                        page.lease_expires_at = None
+                        await db.commit()
+                        logger.warning(
+                            "extraction.page_decode_failed",
+                            extra={
+                                "project_id": project_id,
+                                "page_id": page.id,
+                                "url": fetched.final_url,
+                            },
+                        )
+                        processed_pages += 1
+                        continue
+
                     page.url = fetched.final_url
                     page.normalized_url = normalize_url(fetched.final_url)
 
@@ -426,9 +449,16 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         },
                     )
                     page.state = CrawlPageState.EXTRACTED
-                    page.error = None
-                    page.block_reason = None
                     page.lease_expires_at = None
+                    if extracted:
+                        page.error = None
+                        page.block_reason = None
+                    else:
+                        # Page fetched fine but selectors matched nothing — record
+                        # the cause so it's visible per-page (the project still
+                        # fails as NO_RECORDS_EXTRACTED if every page is empty).
+                        page.block_reason = "SELECTOR_ZERO_MATCH"
+                        page.error = "Selectors matched no elements on this page."
                     await db.commit()
 
                 except (FetchError, URLValidationError) as exc:

@@ -13,7 +13,7 @@ from app.db.database import async_session_factory
 from app.models.job import ExtractionMode, Job, JobState, WorkflowMode
 from app.models.provider_config import ProviderConfig
 from app.services.analyzer import analyze_page
-from app.services.dom_summary import build_dom_summary
+from app.services.dom_summary import assess_html_quality, build_dom_summary
 from app.services.extraction_spec_service import validate_selectors_against_html
 from app.services.fetcher import FetchError, fetch_url
 from app.services.job_state import (
@@ -99,6 +99,38 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
                 job_id, user_id, "analysis.failed", level="error",
                 message="Analysis failed: the page could not be fetched.",
                 metadata={"error_code": exc.error_code},
+            )
+            return
+
+        # ---- Phase 4b: Gate on fetch quality ----
+        # If the fetched body is undecodable binary or has no usable structure
+        # (even after the fetcher's browser fallback), fail with a precise cause
+        # instead of feeding garbage to the LLM (which hallucinates selectors)
+        # and poisoning the analysis cache.
+        quality = assess_html_quality(fetch_result.html)
+        if not quality.is_usable:
+            code = "PAGE_DECODE_FAILED" if quality.is_binary else "FETCH_HTML_QUALITY_FAILED"
+            detail = "; ".join(quality.reasons) or "unusable page content"
+            user_msg = (
+                "Analysis failed: the page could not be decoded "
+                "(unsupported compression or encoding)."
+                if quality.is_binary
+                else "Analysis failed: the fetched page had no usable HTML content."
+            )
+            logger.warning(
+                "analysis.fetch_quality_failed",
+                extra={
+                    "job_id": job_id,
+                    "error_code": code,
+                    "quality_label": quality.label,
+                    "replacement_ratio": round(quality.replacement_ratio, 4),
+                    "render_mode_used": fetch_result.render_mode_used.value,
+                },
+            )
+            await transition_job_to_failed(job_id, detail, code)
+            await record_project_event(
+                job_id, user_id, "analysis.failed", level="error",
+                message=user_msg, metadata={"error_code": code},
             )
             return
 

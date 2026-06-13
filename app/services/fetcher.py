@@ -31,6 +31,7 @@ import httpx
 
 from app.core.config import settings
 from app.services.anti_bot import AUTO_SOLVABLE_CHALLENGES, anti_bot_challenge_reason
+from app.services.dom_summary import assess_html_quality
 from app.services.url_validator import (
     URLValidationError,
     validate_redirect_target,
@@ -939,6 +940,10 @@ async def fetch_url(
     challenge: str | None = None
     if _is_sparse(result.html):
         log_event = "fetcher.sparse_content_stealth_fallback"
+    elif assess_html_quality(result.html).is_binary:
+        # Undecodable/garbled body (e.g. a compression we couldn't decode). A real
+        # browser handles content negotiation itself, so retry via the cascade.
+        log_event = "fetcher.garbled_content_stealth_fallback"
     elif result.status_code in _BLOCKED_STATUS_CODES:
         # 403/429/503 from a static fetch almost always means bot detection.
         # Try the stealth cascade regardless of what the body looks like.
