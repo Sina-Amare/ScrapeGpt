@@ -88,7 +88,10 @@ lxml~=5.3.0
 
 # HTTPX: Async HTTP client
 # - Used for async scraping operations
-httpx~=0.28.0
+# - [brotli,zstd] extras pull in the `brotli` and `zstandard` decoders so we can
+#   decode Brotli/Zstd responses. Without them, sites served via Cloudflare/CDNs
+#   (Content-Encoding: br/zstd) come back as undecoded binary -> garbage HTML.
+httpx[brotli,zstd]~=0.28.0
 
 # Playwright: Browser rendering for JavaScript-heavy sites (OPTIONAL)
 # Not installed by default. Required only if render_mode=BROWSER is used.

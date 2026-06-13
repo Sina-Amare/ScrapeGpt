@@ -41,6 +41,68 @@ logger = logging.getLogger(__name__)
 
 _CONTENT_TYPE_ALLOWLIST = ("text/html", "text/plain", "application/xhtml+xml")
 
+
+def _supported_accept_encoding() -> str:
+    """Build an `Accept-Encoding` header advertising only what httpx can decode.
+
+    Advertising `br`/`zstd` without the matching decoder installed makes httpx
+    return the still-compressed body, which we then mis-read as binary garbage
+    (the bug this fixes). gzip/deflate are always available via stdlib zlib; br
+    and zstd are added only when their decoders are actually present.
+
+    `httpx._decoders.SUPPORTED_DECODERS` is private, so we use it defensively and
+    fall back to probing the optional libraries directly if it ever moves.
+    """
+    encodings = ["gzip", "deflate"]
+    available: set[str] = set()
+    try:  # authoritative: httpx's own decoder registry
+        from httpx._decoders import SUPPORTED_DECODERS
+
+        available = set(SUPPORTED_DECODERS.keys())
+    except Exception:  # private API moved — probe the optional libs instead
+        import importlib.util
+
+        if importlib.util.find_spec("brotli") or importlib.util.find_spec("brotlicffi"):
+            available.add("br")
+        if importlib.util.find_spec("zstandard"):
+            available.add("zstd")
+    for enc in ("br", "zstd"):
+        if enc in available:
+            encodings.append(enc)
+    return ", ".join(encodings)
+
+
+# Computed once at import: advertise only decoders we can actually use.
+_ACCEPT_ENCODING = _supported_accept_encoding()
+
+
+def _decode_response(body: bytes, resp: httpx.Response) -> str:
+    """Decode response bytes to text using the response's charset, not a fixed codec.
+
+    Prefers the charset declared in Content-Type, then charset detection
+    (charset-normalizer, already a dependency), then UTF-8. `errors="replace"`
+    only ever applies to genuinely undecodable bytes — which the caller's
+    quality check then flags rather than silently accepting.
+    """
+    # charset_encoding is the charset from the Content-Type header, or None — unlike
+    # resp.encoding, it does not silently default to utf-8, so we can fall through
+    # to real detection when the server didn't declare one.
+    encoding = getattr(resp, "charset_encoding", None)
+    if not encoding:
+        try:
+            from charset_normalizer import from_bytes
+
+            match = from_bytes(body).best()
+            if match is not None:
+                encoding = match.encoding
+        except Exception:
+            encoding = None
+    try:
+        return body.decode(encoding or "utf-8", errors="replace")
+    except (LookupError, TypeError):
+        # Unknown/invalid codec name — fall back to UTF-8.
+        return body.decode("utf-8", errors="replace")
+
 # AUTO_SOLVABLE_CHALLENGES (imported from anti_bot) lists challenge types a
 # stealth browser can resolve by executing the JS.  Turnstile / CAPTCHA need
 # a solving service — waiting on them is pointless.
@@ -52,7 +114,7 @@ _STATIC_HEADERS = {
         "q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
     ),
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": _ACCEPT_ENCODING,
     "DNT": "1",
     "Upgrade-Insecure-Requests": "1",
     "Sec-Fetch-Dest": "document",
@@ -280,7 +342,7 @@ async def _static_fetch(url: str) -> FetchResult:
             if truncated:
                 body = body[: settings.MAX_FETCH_BYTES]
 
-            html = body.decode("utf-8", errors="replace")
+            html = _decode_response(body, resp)
             content_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
             elapsed = int((time.monotonic() - t0) * 1000)
 

@@ -1,8 +1,18 @@
 """Tests for the HTTP fetcher service."""
 
+from types import SimpleNamespace
+
 import pytest
 
-from app.services.fetcher import FetchError, FetchResult, RenderModeUsed, fetch_url
+from app.services.fetcher import (
+    FetchError,
+    FetchResult,
+    RenderModeUsed,
+    _ACCEPT_ENCODING,
+    _decode_response,
+    _supported_accept_encoding,
+    fetch_url,
+)
 
 
 def _make_html(body: str = "<p>Hello</p>") -> bytes:
@@ -517,3 +527,46 @@ async def test_cloudflare_challenge_browser_unavailable_falls_back_to_static(
     assert result.render_mode_used == RenderModeUsed.STATIC
     assert result.fetch_metadata["browser_fallback_skipped"] is True
     assert result.fetch_metadata["challenge_type"] == "cloudflare_challenge"
+
+
+# ---------------------------------------------------------------------------
+# Decode / Accept-Encoding (Phase 1: br/zstd + charset handling)
+# ---------------------------------------------------------------------------
+
+
+def test_accept_encoding_only_advertises_decodable_encodings():
+    """We must never advertise an encoding httpx cannot decode (the zstd/br bug)."""
+    from httpx._decoders import SUPPORTED_DECODERS
+
+    advertised = [e.strip() for e in _supported_accept_encoding().split(",")]
+    assert "gzip" in advertised and "deflate" in advertised
+    # Every advertised encoding has a real decoder behind it.
+    for enc in advertised:
+        assert enc in SUPPORTED_DECODERS, f"advertised {enc!r} but httpx can't decode it"
+    # In this environment brotli + zstandard are installed.
+    assert "br" in advertised and "zstd" in advertised
+    assert _ACCEPT_ENCODING == _supported_accept_encoding()
+
+
+def test_decode_response_uses_header_charset():
+    """A non-UTF-8 body is decoded with the charset from Content-Type, not utf-8."""
+    text = "Café Münchën pâté"
+    body = text.encode("iso-8859-1")
+    resp = SimpleNamespace(charset_encoding="iso-8859-1")
+    assert _decode_response(body, resp) == text
+
+
+def test_decode_response_detects_charset_without_header():
+    """With no declared charset, fall back to detection rather than mangling bytes."""
+    text = "Résumé naïve coöperation — façade"
+    body = text.encode("utf-8")
+    resp = SimpleNamespace(charset_encoding=None)
+    decoded = _decode_response(body, resp)
+    assert "�" not in decoded
+    assert "sum" in decoded and "facade" in decoded.replace("ç", "c")
+
+
+def test_decode_response_falls_back_to_utf8_on_unknown_codec():
+    body = "plain ascii".encode("utf-8")
+    resp = SimpleNamespace(charset_encoding="totally-not-a-codec")
+    assert _decode_response(body, resp) == "plain ascii"
