@@ -260,7 +260,9 @@ async def test_zero_preview_records_blocks_extraction(async_client, app, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_extract_anyway_bypasses_zero_preview_gate(async_client, app, monkeypatch):
+async def test_extract_anyway_does_not_bypass_zero_preview_gate(async_client, app, monkeypatch):
+    # A *current* zero-record preview means selectors match nothing, so extraction
+    # would produce zero rows. extract_anyway must NOT force it (unlike no/stale preview).
     project = _project()
     project.state = ProjectState.PREVIEW_READY
 
@@ -320,8 +322,8 @@ async def test_extract_anyway_bypasses_zero_preview_gate(async_client, app, monk
         json={"extract_anyway": True},
     )
 
-    assert response.status_code == 200
-    assert response.json()["system_state"] == "DISCOVERING"
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "ZERO_PREVIEW_RECORDS"
 
 
 def _failed_project(*, with_analysis: bool = False) -> Project:

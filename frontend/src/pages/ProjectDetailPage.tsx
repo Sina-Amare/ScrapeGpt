@@ -917,18 +917,30 @@ export function ProjectDetailPage() {
 
             {extractGateError ? (
               <div className="mb-4">
-                <Alert tone="info">
+                {/* A zero-record preview means selectors match nothing, so the
+                    backend refuses extract-anyway — direct the user to fix
+                    fields instead of offering a button that would 409. */}
+                <Alert tone={extractGateError.code === "ZERO_PREVIEW_RECORDS" ? "warning" : "info"}>
                   <div className="flex items-start gap-2">
                     <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                     <div>
                       <p>{extractGateError.message}</p>
-                      <button
-                        className="mt-2 text-sm underline hover:no-underline"
-                        onClick={() => extractMutation.mutate(true)}
-                        disabled={extractMutation.isPending}
-                      >
-                        {extractMutation.isPending ? "Extracting…" : "Extract anyway"}
-                      </button>
+                      {extractGateError.code === "ZERO_PREVIEW_RECORDS" ? (
+                        <a
+                          href="#fields"
+                          className="mt-2 inline-block text-sm underline hover:no-underline"
+                        >
+                          Adjust fields
+                        </a>
+                      ) : (
+                        <button
+                          className="mt-2 text-sm underline hover:no-underline"
+                          onClick={() => extractMutation.mutate(true)}
+                          disabled={extractMutation.isPending}
+                        >
+                          {extractMutation.isPending ? "Extracting…" : "Extract anyway"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </Alert>

@@ -502,6 +502,19 @@ async def extract_project(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Select fields before extracting")
     preview = await latest_preview(db, project.id)
     extract_anyway = bool(payload.extract_anyway) if payload else False
+
+    # Is the latest preview stale relative to the current spec?
+    preview_is_stale = False
+    if preview is not None:
+        spec_updated = spec.updated_at or spec.created_at
+        preview_created = preview.created_at
+        preview_is_stale = bool(
+            spec_updated is not None
+            and preview_created is not None
+            and spec_updated > preview_created
+        )
+
+    # Soft gates (bypassable with extract_anyway): no preview, or a stale one.
     if preview is None and not extract_anyway:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -510,26 +523,26 @@ async def extract_project(
                 "error_code": "NO_PREVIEW",
             },
         )
-    # Soft gate: warn if preview is stale (spec changed after last preview).
-    if preview is not None and not extract_anyway:
-        spec_updated = spec.updated_at or spec.created_at
-        preview_created = preview.created_at
-        if spec_updated is not None and preview_created is not None and spec_updated > preview_created:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": (
-                        "Extraction spec was updated after the last preview. "
-                        "Run preview again to verify selectors, or choose "
-                        "extract anyway."
-                    ),
-                    "error_code": "STALE_PREVIEW",
-                },
-            )
-    # Gate: structured-mode preview with zero records means selectors matched nothing.
+    if preview is not None and preview_is_stale and not extract_anyway:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "Extraction spec was updated after the last preview. "
+                    "Run preview again to verify selectors, or choose "
+                    "extract anyway."
+                ),
+                "error_code": "STALE_PREVIEW",
+            },
+        )
+    # Hard gate (NOT bypassable): a current preview that found zero structured
+    # records means the selectors match nothing on the seed page, so extraction
+    # would certainly produce zero rows. Forcing it wastes a crawl — require the
+    # user to fix fields and re-preview. (A stale preview is handled above; once
+    # bypassed we don't apply this, since the stale result may be outdated.)
     if (
         preview is not None
-        and not extract_anyway
+        and not preview_is_stale
         and spec.mode == ExtractionMode.STRUCTURED
         and len(preview.sample_records or []) == 0
     ):
@@ -537,9 +550,8 @@ async def extract_project(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "message": (
-                    "Preview found no records — CSS selectors likely do not "
-                    "match the current page. Run preview again to check for "
-                    "selector errors, or choose extract anyway."
+                    "Preview found no records — the selectors do not match this "
+                    "page. Adjust the fields and run Preview again before extracting."
                 ),
                 "error_code": "ZERO_PREVIEW_RECORDS",
             },
