@@ -44,10 +44,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bs4 import BeautifulSoup
+
 from app.models.job import FrontierPreview, Project
 from app.services.crawl_scope import (
     REASON_CURRENT_PAGE_SCOPE,
     REASON_EXCLUDED_SCOPE_MODE,
+    REASON_PAGINATION_PATTERN_MATCH,
+    REASON_PAGINATION_SELECTOR_MATCH,
     classify_links_for_scope,
     scope_max_pages,
 )
@@ -131,6 +135,37 @@ def build_frontier_preview_from_fetch(
                 ),
             }
         )
+
+    # Scope-mismatch hint: PAGINATION chosen, but the page has no pagination
+    # links while it does link to detail pages -> recommend DATASET so the user
+    # doesn't run a crawl that only ever sees the seed page.
+    if (scope or {}).get("mode") == "PAGINATION":
+        has_pagination = any(
+            u.get("reason_code")
+            in (REASON_PAGINATION_SELECTOR_MATCH, REASON_PAGINATION_PATTERN_MATCH)
+            for u in included
+        )
+        if not has_pagination:
+            analysis = project.analysis if isinstance(project.analysis, dict) else {}
+            detail_sel = analysis.get("detail_link_selector")
+            detail_matches = 0
+            if detail_sel:
+                try:
+                    detail_matches = len(BeautifulSoup(html, "lxml").select(str(detail_sel)))
+                except Exception:
+                    detail_matches = 0
+            if detail_matches > 0:
+                warnings.append(
+                    {
+                        "code": "SCOPE_NO_MATCHING_LINKS",
+                        "count": detail_matches,
+                        "message": (
+                            "No pagination links were found on this page, but it links "
+                            f"to {detail_matches} detail page(s). Consider switching the "
+                            "crawl scope to 'Listing + detail pages'."
+                        ),
+                    }
+                )
 
     seed_decision = {
         "url": seed,

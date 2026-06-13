@@ -312,3 +312,38 @@ def test_select_links_to_enqueue_returns_empty_for_legacy_no_scope():
     assert "https://example.com/a" in out
     assert "https://example.com/b" in out
     assert "https://other.example.com/x" not in out
+
+
+def test_pagination_warns_when_no_pagination_but_detail_links_exist():
+    """PAGINATION chosen, page links to detail pages, no pagination -> recommend DATASET."""
+    project = SimpleNamespace(
+        id=1,
+        url="https://example.com/list",
+        normalized_url="https://example.com/list",
+        analysis={"detail_link_selector": "a.detail"},
+    )
+    spec = _spec(mode="PAGINATION")
+    html = """
+    <html><body>
+      <a class="detail" href="/item/1">Item 1</a>
+      <a class="detail" href="/item/2">Item 2</a>
+      <a class="detail" href="/item/3">Item 3</a>
+    </body></html>
+    """
+    preview = build_frontier_preview_from_fetch(project, spec, html)
+    codes = {w["code"] for w in (preview.warnings or [])}
+    assert "SCOPE_NO_MATCHING_LINKS" in codes
+
+
+def test_pagination_no_mismatch_warning_without_detail_links():
+    project = SimpleNamespace(
+        id=1,
+        url="https://example.com/list",
+        normalized_url="https://example.com/list",
+        analysis={"detail_link_selector": "a.detail"},
+    )
+    spec = _spec(mode="PAGINATION")
+    html = "<html><body><p>Just text, no links.</p></body></html>"
+    preview = build_frontier_preview_from_fetch(project, spec, html)
+    codes = {w["code"] for w in (preview.warnings or [])}
+    assert "SCOPE_NO_MATCHING_LINKS" not in codes
