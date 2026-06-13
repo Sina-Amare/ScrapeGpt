@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import { AppShell } from "./layout/AppShell";
 import { ProtectedRoute, PublicRoute } from "./layout/RouteGuards";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { isCurrentSessionMutation } from "./lib/session";
 import { ThemeProvider } from "./lib/theme";
 import { ForgotPasswordPage, LoginPage, RegisterPage } from "./pages/AuthPages";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -27,13 +28,18 @@ const queryClient = new QueryClient({
   // when the page that started the mutation has unmounted (e.g. you navigated
   // away while a provider test was running). A mutation opts in by setting
   // `meta.notify` / `meta.notifyError` — typically a toast + cache invalidation.
+  // We drop notifications for a mutation that was submitted before the last
+  // auth-session boundary, so a test that resolves after logout (or under a
+  // different user) can't surface the previous session's result.
   mutationCache: new MutationCache({
     onSuccess: (data, variables, _context, mutation) => {
+      if (!isCurrentSessionMutation(mutation.state.submittedAt)) return;
       (mutation.options.meta?.notify as
         | ((d: unknown, v: unknown) => void)
         | undefined)?.(data, variables);
     },
     onError: (error, variables, _context, mutation) => {
+      if (!isCurrentSessionMutation(mutation.state.submittedAt)) return;
       (mutation.options.meta?.notifyError as
         | ((e: unknown, v: unknown) => void)
         | undefined)?.(error, variables);

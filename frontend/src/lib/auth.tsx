@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
   createContext,
   ReactNode,
@@ -8,6 +9,7 @@ import {
   useState
 } from "react";
 import { api, setAccessToken, setAuthFailureHandler } from "./api";
+import { markAuthChanged } from "./session";
 import {
   clearStoredRefreshToken,
   clearStoredUserEmail,
@@ -29,6 +31,7 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [booting, setBooting] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [displayEmail, setDisplayEmail] = useState<string | null>(
@@ -41,7 +44,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearStoredUserEmail();
     setDisplayEmail(null);
     setAuthenticated(false);
-  }, []);
+    // Mark the session boundary so any in-flight mutation that resolves after
+    // this point is suppressed, and drop cached data so the previous user's
+    // records (e.g. provider names) can't leak to the next session.
+    markAuthChanged();
+    queryClient.clear();
+  }, [queryClient]);
 
   useEffect(() => {
     setAuthFailureHandler(logout);
@@ -82,6 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStoredRefreshToken(tokens.refresh_token);
     setStoredUserEmail(email);
     setDisplayEmail(email);
+    markAuthChanged();
     setAuthenticated(true);
   }, []);
 
@@ -91,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStoredRefreshToken(response.tokens.refresh_token);
     setStoredUserEmail(response.user.email);
     setDisplayEmail(response.user.email);
+    markAuthChanged();
     setAuthenticated(true);
   }, []);
 
