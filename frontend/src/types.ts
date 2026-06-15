@@ -356,7 +356,7 @@ export type RecordPageResponse = {
 // Interaction profile (page variants: per-100g/serving, metric/imperial, …)
 // ---------------------------------------------------------------------------
 
-export type InteractionExecution = "deterministic" | "interactive";
+export type InteractionExecution = "deterministic" | "interactive" | "url_param";
 
 export type InteractionStep = {
   action: "click" | "select" | "wait";
@@ -370,6 +370,7 @@ export type InteractionOption = {
   selected: boolean;
   field_selectors: Record<string, string>;
   recipe: InteractionStep[];
+  query?: Record<string, string>;
 };
 
 export type InteractionGroup = {
@@ -381,6 +382,7 @@ export type InteractionGroup = {
 
 export type InteractionProfile = {
   enabled: boolean;
+  merge_variants?: boolean;
   max_variant_combinations: number;
   groups: InteractionGroup[];
 };

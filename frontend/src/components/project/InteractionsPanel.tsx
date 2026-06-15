@@ -21,7 +21,12 @@ type Props = {
 const MAX_COMBOS = 12;
 
 function emptyProfile(): InteractionProfile {
-  return { enabled: false, max_variant_combinations: MAX_COMBOS, groups: [] };
+  return {
+    enabled: false,
+    merge_variants: false,
+    max_variant_combinations: MAX_COMBOS,
+    groups: [],
+  };
 }
 
 function countCombinations(groups: InteractionGroup[]): number {
@@ -119,6 +124,19 @@ export function InteractionsPanel({
               onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))}
             />
             Extract every selected variant combination
+          </label>
+
+          <label className="flex items-center gap-2 text-sm text-muted">
+            <input
+              type="checkbox"
+              checked={!!draft.merge_variants}
+              disabled={disabled || !draft.enabled}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, merge_variants: e.target.checked }))
+              }
+            />
+            Merge variants into one row per item (a column per variant, e.g.
+            "Calories (per 100 g)")
           </label>
 
           {draft.groups.map((group, gi) => (
