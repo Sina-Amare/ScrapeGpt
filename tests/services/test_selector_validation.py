@@ -165,6 +165,22 @@ def test_zero_match_field_confidence_capped_at_0_3():
     assert f["confidence"] == 0.3
 
 
+def test_over_specified_selector_is_relaxed_not_penalized():
+    """A selector that over-specifies a missing descendant is self-healed by
+    relaxing it, keeping the field's confidence (so it stays selected) instead
+    of capping to 0.3. Regression: calories.info calorie cells have no <p>, so
+    'td:nth-child(3) p' was penalized and deselected."""
+    analysis = _analysis(
+        ".arxiv-result",
+        [_field("title", "p.title.is-5 span", required=False, confidence=0.9)],
+    )
+    result = validate_selectors_against_html(analysis, _ARXIV_LIKE_HTML)
+    f = result["candidate_fields"][0]
+    assert f["selector"] == "p.title.is-5"  # relaxed to the matching ancestor
+    assert f["confidence"] == 0.9  # preserved, not capped
+    assert any("relaxed" in w for w in f["warnings"])
+
+
 def test_zero_match_does_not_touch_other_fields():
     analysis = _analysis(
         ".arxiv-result",

@@ -54,6 +54,54 @@ def test_table_fallback_extracts_when_selectors_miss():
     assert second["Calories (kcal)"] == 215
 
 
+def test_relaxed_selectors_drops_only_bare_text_wrappers():
+    from app.services.extractor import relaxed_selectors
+
+    # Trailing bare wrapper tag is dropped to read the parent cell text.
+    assert relaxed_selectors("td:nth-child(3) p") == [
+        "td:nth-child(3) p",
+        "td:nth-child(3)",
+    ]
+    # Single token: nothing to relax.
+    assert relaxed_selectors("a") == ["a"]
+    # A trailing link/value element is NEVER dropped (would change the data).
+    assert relaxed_selectors("p.title.is-5 a") == ["p.title.is-5 a"]
+    # Stops at a non-bare token: ".x" keeps the selector from collapsing to "div".
+    assert relaxed_selectors("div .x span") == ["div .x span", "div .x"]
+    # Chained bare wrappers all relax.
+    assert relaxed_selectors("td p span") == ["td p span", "td p", "td"]
+
+
+def test_per_field_selector_relaxation_recovers_missing_descendant():
+    """A field whose selector over-specifies a descendant absent in some cells
+    (e.g. 'td:nth-child(3) p' where the value is direct <td> text, as on
+    calories.info) is recovered by relaxing to the cell — not left empty while
+    sibling fields extract fine (which would suppress the table fallback)."""
+    html = """
+    <html><body><table><tbody>
+      <tr><td><p>Beef</p></td><td><p>100 g</p></td><td>156 Cal</td></tr>
+      <tr><td><p>Pork</p></td><td><p>100 g</p></td><td>242 Cal</td></tr>
+    </tbody></table></body></html>
+    """
+    fields = [
+        {"selected": True, "label": "Food", "type": "string", "selector": "td:nth-child(1) p"},
+        {"selected": True, "label": "Serving", "type": "string", "selector": "td:nth-child(2) p"},
+        {"selected": True, "label": "Calories", "type": "number", "selector": "td:nth-child(3) p"},
+    ]
+    records = extract_records_from_html(
+        html,
+        source_url="https://x.test/",
+        project=_project({"repeated_item_selector": "tbody tr"}),
+        spec=_spec(fields),
+    )
+    assert len(records) == 2
+    assert records[0].normalized_data["Food"] == "Beef"
+    assert records[0].normalized_data["Serving"] == "100 g"
+    # Recovered despite the missing <p> in the calorie cell.
+    assert records[0].normalized_data["Calories"] == 156
+    assert records[1].normalized_data["Calories"] == 242
+
+
 def test_table_fallback_positional_without_headers():
     html = """
     <html><body><table>

@@ -86,14 +86,49 @@ def _relative_selector(selector: str, repeated_selector: str | None) -> str:
     return selector
 
 
+# Bare formatting/text-wrapper tags whose absence just means the text sits in
+# the parent. Dropping a trailing one of these is safe (same content); dropping
+# a value-bearing element like ``a``/``img``/``input`` would change WHAT is
+# extracted (a link's href, an image's src), so those are never relaxed.
+_SAFE_RELAX_TAGS = {
+    "p", "span", "div", "b", "strong", "em", "i", "small", "label", "font",
+    "mark", "u",
+}
+
+
+def relaxed_selectors(selector: str) -> list[str]:
+    """Progressively shorter selectors by dropping only trailing *bare
+    text-wrapper* tokens.
+
+    AI selectors often over-specify a descendant that is absent in some cells —
+    e.g. ``td:nth-child(3) p`` when the value sits as direct text in the ``td``.
+    Relaxing to ``td:nth-child(3)`` recovers it. Stops at the first trailing
+    token that is not a bare wrapper tag (e.g. ``a`` or ``p.title``), so a link
+    selector is never silently turned into its parent's text. Returns the
+    original first, then each safe shorter prefix.
+    """
+    tokens = (selector or "").split()
+    out = [" ".join(tokens)] if tokens else []
+    while len(tokens) > 1 and tokens[-1] in _SAFE_RELAX_TAGS:
+        tokens = tokens[:-1]
+        out.append(" ".join(tokens))
+    return out
+
+
 def _select_values(scope: BeautifulSoup | Tag, field: dict[str, Any], source_url: str) -> tuple[list[str | None], list[str]]:
     selector = field.get("selector")
     if not selector:
         return [], [f"{_field_key(field)} has no selector."]
-    try:
-        elements = scope.select(str(selector))
-    except Exception as exc:
-        return [], [f"{_field_key(field)} selector is invalid: {exc}"]
+    # Try the selector, then relaxed variants if it matches nothing, so an
+    # over-specified descendant (e.g. a missing "<p>") still extracts the cell.
+    elements: list[Any] = []
+    for candidate in relaxed_selectors(str(selector)):
+        try:
+            elements = scope.select(candidate)
+        except Exception as exc:
+            return [], [f"{_field_key(field)} selector is invalid: {exc}"]
+        if elements:
+            break
     field_type = str(field.get("type") or "string")
     return [_element_value(element, field_type, source_url) for element in elements], []
 

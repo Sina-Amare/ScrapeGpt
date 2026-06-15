@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.job import ExtractionMode, ExtractionSpec, Project
 from app.services.crawl_scope import default_crawl_scope
+from app.services.extractor import relaxed_selectors
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,30 @@ def validate_selectors_against_html(
             continue
 
         matched = any(_selector_matches(scope, str(selector)) for scope in scopes)
+
+        # Self-heal an over-specified selector: if it matches nothing, try
+        # relaxing the trailing descendant (e.g. "td:nth-child(3) p" ->
+        # "td:nth-child(3)" when the value is direct cell text). Rewrite the
+        # field to the working selector and keep its confidence/selection.
+        if not matched:
+            for candidate in relaxed_selectors(str(selector))[1:]:
+                if any(_selector_matches(scope, candidate) for scope in scopes):
+                    field["selector"] = candidate
+                    field.setdefault("warnings", [])
+                    field["warnings"].append(
+                        f"Selector '{selector}' over-specified a missing "
+                        f"descendant; relaxed to '{candidate}'."
+                    )
+                    logger.info(
+                        "spec.field_selector_relaxed",
+                        extra={
+                            "field": field.get("name"),
+                            "from": selector,
+                            "to": candidate,
+                        },
+                    )
+                    matched = True
+                    break
 
         if not matched:
             original_conf = float(field.get("confidence") or 0)
