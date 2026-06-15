@@ -1,4 +1,5 @@
-import { CheckCircle2, Info } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CheckCircle2, ChevronDown, ChevronRight, Info } from "lucide-react";
 import type { CrawlScope, CrawlScopeMode } from "../../types";
 import {
   SCOPE_MODE_ORDER,
@@ -13,14 +14,45 @@ type Props = {
   disabled?: boolean;
   onModeChange: (mode: CrawlScopeMode) => void;
   onConfirm: () => void;
+  onPatternsChange?: (include: string[], exclude: string[]) => void;
+  patternsSaving?: boolean;
 };
 
-export function ScopeSelector({ crawlScope, disabled, onModeChange, onConfirm }: Props) {
+function parsePatterns(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export function ScopeSelector({
+  crawlScope,
+  disabled,
+  onModeChange,
+  onConfirm,
+  onPatternsChange,
+  patternsSaving,
+}: Props) {
   const currentMode: CrawlScopeMode = (crawlScope?.mode as CrawlScopeMode) ?? "CURRENT_PAGE";
   const currentStatus = crawlScope?.status;
   const confirmed = isUserConfirmed(currentStatus);
   const needsConfirm = requiresConfirmation(currentMode);
   const aiMode = crawlScope?.ai_recommendation?.recommended_mode;
+
+  const savedInclude = (crawlScope?.include_patterns ?? []).join("\n");
+  const savedExclude = (crawlScope?.exclude_patterns ?? []).join("\n");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [includeText, setIncludeText] = useState(savedInclude);
+  const [excludeText, setExcludeText] = useState(savedExclude);
+
+  // Re-sync the editor when the saved scope changes (e.g. after one-click
+  // broaden writes derived include patterns).
+  useEffect(() => {
+    setIncludeText(savedInclude);
+    setExcludeText(savedExclude);
+  }, [savedInclude, savedExclude]);
+
+  const patternsDirty = includeText !== savedInclude || excludeText !== savedExclude;
 
   return (
     <div className="grid gap-3">
@@ -108,6 +140,71 @@ export function ScopeSelector({ crawlScope, disabled, onModeChange, onConfirm }:
               </Button>
             </div>
           )}
+        </div>
+      ) : null}
+
+      {onPatternsChange && currentMode !== "CURRENT_PAGE" ? (
+        <div className="rounded-lg border border-line bg-porcelain">
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-ink"
+          >
+            {advancedOpen ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+            Advanced — include / exclude patterns
+          </button>
+          {advancedOpen ? (
+            <div className="grid gap-4 border-t border-line p-4">
+              <p className="text-xs text-muted">
+                One glob per line, matched against the URL path (e.g.{" "}
+                <code className="rounded bg-surface px-1">/food/*</code>). Include
+                patterns pick which related pages to crawl; exclude patterns drop
+                noise. Saving re-asks you to confirm the scope.
+              </p>
+              <label className="grid gap-1 text-xs font-semibold text-muted">
+                Include patterns
+                <textarea
+                  value={includeText}
+                  disabled={disabled || patternsSaving}
+                  onChange={(e) => setIncludeText(e.target.value)}
+                  rows={3}
+                  spellCheck={false}
+                  placeholder="/food/*"
+                  className="rounded-lg border border-line bg-surface px-3 py-2 font-mono text-sm text-ink"
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-muted">
+                Exclude patterns
+                <textarea
+                  value={excludeText}
+                  disabled={disabled || patternsSaving}
+                  onChange={(e) => setExcludeText(e.target.value)}
+                  rows={2}
+                  spellCheck={false}
+                  placeholder="/food/tag/*"
+                  className="rounded-lg border border-line bg-surface px-3 py-2 font-mono text-sm text-ink"
+                />
+              </label>
+              <div className="flex items-center justify-end">
+                <Button
+                  variant="secondary"
+                  disabled={disabled || patternsSaving || !patternsDirty}
+                  onClick={() =>
+                    onPatternsChange(
+                      parsePatterns(includeText),
+                      parsePatterns(excludeText)
+                    )
+                  }
+                >
+                  {patternsSaving ? "Saving..." : "Save patterns"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

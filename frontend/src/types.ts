@@ -241,6 +241,7 @@ export type FieldSpec = {
 export type CrawlScopeMode =
   | "CURRENT_PAGE"
   | "PAGINATION"
+  | "COLLECTION"
   | "DATASET"
   | "FULL_SITE";
 export type CrawlScopeStatus =
@@ -268,6 +269,7 @@ export type CrawlScopeAiRecommendation = {
   confidence: number;
   warnings: string[];
   evidence: string[];
+  suggested_include_patterns?: string[];
 };
 
 export type CrawlScope = {
@@ -302,6 +304,16 @@ export type FrontierUrlDecision = {
   link_text: string | null;
 };
 
+export type FrontierWarning = {
+  code: string;
+  message?: string;
+  count?: number;
+  // Present on SCOPE_TOO_NARROW: the one-click broaden target.
+  suggested_mode?: CrawlScopeMode;
+  suggested_include_patterns?: string[];
+  [key: string]: unknown;
+};
+
 export type FrontierPreviewResponse = {
   id: number;
   project_id: number;
@@ -310,7 +322,7 @@ export type FrontierPreviewResponse = {
   included_urls: FrontierUrlDecision[];
   excluded_urls: FrontierUrlDecision[];
   estimated_page_count: number | null;
-  warnings: Record<string, unknown>[];
+  warnings: FrontierWarning[];
   quality_summary: Record<string, unknown>;
   created_at: string | null;
 };

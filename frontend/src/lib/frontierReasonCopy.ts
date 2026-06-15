@@ -6,6 +6,7 @@ const REASON_CODE_COPY: Record<string, string> = {
   PAGINATION_SELECTOR_MATCH: "Matches the detected page navigation",
   PAGINATION_PATTERN_MATCH: "Looks like another page in this list",
   DATASET_PATTERN_MATCH: "Matches this dataset's URL pattern",
+  COLLECTION_PATTERN_MATCH: "Related list page in this collection",
   DETAIL_LINK_SELECTOR_MATCH: "Looks like a detail page for this dataset",
   FULL_SITE_SAME_ORIGIN: "Same website and whole-site mode is selected",
   EXCLUDED_DIFFERENT_ORIGIN: "Different website",

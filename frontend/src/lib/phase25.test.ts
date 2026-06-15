@@ -26,6 +26,10 @@ describe("scopeCopy — mode labels", () => {
     assert.equal(scopeModeLabel("PAGINATION"), "Paginated list");
   });
 
+  it("COLLECTION renders user label", () => {
+    assert.equal(scopeModeLabel("COLLECTION"), "Related list pages");
+  });
+
   it("DATASET renders user label", () => {
     assert.equal(scopeModeLabel("DATASET"), "Listing + detail pages");
   });
@@ -70,6 +74,10 @@ describe("scopeCopy — confirmation requirements", () => {
     assert.ok(requiresConfirmation("PAGINATION"));
   });
 
+  it("COLLECTION requires confirmation", () => {
+    assert.ok(requiresConfirmation("COLLECTION"));
+  });
+
   it("DATASET requires confirmation", () => {
     assert.ok(requiresConfirmation("DATASET"));
   });
@@ -112,6 +120,10 @@ describe("reasonCodeCopy — known codes", () => {
 
   it("PAGINATION_URL_PATTERN maps to user copy", () => {
     assert.equal(reasonCodeCopy("PAGINATION_URL_PATTERN"), "Looks like another page in this list");
+  });
+
+  it("COLLECTION_PATTERN_MATCH maps to user copy", () => {
+    assert.equal(reasonCodeCopy("COLLECTION_PATTERN_MATCH"), "Related list page in this collection");
   });
 
   it("EXCLUDED_PAGE_LIMIT maps to user copy", () => {

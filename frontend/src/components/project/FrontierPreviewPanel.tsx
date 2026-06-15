@@ -1,6 +1,11 @@
-import { Eye, SkipForward } from "lucide-react";
-import type { FrontierPreviewResponse } from "../../types";
+import { Eye, SkipForward, Wand2 } from "lucide-react";
+import type {
+  CrawlScopeMode,
+  FrontierPreviewResponse,
+  FrontierWarning,
+} from "../../types";
 import { reasonCodeCopy } from "../../lib/frontierReasonCopy";
+import { scopeModeLabel } from "../../lib/scopeCopy";
 import { Alert } from "../ui/Alert";
 import { Button } from "../ui/Button";
 
@@ -10,7 +15,9 @@ type Props = {
   error?: string | null;
   stale?: boolean;
   disabled?: boolean;
+  broadening?: boolean;
   onGenerate: () => void;
+  onBroaden?: (mode: CrawlScopeMode, includePatterns: string[]) => void;
 };
 
 function UrlRow({ url, reasonCode, reason, linkText, depth }: {
@@ -39,10 +46,18 @@ function UrlRow({ url, reasonCode, reason, linkText, depth }: {
   );
 }
 
-export function FrontierPreviewPanel({ preview, loading, error, stale, disabled, onGenerate }: Props) {
+export function FrontierPreviewPanel({ preview, loading, error, stale, disabled, broadening, onGenerate, onBroaden }: Props) {
   const included = preview?.included_urls ?? [];
   const excluded = preview?.excluded_urls ?? [];
-  const warnings: Record<string, unknown>[] = preview?.warnings ?? [];
+  const warnings: FrontierWarning[] = preview?.warnings ?? [];
+  const broadenWarning = warnings.find(
+    (w) =>
+      w.code === "SCOPE_TOO_NARROW" &&
+      !!w.suggested_mode &&
+      Array.isArray(w.suggested_include_patterns) &&
+      w.suggested_include_patterns.length > 0
+  );
+  const otherWarnings = warnings.filter((w) => w !== broadenWarning);
   const qualitySummary = preview?.quality_summary ?? {};
   const includedCount = (qualitySummary.included_count as number | undefined) ?? included.length;
   const excludedCount = (qualitySummary.excluded_count as number | undefined) ?? excluded.length;
@@ -102,11 +117,43 @@ export function FrontierPreviewPanel({ preview, loading, error, stale, disabled,
             </div>
           </div>
 
-          {warnings.length ? (
+          {broadenWarning && onBroaden ? (
+            <div className="rounded-lg border border-teal/50 bg-teal-soft/30 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-2 text-sm text-ink">
+                  <Wand2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-teal" />
+                  <span>
+                    {broadenWarning.message ??
+                      "This scope will only crawl the seed page."}
+                  </span>
+                </div>
+                <Button
+                  variant="primary"
+                  disabled={disabled || broadening}
+                  onClick={() =>
+                    onBroaden(
+                      broadenWarning.suggested_mode as CrawlScopeMode,
+                      broadenWarning.suggested_include_patterns ?? []
+                    )
+                  }
+                >
+                  {broadening
+                    ? "Updating scope..."
+                    : `Crawl ${
+                        broadenWarning.count ?? "these"
+                      } pages (${scopeModeLabel(
+                        broadenWarning.suggested_mode as string
+                      )})`}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {otherWarnings.length ? (
             <div className="grid gap-2">
-              {warnings.map((w, i) => (
+              {otherWarnings.map((w, i) => (
                 <Alert key={i} tone="info">
-                  {String((w as { message?: unknown }).message ?? JSON.stringify(w))}
+                  {String(w.message ?? JSON.stringify(w))}
                 </Alert>
               ))}
             </div>

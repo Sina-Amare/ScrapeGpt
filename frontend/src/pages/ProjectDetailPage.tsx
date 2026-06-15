@@ -397,6 +397,50 @@ export function ProjectDetailPage() {
     }
   });
 
+  // One-click broaden from a SCOPE_TOO_NARROW frontier warning: apply the
+  // suggested mode + include patterns, confirm the scope (the click is explicit
+  // intent to crawl those pages), then regenerate the frontier preview.
+  const broadenScopeMutation = useMutation({
+    mutationFn: async (vars: { mode: CrawlScopeMode; includePatterns: string[] }) => {
+      await api.updateProjectSpec(projectId, {
+        crawl_scope: {
+          ...(savedScope ?? {}),
+          mode: vars.mode,
+          include_patterns: vars.includePatterns,
+          status: "USER_CONFIRMED" as CrawlScopeStatus,
+          user_confirmed_at: new Date().toISOString(),
+        } as Partial<CrawlScope>
+      });
+      return api.createFrontierPreview(projectId);
+    },
+    onSuccess: (_data, vars) => {
+      setDraftMode(vars.mode);
+      setScopeChangedAfterPreview(false);
+      setExtractScopeError(null);
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    }
+  });
+
+  // Save advanced include/exclude patterns. Resets confirmation (patterns change
+  // the frontier) so the user re-confirms and regenerates the preview.
+  const savePatternsMutation = useMutation({
+    mutationFn: (vars: { include: string[]; exclude: string[] }) =>
+      api.updateProjectSpec(projectId, {
+        crawl_scope: {
+          ...(savedScope ?? {}),
+          mode: effectiveDraftMode,
+          include_patterns: vars.include,
+          exclude_patterns: vars.exclude,
+          status: "AI_SUGGESTED" as CrawlScopeStatus,
+          user_confirmed_at: null,
+        } as Partial<CrawlScope>
+      }),
+    onSuccess: () => {
+      setScopeChangedAfterPreview(true);
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    }
+  });
+
   const retryMutation = useMutation({
     mutationFn: (providerConfigId?: number | null) =>
       api.retryProject(projectId, providerConfigId),
@@ -788,12 +832,19 @@ export function ProjectDetailPage() {
             {confirmScopeMutation.error ? (
               <div className="mb-4"><Alert tone="danger">{confirmScopeMutation.error.message}</Alert></div>
             ) : null}
+            {savePatternsMutation.error ? (
+              <div className="mb-4"><Alert tone="danger">{savePatternsMutation.error.message}</Alert></div>
+            ) : null}
             {project.spec ? (
               <ScopeSelector
                 crawlScope={effectiveScope}
                 disabled={isActive || saveScopeMutation.isPending || confirmScopeMutation.isPending}
                 onModeChange={handleModeChange}
                 onConfirm={handleConfirmScope}
+                patternsSaving={savePatternsMutation.isPending}
+                onPatternsChange={(include, exclude) =>
+                  savePatternsMutation.mutate({ include, exclude })
+                }
               />
             ) : (
               <p className="text-sm text-muted">Scope will be available after analysis.</p>
@@ -825,10 +876,14 @@ export function ProjectDetailPage() {
             <FrontierPreviewPanel
               preview={project.frontier_preview}
               loading={frontierPreviewMutation.isPending}
-              error={frontierPreviewMutation.error?.message ?? null}
+              error={frontierPreviewMutation.error?.message ?? broadenScopeMutation.error?.message ?? null}
               stale={scopeChangedAfterPreview}
               disabled={!project.spec || isActive}
+              broadening={broadenScopeMutation.isPending}
               onGenerate={() => frontierPreviewMutation.mutate()}
+              onBroaden={(mode, includePatterns) =>
+                broadenScopeMutation.mutate({ mode, includePatterns })
+              }
             />
           </section>
 

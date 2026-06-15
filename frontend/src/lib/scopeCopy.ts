@@ -18,9 +18,16 @@ const SCOPE_MODE_INFO: Record<CrawlScopeMode, ScopeModeInfo> = {
   },
   PAGINATION: {
     label: "Paginated list",
-    description: "Follows Next / page 2 / page 3 links to scrape the same list across multiple pages. Use when all results live on one list that spans pages.",
+    description: "Follows only Next / page 2 / page 3 links of this same list. Use when all results live on one list that spans numbered pages — not for separate category pages.",
     example: "e.g. arxiv.org/search/… pages 1–40",
     confirmLabel: "Confirm list pages",
+    warnStrong: false,
+  },
+  COLLECTION: {
+    label: "Related list pages",
+    description: "Follows sibling / category list pages linked from this one (e.g. each food category), then scrapes each. Use when the data is split across many similar list pages rather than numbered pages.",
+    example: "e.g. calories.info/food/meat, /food/fish, /food/fruit …",
+    confirmLabel: "Confirm related pages",
     warnStrong: false,
   },
   DATASET: {
@@ -65,6 +72,7 @@ export function isUserConfirmed(status: string | undefined): boolean {
 export const SCOPE_MODE_ORDER: CrawlScopeMode[] = [
   "CURRENT_PAGE",
   "PAGINATION",
+  "COLLECTION",
   "DATASET",
   "FULL_SITE",
 ];
