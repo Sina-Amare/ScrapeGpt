@@ -13,6 +13,7 @@ from app.db.database import async_session_factory
 from app.models.job import ExtractionMode, Job, JobState, WorkflowMode
 from app.models.provider_config import ProviderConfig
 from app.services.analyzer import analyze_page
+from app.services.crawl_scope import recommend_scope
 from app.services.dom_summary import assess_html_quality, build_dom_summary
 from app.services.extraction_spec_service import validate_selectors_against_html
 from app.services.fetcher import FetchError, fetch_url
@@ -158,6 +159,25 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
         # ---- Phase 6b: Validate selectors against actual HTML ----
         # Runs even on cache hits so stale selectors are always re-checked.
         analysis = validate_selectors_against_html(analysis, fetch_result.html)
+
+        # ---- Phase 6c: Evidence-based crawl-scope recommendation ----
+        # This is the only point where both the fetched HTML and the analysis
+        # dict are in scope, so we compute the HTML-validated scope suggestion
+        # here and stash it in the analysis dict. default_crawl_scope() reads it
+        # when the extraction spec is created. Recommending from HTML (not the
+        # AI's claimed selector alone) fixes "AI said PAGINATION but the page
+        # has none, so only the seed got crawled".
+        if isinstance(analysis, dict):
+            try:
+                analysis["scope_recommendation"] = recommend_scope(
+                    analysis, fetch_result.html, fetch_result.final_url
+                )
+            except Exception:
+                logger.warning(
+                    "analysis.scope_recommendation_failed",
+                    extra={"job_id": job_id},
+                    exc_info=True,
+                )
 
         confidence = float(analysis.get("confidence", 0.0))
         warnings = list(analysis.get("warnings", []))

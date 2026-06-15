@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 import soupsieve as sv
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 from app.schemas.job import ContentAnalysis, StructuredAnalysis
 
@@ -104,7 +104,7 @@ class FieldSpec(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-VALID_CRAWL_SCOPE_MODES = ("CURRENT_PAGE", "PAGINATION", "DATASET", "FULL_SITE")
+VALID_CRAWL_SCOPE_MODES = ("CURRENT_PAGE", "PAGINATION", "COLLECTION", "DATASET", "FULL_SITE")
 VALID_CRAWL_SCOPE_STATUSES = ("AI_SUGGESTED", "USER_CONFIRMED", "SYSTEM_DEFAULTED")
 
 
@@ -128,6 +128,9 @@ class CrawlScopeAiRecommendation(BaseModel):
     confidence: float
     warnings: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
+    # COLLECTION recommendations carry the auto-derived include pattern(s)
+    # (e.g. ["/food/*"]) so the UI can offer a one-click broaden.
+    suggested_include_patterns: list[str] = Field(default_factory=list)
 
 
 class CrawlScope(BaseModel):
@@ -168,6 +171,19 @@ class CrawlScope(BaseModel):
         if value < 1 or value > 5000:
             raise ValueError("crawl_scope.max_pages must be between 1 and 5000")
         return value
+
+    @model_validator(mode="after")
+    def _apply_mode_defaults(self) -> "CrawlScope":
+        # COLLECTION crawls sibling/category list pages one hop from the seed.
+        # It is the only mode that must be depth-bounded: without a bound it
+        # would behave like FULL_SITE. New projects carry max_depth=0 (the
+        # CURRENT_PAGE default) across mode switches, and depth enforcement
+        # treats <=0 / None as unbounded, so we normalize COLLECTION to a
+        # positive bound of 1 here at the write boundary regardless of client.
+        if self.mode == "COLLECTION":
+            if self.max_depth is None or self.max_depth < 1:
+                self.max_depth = 1
+        return self
 
 
 class FrontierUrlDecision(BaseModel):

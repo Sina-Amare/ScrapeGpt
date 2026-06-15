@@ -54,6 +54,10 @@ def _spec_hash(spec: ExtractionSpec) -> str:
         "url_patterns": spec.url_patterns or [],
         "page_limit": spec.page_limit,
         "export_format": spec.export_format,
+        # crawl_scope changes the crawl frontier (e.g. CURRENT_PAGE vs
+        # COLLECTION), so it is part of the spec shape an export was produced
+        # from. interaction_profile joins this payload in Phase 2.
+        "crawl_scope": spec.crawl_scope or {},
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -109,6 +113,7 @@ def select_links_to_enqueue(
     legacy_patterns: list[str] | None = None,
     analysis: dict[str, Any] | None = None,
     remaining_slots: int,
+    source_depth: int = 0,
 ) -> list[str]:
     """Decide which discovered links to enqueue as the next crawl batch.
 
@@ -117,8 +122,10 @@ def select_links_to_enqueue(
     ``execute_project_extraction`` for every fetched page. It returns
     the normalized URLs that should be enqueued, never the full
     UrlDecision list. ``remaining_slots`` is the maximum number of
-    URLs to return. When ``scope`` is missing or has no mode, the
-    legacy same-site discoverer is used.
+    URLs to return. ``source_depth`` is the depth of ``page_url`` so the
+    scope classifier can enforce a positive ``max_depth`` bound. When
+    ``scope`` is missing or has no mode, the legacy same-site discoverer
+    is used.
     """
     if remaining_slots <= 0 or not html:
         return []
@@ -131,6 +138,7 @@ def select_links_to_enqueue(
             scope=scope,
             analysis=analysis,
             limit=remaining_slots,
+            source_depth=source_depth,
         )
     else:
         links = discover_same_site_links(
@@ -399,6 +407,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                             legacy_patterns=spec.url_patterns or [],
                             analysis=project.analysis if isinstance(project.analysis, dict) else None,
                             remaining_slots=remaining,
+                            source_depth=page.depth,
                         )
                     else:
                         # Legacy: no scope, fall back to same-site BFS.

@@ -32,6 +32,7 @@ REASON_CURRENT_PAGE_SCOPE = "CURRENT_PAGE_SCOPE"
 REASON_PAGINATION_SELECTOR_MATCH = "PAGINATION_SELECTOR_MATCH"
 REASON_PAGINATION_PATTERN_MATCH = "PAGINATION_PATTERN_MATCH"
 REASON_DATASET_PATTERN_MATCH = "DATASET_PATTERN_MATCH"
+REASON_COLLECTION_PATTERN_MATCH = "COLLECTION_PATTERN_MATCH"
 REASON_DETAIL_LINK_SELECTOR_MATCH = "DETAIL_LINK_SELECTOR_MATCH"
 REASON_FULL_SITE_SAME_ORIGIN = "FULL_SITE_SAME_ORIGIN"
 REASON_EXCLUDED_DIFFERENT_ORIGIN = "EXCLUDED_DIFFERENT_ORIGIN"
@@ -48,6 +49,7 @@ DEFAULT_REASON_TEXT = {
     REASON_PAGINATION_SELECTOR_MATCH: "Matched the detected pagination selector.",
     REASON_PAGINATION_PATTERN_MATCH: "Matched the pagination URL pattern.",
     REASON_DATASET_PATTERN_MATCH: "Matched a dataset include pattern.",
+    REASON_COLLECTION_PATTERN_MATCH: "Matched a related-list include pattern.",
     REASON_DETAIL_LINK_SELECTOR_MATCH: "Matched the detail-link selector.",
     REASON_FULL_SITE_SAME_ORIGIN: "Same-origin link in FULL_SITE scope.",
     REASON_EXCLUDED_DIFFERENT_ORIGIN: "Different origin than the seed.",
@@ -99,9 +101,17 @@ class UrlDecision:
 
 
 def default_crawl_scope(project: Any, analysis: dict[str, Any] | None) -> dict[str, Any]:
-    """Conservateur default scope for new projects (CURRENT_PAGE + SYSTEM_DEFAULTED)."""
+    """Conservateur default scope for new projects (CURRENT_PAGE + SYSTEM_DEFAULTED).
+
+    Prefers the evidence-based recommendation stashed in
+    ``analysis["scope_recommendation"]`` by the job executor (which validated the
+    suggestion against the fetched HTML). Falls back to the analysis-only
+    heuristic for legacy projects whose analysis predates that field.
+    """
     analysis = analysis or {}
-    recommendation = _recommend_scope_from_analysis(analysis)
+    recommendation = analysis.get("scope_recommendation")
+    if not isinstance(recommendation, dict):
+        recommendation = _recommend_scope_from_analysis(analysis)
     scope = copy.deepcopy(DEFAULT_CRAWL_SCOPE)
     scope["seed_url"] = getattr(project, "url", None)
     scope["ai_recommendation"] = recommendation
@@ -274,8 +284,17 @@ def classify_links_for_scope(
     root_url: str,
     scope: dict[str, Any],
     analysis: dict[str, Any] | None = None,
+    source_depth: int = 0,
 ) -> list[UrlDecision]:
-    """Classify every link on the page as included or excluded per the scope."""
+    """Classify every link on the page as included or excluded per the scope.
+
+    ``source_depth`` is the crawl depth of ``page_url`` (the seed is depth 0).
+    Discovered links are children at ``source_depth + 1``; when the scope has a
+    positive ``max_depth`` and that child depth exceeds it, the link is excluded
+    with ``REASON_EXCLUDED_DEPTH_LIMIT``. A ``max_depth`` of None or <= 0 means
+    unbounded, so existing PAGINATION/DATASET/FULL_SITE scopes (which carry
+    max_depth 0 from the CURRENT_PAGE default) are unaffected.
+    """
     if not html or not page_url or not root_url or not scope:
         return []
 
@@ -322,6 +341,7 @@ def classify_links_for_scope(
                 mode=mode,
                 analysis=analysis,
                 link_text=link_text,
+                source_depth=source_depth,
             )
         )
 
@@ -354,6 +374,7 @@ def discover_links_for_scope(
     scope: dict[str, Any],
     analysis: dict[str, Any] | None = None,
     limit: int = 200,
+    source_depth: int = 0,
 ) -> list[str]:
     """Return the normalized URLs the current scope would actually insert."""
     if limit <= 0 or not html:
@@ -364,6 +385,7 @@ def discover_links_for_scope(
         root_url=root_url,
         scope=scope,
         analysis=analysis,
+        source_depth=source_depth,
     )
     return [d.normalized_url for d in decisions if d.decision == "included"][:limit]
 
@@ -488,12 +510,14 @@ def _classify_one(
     mode: str,
     analysis: dict[str, Any] | None,
     link_text: str | None,
+    source_depth: int = 0,
 ) -> UrlDecision:
+    child_depth = source_depth + 1
     base = dict(
         url=normalized,
         normalized_url=normalized,
         source_url=page_url,
-        depth=0,
+        depth=child_depth,
         confidence=None,
         link_text=link_text,
     )
@@ -538,6 +562,18 @@ def _classify_one(
     except ValueError:
         pass
 
+    # 4b. Depth limit. For link-following modes, stop crawling once the child
+    # depth would exceed a positive max_depth. None / <= 0 means unbounded, so
+    # this only binds modes that explicitly set a positive bound (COLLECTION).
+    max_depth = scope_max_depth(scope)
+    if max_depth is not None and max_depth >= 1 and child_depth > max_depth:
+        return UrlDecision(
+            **base,
+            decision="excluded",
+            reason_code=REASON_EXCLUDED_DEPTH_LIMIT,
+            reason=DEFAULT_REASON_TEXT[REASON_EXCLUDED_DEPTH_LIMIT],
+        )
+
     # 5. PAGINATION.
     if mode == CrawlScopeMode.PAGINATION.value:
         decision = _pagination_decision(
@@ -550,6 +586,39 @@ def _classify_one(
             decision="excluded",
             reason_code=REASON_EXCLUDED_SCOPE_MODE,
             reason="PAGINATION scope: only pagination selector/pattern matches are included.",
+        )
+
+    # 5b. COLLECTION: sibling/category list pages selected by include patterns
+    # (auto-derived from the seed's dominant path prefix, e.g. "/food/*").
+    if mode == CrawlScopeMode.COLLECTION.value:
+        for pattern in scope.get("include_patterns") or []:
+            if _glob_match(normalized, pattern):
+                return UrlDecision(
+                    **base,
+                    decision="included",
+                    role="collection",
+                    reason_code=REASON_COLLECTION_PATTERN_MATCH,
+                    reason=f"Matched related-list include pattern '{pattern}'.",
+                )
+        for rule in scope.get("link_rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            pattern = rule.get("pattern")
+            if rule.get("role") in ("collection", "list") and pattern and _glob_match(
+                normalized, pattern
+            ):
+                return UrlDecision(
+                    **base,
+                    decision="included",
+                    role="collection",
+                    reason_code=REASON_COLLECTION_PATTERN_MATCH,
+                    reason=f"Matched related-list rule pattern '{pattern}'.",
+                )
+        return UrlDecision(
+            **base,
+            decision="excluded",
+            reason_code=REASON_EXCLUDED_SCOPE_MODE,
+            reason="COLLECTION scope: only related-list include patterns are included.",
         )
 
     # 6. DATASET.
@@ -656,4 +725,202 @@ def _recommend_scope_from_analysis(analysis: dict[str, Any]) -> dict[str, Any] |
         "confidence": confidence,
         "warnings": warnings,
         "evidence": [],
+    }
+
+
+# Evidence-based recommendation (HTML-aware)
+
+# A "strong cluster" of sibling list links needed before recommending COLLECTION.
+COLLECTION_MIN_SIBLINGS = 3
+# How many detail links justify recommending DATASET.
+DATASET_MIN_DETAIL_LINKS = 3
+
+
+def _same_origin_links(html: str, seed_url: str) -> list[str]:
+    """Normalized, de-duplicated same-origin link URLs found on the page."""
+    if not html:
+        return []
+    soup = BeautifulSoup(html, "lxml")
+    out: list[str] = []
+    seen: set[str] = set()
+    for anchor in soup.find_all("a", href=True):
+        if not isinstance(anchor, Tag):
+            continue
+        href = str(anchor.get("href") or "").strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        try:
+            normalized = normalize_url(href, seed_url)
+        except ValueError:
+            continue
+        if normalized in seen:
+            continue
+        if not same_origin(normalized, seed_url):
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
+_PAGINATION_QUERY_KEYS = {"p", "pg", "page", "pageno", "page_num", "pagenum",
+                          "paged", "offset", "start", "skip"}
+
+
+def _looks_like_pagination(url: str) -> bool:
+    from urllib.parse import parse_qsl
+
+    parsed = _safe_urlparse(url)
+    if parsed is None:
+        return False
+    query = (parsed.query or "").lower()
+    if query:
+        for key, _value in parse_qsl(query):
+            key = key.strip()
+            # Explicit nav keys, or anything that starts with "page"
+            # (page, page_num, pagenum, paged, ...). Avoids per_page-style
+            # page-size knobs that don't imply multiple pages.
+            if key in _PAGINATION_QUERY_KEYS or key.startswith("page"):
+                return True
+    path = (parsed.path or "").lower()
+    if re.search(r"/page[/_-]?\d+", path):
+        return True
+    return False
+
+
+def _selector_match_count(html: str, selector: str | None) -> int:
+    """Number of elements a CSS selector actually matches in the HTML (0 on error)."""
+    if not html or not selector:
+        return 0
+    try:
+        return len(BeautifulSoup(html, "lxml").select(str(selector)))
+    except Exception:
+        return 0
+
+
+def dominant_path_glob(urls: list[str], seed_url: str) -> tuple[str, int] | None:
+    """Derive a sibling include glob from the seed's parent path.
+
+    For a seed ``/food/beef-veal`` the parent prefix is ``/food`` and the glob
+    is ``/food/*``; the count is how many of ``urls`` fall under that prefix.
+    Returns None when the seed is top-level (no parent segment) or nothing
+    matches.
+    """
+    seed_parsed = _safe_urlparse(seed_url)
+    if seed_parsed is None:
+        return None
+    seed_segs = [s for s in (seed_parsed.path or "").split("/") if s]
+    parent_segs = seed_segs[:-1]
+    if not parent_segs:
+        return None
+    prefix = "/" + "/".join(parent_segs)
+    glob = f"{prefix}/*"
+    count = 0
+    for url in urls:
+        parsed = _safe_urlparse(url)
+        if parsed is None:
+            continue
+        if (parsed.path or "").startswith(prefix + "/"):
+            count += 1
+    if count == 0:
+        return None
+    return glob, count
+
+
+def dominant_prefix_glob(urls: list[str]) -> tuple[str, int] | None:
+    """Most common first-path-segment glob among ``urls`` (with its count).
+
+    Unlike :func:`dominant_path_glob` this clusters the URLs by their own
+    leading path segment rather than the seed's parent, so it works when the
+    excluded links live under a different prefix than the seed (e.g. a listing
+    page ``/list`` linking to ``/item/1``, ``/item/2`` -> ``/item/*``). Used by
+    the frontier "scope too narrow" CTA.
+    """
+    counts: dict[str, int] = {}
+    for url in urls:
+        parsed = _safe_urlparse(url)
+        if parsed is None:
+            continue
+        segs = [s for s in (parsed.path or "").split("/") if s]
+        if not segs:
+            continue
+        prefix = "/" + segs[0]
+        counts[prefix] = counts.get(prefix, 0) + 1
+    if not counts:
+        return None
+    best_prefix, best_count = max(counts.items(), key=lambda kv: (kv[1], kv[0]))
+    return f"{best_prefix}/*", best_count
+
+
+def recommend_scope(
+    analysis: dict[str, Any] | None,
+    html: str,
+    seed_url: str,
+) -> dict[str, Any]:
+    """Evidence-based crawl-scope recommendation validated against real HTML.
+
+    Unlike :func:`_recommend_scope_from_analysis`, this never recommends
+    PAGINATION from an AI-claimed selector alone — the selector (or a URL
+    heuristic) must match real anchors on the page. Returns an
+    ``ai_recommendation``-shaped dict (always non-None) with an extra
+    ``suggested_include_patterns`` list used by COLLECTION.
+    """
+    analysis = analysis if isinstance(analysis, dict) else {}
+    links = _same_origin_links(html, seed_url)
+
+    # 1. Real pagination? Selector must match an anchor, or links look paginated.
+    pagination_selector = (analysis.get("pagination_selector") or "").strip()
+    selector_hits = _selector_match_count(html, pagination_selector)
+    heuristic_pagination = [u for u in links if _looks_like_pagination(u)]
+    if selector_hits > 0 or heuristic_pagination:
+        evidence = []
+        if selector_hits > 0:
+            evidence.append(
+                f"Pagination selector matched {selector_hits} link(s) on the page."
+            )
+        if heuristic_pagination:
+            evidence.append(
+                f"{len(heuristic_pagination)} link(s) look like page-number links."
+            )
+        return {
+            "recommended_mode": "PAGINATION",
+            "confidence": 0.8,
+            "warnings": [],
+            "evidence": evidence,
+            "suggested_include_patterns": [],
+        }
+
+    # 2. Strong cluster of sibling list pages? -> COLLECTION with derived glob.
+    dominant = dominant_path_glob(links, seed_url)
+    if dominant is not None and dominant[1] >= COLLECTION_MIN_SIBLINGS:
+        glob, count = dominant
+        return {
+            "recommended_mode": "COLLECTION",
+            "confidence": 0.7,
+            "warnings": [],
+            "evidence": [
+                f"{count} sibling list link(s) under '{glob}'."
+            ],
+            "suggested_include_patterns": [glob],
+        }
+
+    # 3. Detail links present? -> DATASET (listing + detail pages).
+    detail_hits = _selector_match_count(html, analysis.get("detail_link_selector"))
+    if detail_hits >= DATASET_MIN_DETAIL_LINKS:
+        return {
+            "recommended_mode": "DATASET",
+            "confidence": 0.6,
+            "warnings": [],
+            "evidence": [
+                f"Detail-link selector matched {detail_hits} link(s) on the page."
+            ],
+            "suggested_include_patterns": [],
+        }
+
+    # 4. Nothing actionable -> stay on the seed page.
+    return {
+        "recommended_mode": "CURRENT_PAGE",
+        "confidence": 0.6,
+        "warnings": [],
+        "evidence": [],
+        "suggested_include_patterns": [],
     }

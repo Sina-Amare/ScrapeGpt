@@ -50,9 +50,8 @@ from app.models.job import FrontierPreview, Project
 from app.services.crawl_scope import (
     REASON_CURRENT_PAGE_SCOPE,
     REASON_EXCLUDED_SCOPE_MODE,
-    REASON_PAGINATION_PATTERN_MATCH,
-    REASON_PAGINATION_SELECTOR_MATCH,
     classify_links_for_scope,
+    dominant_prefix_glob,
     scope_max_pages,
 )
 from app.core.log_context import set_task_context
@@ -109,6 +108,8 @@ def build_frontier_preview_from_fetch(
     included: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
     unrelated_same_origin_count = 0
+    # All same-origin links the scope dropped (uncapped, for clustering the CTA).
+    excluded_same_origin_urls: list[str] = []
     for d in decisions:
         if d.decision == "included":
             if len(included) < max_urls:
@@ -120,6 +121,7 @@ def build_frontier_preview_from_fetch(
             # excluded under PAGINATION, or any link under CURRENT_PAGE).
             if d.reason_code in (REASON_EXCLUDED_SCOPE_MODE, REASON_CURRENT_PAGE_SCOPE):
                 unrelated_same_origin_count += 1
+                excluded_same_origin_urls.append(d.normalized_url)
             if len(excluded) < max_urls:
                 excluded.append(d.to_dict())
 
@@ -136,36 +138,44 @@ def build_frontier_preview_from_fetch(
             }
         )
 
-    # Scope-mismatch hint: PAGINATION chosen, but the page has no pagination
-    # links while it does link to detail pages -> recommend DATASET so the user
-    # doesn't run a crawl that only ever sees the seed page.
-    if (scope or {}).get("mode") == "PAGINATION":
-        has_pagination = any(
-            u.get("reason_code")
-            in (REASON_PAGINATION_SELECTOR_MATCH, REASON_PAGINATION_PATTERN_MATCH)
-            for u in included
-        )
-        if not has_pagination:
+    # Actionable CTA: the chosen scope will only crawl the seed page, yet the
+    # page links to a strong cluster of same-origin pages. Offer a one-click
+    # broaden to COLLECTION (sibling/category lists) or DATASET (per-item detail
+    # pages). This subsumes the old PAGINATION-only SCOPE_NO_MATCHING_LINKS hint
+    # and works for every narrow scope (CURRENT_PAGE, PAGINATION-with-no-pages).
+    if len(included) == 0 and unrelated_same_origin_count >= SCOPE_EXCLUSION_THRESHOLD:
+        dominant = dominant_prefix_glob(excluded_same_origin_urls)
+        if dominant is not None:
+            glob, count = dominant
             analysis = project.analysis if isinstance(project.analysis, dict) else {}
             detail_sel = analysis.get("detail_link_selector")
             detail_matches = 0
             if detail_sel:
                 try:
-                    detail_matches = len(BeautifulSoup(html, "lxml").select(str(detail_sel)))
+                    detail_matches = len(
+                        BeautifulSoup(html, "lxml").select(str(detail_sel))
+                    )
                 except Exception:
                     detail_matches = 0
-            if detail_matches > 0:
-                warnings.append(
-                    {
-                        "code": "SCOPE_NO_MATCHING_LINKS",
-                        "count": detail_matches,
-                        "message": (
-                            "No pagination links were found on this page, but it links "
-                            f"to {detail_matches} detail page(s). Consider switching the "
-                            "crawl scope to 'Listing + detail pages'."
-                        ),
-                    }
-                )
+            if detail_matches >= 3:
+                suggested_mode = "DATASET"
+                mode_label = "Listing + detail pages"
+            else:
+                suggested_mode = "COLLECTION"
+                mode_label = "Related list pages"
+            warnings.append(
+                {
+                    "code": "SCOPE_TOO_NARROW",
+                    "suggested_mode": suggested_mode,
+                    "suggested_include_patterns": [glob],
+                    "count": count,
+                    "message": (
+                        "This scope will only crawl the seed page, but it links "
+                        f"to {count} related page(s) under '{glob}'. Switch to "
+                        f"'{mode_label}' to crawl them."
+                    ),
+                }
+            )
 
     seed_decision = {
         "url": seed,

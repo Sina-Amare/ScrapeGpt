@@ -59,6 +59,7 @@ class CrawlPageState(str, enum.Enum):
 class CrawlScopeMode(str, enum.Enum):
     CURRENT_PAGE = "CURRENT_PAGE"
     PAGINATION = "PAGINATION"
+    COLLECTION = "COLLECTION"
     DATASET = "DATASET"
     FULL_SITE = "FULL_SITE"
 
