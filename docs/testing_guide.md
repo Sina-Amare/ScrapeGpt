@@ -54,11 +54,15 @@ These must be green before any manual testing. They are the regression net.
 ```powershell
 # Backend — full suite (~16s)
 venv\Scripts\python.exe -m pytest -q
-# Expected: ~506 passed, ~10 skipped
+# Expected: ~533 passed, ~10 skipped
 
 # Optional: real-URL scope-recommendation check (needs network)
 venv\Scripts\python.exe -m tests.manual.verify_scope_recommendation
 # Expected: all OK, failures=0 (calories.info -> COLLECTION; books/quotes/scrapethissite -> PAGINATION)
+
+# Optional: real-URL page-variant check (needs network, no browser)
+venv\Scripts\python.exe -m tests.manual.verify_interaction_variants
+# Expected: failures=0 — calories.info yields 46 rows x 2 variants (per 100 g / per serving)
 
 # Frontend
 cd frontend
@@ -154,6 +158,8 @@ One pass each. Don't repeat across many sites — one representative URL per row
 | COLLECTION scope | `https://www.calories.info/food/beef-veal` | leave scope as suggested (should be **"Related list pages"**, not Paginated) → frontier preview | included URLs are the `/food/*` sibling category pages; AI suggestion is COLLECTION with pattern `/food/*` |
 | COLLECTION one‑click broaden | same | set scope to "This page only" → frontier preview → click **"Crawl N pages (Related list pages)"** in the preview | scope switches to COLLECTION + `/food/*`, re‑previews, sibling pages now included |
 | DATASET scope | B | scope = "Listing + detail pages" → confirm → frontier preview → extract (limit ~10) | listing + per‑item detail pages crawled |
+| Page variants (deterministic) | `https://www.calories.info/food/beef-veal` | Variants → **Detect variants** → enable → keep per‑100g + per‑serving → Save → Preview/extract | one row per food **per variant**; export has `serving_basis` column; per‑100g and per‑serving calories differ. No browser needed (both values are in the DOM). |
+| Page variants (interactive) | same | also select Imperial → Save → extract | needs a browser backend; without one, extraction fails with `INTERACTION_BROWSER_REQUIRED` (no silent skip) |
 | FULL_SITE scope | B | scope = "Entire website" → **broad‑scope warning shown** → confirm → frontier preview | many same‑origin URLs included; warning visible |
 | Export CSV | any completed | Results → Export → CSV | opens cleanly, spec field order, source_url last |
 | Export JSON | any completed | Export → JSON | valid JSON array of records |
