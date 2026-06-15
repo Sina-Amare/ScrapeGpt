@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import ExtractionSpec, PreviewResult, Project, ProjectState
 from app.services.anti_bot import CHALLENGE_MESSAGES, anti_bot_challenge_reason
-from app.services.extractor import extract_records_from_html
 from app.services.fetcher import (
     FetchError,
     apply_interactions_and_capture,
@@ -142,6 +141,16 @@ async def build_selector_preview_payload(
                 ) from exc
             raise
 
+    async def _fetch_variant_url_htmls(urls: dict[str, str]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for vid, vurl in urls.items():
+            v = validate_url(vurl)
+            vf = await fetch_url(
+                v, effective_render_mode, browser_session_cookies=session_cookies
+            )
+            out[vid] = vf.html
+        return out
+
     extracted, variant_warnings = await extract_records_with_variants(
         base_html=fetched.html,
         source_url=fetched.final_url,
@@ -149,6 +158,7 @@ async def build_selector_preview_payload(
         spec=spec,
         max_records=5,
         fetch_variant_htmls=_fetch_variant_htmls,
+        fetch_variant_url_htmls=_fetch_variant_url_htmls,
     )
     # Show more sample rows when variants are on so several show through.
     display_limit = 10 if variants_on else 5

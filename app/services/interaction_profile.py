@@ -33,6 +33,7 @@ HARD_MAX_VARIANT_COMBINATIONS = 12
 
 EXECUTION_DETERMINISTIC = "deterministic"
 EXECUTION_INTERACTIVE = "interactive"
+EXECUTION_URL_PARAM = "url_param"
 
 # Reserved metadata column names every variant row carries.
 META_VARIANT_ID = "interaction_variant_id"
@@ -72,10 +73,16 @@ class VariantCombination:
     field_selectors: dict[str, str]
     # ordered browser steps to reach this combination (interactive groups).
     recipe: list[dict[str, Any]] = field(default_factory=list)
+    # query params to apply to the seed URL (url_param groups), merged.
+    url_params: dict[str, str] = field(default_factory=dict)
 
     @property
     def requires_browser(self) -> bool:
         return bool(self.recipe)
+
+    @property
+    def requires_url_fetch(self) -> bool:
+        return bool(self.url_params)
 
 
 def sanitize_metadata_key(label: str) -> str:
@@ -109,6 +116,11 @@ def _selected_groups(profile: dict[str, Any]) -> list[dict[str, Any]]:
         if selected:
             groups.append(group)
     return groups
+
+
+def merge_enabled(profile: dict[str, Any] | None) -> bool:
+    """Whether variants should be merged into one row per entity (vs row-per-variant)."""
+    return bool(isinstance(profile, dict) and profile.get("merge_variants"))
 
 
 def max_variant_combinations(profile: dict[str, Any] | None) -> int:
@@ -165,6 +177,7 @@ def selected_combinations(profile: dict[str, Any] | None) -> list[VariantCombina
         meta: dict[str, str] = {}
         field_selectors: dict[str, str] = {}
         recipe: list[dict[str, Any]] = []
+        url_params: dict[str, str] = {}
         label_parts: list[str] = []
         id_parts: list[str] = []
         for group, option in combo:
@@ -178,6 +191,11 @@ def selected_combinations(profile: dict[str, Any] | None) -> list[VariantCombina
             execution = group.get("execution") or EXECUTION_DETERMINISTIC
             if execution == EXECUTION_INTERACTIVE:
                 recipe.extend(_option_recipe(option))
+            elif execution == EXECUTION_URL_PARAM:
+                query = option.get("query") or {}
+                if isinstance(query, dict):
+                    for k, v in query.items():
+                        url_params[str(k)] = str(v)
             else:
                 overrides = option.get("field_selectors") or {}
                 if isinstance(overrides, dict):
@@ -191,6 +209,7 @@ def selected_combinations(profile: dict[str, Any] | None) -> list[VariantCombina
                 metadata=meta,
                 field_selectors=field_selectors,
                 recipe=recipe,
+                url_params=url_params,
             )
         )
     return combinations

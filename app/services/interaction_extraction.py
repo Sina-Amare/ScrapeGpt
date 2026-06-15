@@ -23,13 +23,16 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.models.job import ExtractionSpec, Project
 from app.services.extractor import ExtractedPayload, extract_records_from_html
 from app.services.interaction_profile import (
+    VariantCombination,
     InteractionError,
     apply_field_overrides,
     is_enabled,
+    merge_enabled,
     selected_combinations,
     tag_record_metadata,
 )
@@ -51,6 +54,66 @@ def _variant_spec(spec: ExtractionSpec, fields: list[dict[str, Any]]) -> Any:
     )
 
 
+def _field_keys(spec: ExtractionSpec) -> list[str]:
+    keys: list[str] = []
+    for f in spec.fields or []:
+        if not isinstance(f, dict) or not f.get("selected", True):
+            continue
+        key = f.get("user_label") or f.get("label") or f.get("name")
+        if key:
+            keys.append(str(key))
+    return keys
+
+
+def build_variant_url(source_url: str, url_params: dict[str, str]) -> str:
+    """Apply variant query params to a URL (replacing any existing same-key)."""
+    if not url_params:
+        return source_url
+    parts = urlsplit(source_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.update(url_params)
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
+
+
+def _merge_variant_records(
+    per_combo: list[tuple[VariantCombination, list[ExtractedPayload]]],
+    field_keys: list[str],
+) -> list[ExtractedPayload]:
+    """Collapse aligned per-variant records into one row per entity.
+
+    Records from each combo are paired by extraction order (same page, same row
+    order across variants). A field whose value is identical across variants is
+    written once; a field that differs gets one column per variant, named
+    ``"<field> (<variant label>)"``.
+    """
+    n = max((len(recs) for _, recs in per_combo), default=0)
+    merged: list[ExtractedPayload] = []
+    for i in range(n):
+        group = [(combo, recs[i]) for combo, recs in per_combo if i < len(recs)]
+        if not group:
+            continue
+        first = group[0][1]
+        raw: dict[str, Any] = {"source_url": first.raw_data.get("source_url")}
+        norm: dict[str, Any] = {"source_url": first.normalized_data.get("source_url")}
+        warns: list[str] = []
+        for fk in field_keys:
+            values = [p.normalized_data.get(fk) for _c, p in group]
+            if len({str(v) for v in values}) <= 1:
+                norm[fk] = values[0]
+                raw[fk] = group[0][1].raw_data.get(fk)
+            else:
+                for combo, p in group:
+                    col = f"{fk} ({combo.label})"
+                    norm[col] = p.normalized_data.get(fk)
+                    raw[col] = p.raw_data.get(fk)
+        for _c, p in group:
+            warns.extend(p.warnings or [])
+        merged.append(ExtractedPayload(raw, norm, list(dict.fromkeys(warns))))
+    return merged
+
+
 async def extract_records_with_variants(
     *,
     base_html: str,
@@ -59,8 +122,11 @@ async def extract_records_with_variants(
     spec: ExtractionSpec,
     max_records: int,
     fetch_variant_htmls: FetchVariantHtmls | None = None,
+    fetch_variant_url_htmls: FetchVariantHtmls | None = None,
 ) -> tuple[list[ExtractedPayload], list[str]]:
-    """Return (records, warnings). Records carry variant metadata when enabled.
+    """Return (records, warnings). Records carry variant metadata when enabled
+    (default row-per-variant), or are merged into one row per entity when the
+    profile sets ``merge_variants``.
 
     Raises ``InteractionError`` (codes ``INTERACTION_VARIANT_LIMIT_EXCEEDED`` /
     ``INTERACTION_BROWSER_REQUIRED``) which callers translate to a failed page /
@@ -79,6 +145,7 @@ async def extract_records_with_variants(
 
     combos = selected_combinations(profile)  # may raise VARIANT_LIMIT_EXCEEDED
 
+    # Interactive combos -> one browser snapshot each (batched in one session).
     interactive = [c for c in combos if c.requires_browser]
     variant_html: dict[str, str] = {}
     if interactive:
@@ -88,11 +155,23 @@ async def extract_records_with_variants(
                 "variant(s), but none is available.",
                 code="INTERACTION_BROWSER_REQUIRED",
             )
-        recipes = {c.id: c.recipe for c in interactive}
-        variant_html = await fetch_variant_htmls(recipes)
+        variant_html = await fetch_variant_htmls({c.id: c.recipe for c in interactive})
+
+    # URL-parameter combos -> static fetch of the variant URL (no browser).
+    url_combos = [c for c in combos if c.requires_url_fetch and not c.requires_browser]
+    url_html: dict[str, str] = {}
+    if url_combos:
+        if fetch_variant_url_htmls is None:
+            raise InteractionError(
+                "URL-parameter variants need a fetcher to load the variant URLs.",
+                code="INTERACTION_FETCH_UNAVAILABLE",
+            )
+        url_html = await fetch_variant_url_htmls(
+            {c.id: build_variant_url(source_url, c.url_params) for c in url_combos}
+        )
 
     base_fields = spec.fields or []
-    payloads: list[ExtractedPayload] = []
+    per_combo: list[tuple[VariantCombination, list[ExtractedPayload]]] = []
     zero_variants: list[str] = []
     nonzero = 0
 
@@ -105,6 +184,8 @@ async def extract_records_with_variants(
                     f"'{combo.label}'.",
                     code="INTERACTION_BROWSER_REQUIRED",
                 )
+        elif combo.requires_url_fetch:
+            html = url_html.get(combo.id) or ""
         else:
             html = base_html
 
@@ -120,14 +201,20 @@ async def extract_records_with_variants(
             nonzero += 1
         else:
             zero_variants.append(combo.label)
-        for r in records:
-            payloads.append(
-                ExtractedPayload(
-                    raw_data=tag_record_metadata(r.raw_data, combo),
-                    normalized_data=tag_record_metadata(r.normalized_data, combo),
-                    warnings=r.warnings,
-                )
+        per_combo.append((combo, records))
+
+    if merge_enabled(profile):
+        payloads = _merge_variant_records(per_combo, _field_keys(spec))
+    else:
+        payloads = [
+            ExtractedPayload(
+                raw_data=tag_record_metadata(r.raw_data, combo),
+                normalized_data=tag_record_metadata(r.normalized_data, combo),
+                warnings=r.warnings,
             )
+            for combo, records in per_combo
+            for r in records
+        ]
 
     warnings: list[str] = []
     # Partial-zero is a warning, not a hard failure: some variants may legitimately
@@ -143,6 +230,8 @@ async def extract_records_with_variants(
             "source_url": source_url,
             "combinations": len(combos),
             "interactive": len(interactive),
+            "url_param": len(url_combos),
+            "merged": merge_enabled(profile),
             "records": len(payloads),
             "zero_variants": len(zero_variants),
         },

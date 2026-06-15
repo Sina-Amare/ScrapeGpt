@@ -186,7 +186,7 @@ class CrawlScope(BaseModel):
         return self
 
 
-VALID_INTERACTION_EXECUTIONS = ("deterministic", "interactive")
+VALID_INTERACTION_EXECUTIONS = ("deterministic", "interactive", "url_param")
 VALID_INTERACTION_STEP_ACTIONS = ("click", "select", "wait")
 VALID_INTERACTION_STEP_BY = ("selector", "text")
 MAX_INTERACTION_COMBINATIONS = 12
@@ -224,6 +224,8 @@ class InteractionOption(BaseModel):
     field_selectors: dict[str, str] = Field(default_factory=dict)
     # Interactive groups: ordered browser steps to reach this option.
     recipe: list[InteractionStep] = Field(default_factory=list)
+    # url_param groups: query params to apply to the seed URL for this option.
+    query: dict[str, str] = Field(default_factory=dict)
 
 
 class InteractionGroup(BaseModel):
@@ -244,6 +246,10 @@ class InteractionGroup(BaseModel):
 
 class InteractionProfile(BaseModel):
     enabled: bool = False
+    # When true, collapse a page's variants into one row per entity with a
+    # column per variant value (e.g. "Calories (per 100 g)"), instead of the
+    # default one-row-per-variant output.
+    merge_variants: bool = False
     max_variant_combinations: int = MAX_INTERACTION_COMBINATIONS
     groups: list[InteractionGroup] = Field(default_factory=list)
 

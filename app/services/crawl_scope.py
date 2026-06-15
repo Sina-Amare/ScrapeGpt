@@ -424,6 +424,28 @@ def _glob_match(url: str, pattern: str) -> bool:
     return fnmatch(url, pattern)
 
 
+def _collection_match(url: str, pattern: str) -> bool:
+    """Segment-aware include match for COLLECTION (template fingerprinting).
+
+    A trailing ``/*`` matches **exactly one** more path segment, so the derived
+    sibling template ``/food/*`` matches ``/food/meat`` but NOT the deeper
+    ``/food/meat/details`` — keeping the crawl to same-layout sibling list pages
+    rather than everything under the prefix (which plain glob ``*`` would span,
+    because fnmatch ``*`` crosses ``/``). Non-``/*`` patterns fall back to glob.
+    """
+    if not pattern:
+        return False
+    if pattern.endswith("/*"):
+        parsed = _safe_urlparse(url)
+        path = (parsed.path if parsed is not None else url) or ""
+        prefix = pattern[:-2]  # "/food/*" -> "/food"
+        if not path.startswith(prefix + "/"):
+            return False
+        remainder = path[len(prefix) + 1:].rstrip("/")
+        return bool(remainder) and "/" not in remainder
+    return _glob_match(url, pattern)
+
+
 def _pagination_decision(
     normalized: str,
     page_url: str,
@@ -590,9 +612,11 @@ def _classify_one(
 
     # 5b. COLLECTION: sibling/category list pages selected by include patterns
     # (auto-derived from the seed's dominant path prefix, e.g. "/food/*").
+    # Matching is segment-aware (template fingerprinting): "/food/*" includes
+    # "/food/meat" but not the deeper "/food/meat/details".
     if mode == CrawlScopeMode.COLLECTION.value:
         for pattern in scope.get("include_patterns") or []:
-            if _glob_match(normalized, pattern):
+            if _collection_match(normalized, pattern):
                 return UrlDecision(
                     **base,
                     decision="included",
@@ -604,7 +628,7 @@ def _classify_one(
             if not isinstance(rule, dict):
                 continue
             pattern = rule.get("pattern")
-            if rule.get("role") in ("collection", "list") and pattern and _glob_match(
+            if rule.get("role") in ("collection", "list") and pattern and _collection_match(
                 normalized, pattern
             ):
                 return UrlDecision(

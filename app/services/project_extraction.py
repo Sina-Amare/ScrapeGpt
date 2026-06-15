@@ -36,7 +36,6 @@ from app.services.crawl_scope import (
     discover_links_for_scope,
     scope_max_pages,
 )
-from app.services.extractor import extract_records_from_html
 from app.services.fetcher import (
     FetchError,
     apply_interactions_and_capture,
@@ -451,6 +450,19 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                                 ) from exc
                             raise
 
+                    async def _fetch_variant_url_htmls(
+                        urls: dict[str, str],
+                        _render: str = effective_render_mode,
+                    ) -> dict[str, str]:
+                        out: dict[str, str] = {}
+                        for vid, vurl in urls.items():
+                            v = validate_url(vurl)
+                            vf = await fetch_url(
+                                v, _render, browser_session_cookies=session_cookies
+                            )
+                            out[vid] = vf.html
+                        return out
+
                     extracted, variant_warnings = await extract_records_with_variants(
                         base_html=fetched.html,
                         source_url=fetched.final_url,
@@ -458,6 +470,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         spec=spec,
                         max_records=settings.MAX_RECORDS_PER_PAGE,
                         fetch_variant_htmls=_fetch_variant_htmls,
+                        fetch_variant_url_htmls=_fetch_variant_url_htmls,
                     )
                     for w in variant_warnings:
                         logger.info(

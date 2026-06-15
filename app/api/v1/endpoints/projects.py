@@ -62,6 +62,7 @@ from app.services.extraction_mode import resolve_extraction_mode
 from app.services.fetcher import FetchError, fetch_url
 from app.services.interaction_detect import detect_interaction_profile
 from app.services.interaction_profile import is_enabled as _interactions_enabled
+from app.services.interaction_profile import merge_enabled as _interactions_merge_enabled
 from app.services.interaction_profile import metadata_columns as _interaction_metadata_columns
 from app.services.session_service import get_cookies_for_session
 from app.services.url_validator import URLValidationError, validate_url
@@ -810,8 +811,10 @@ def _spec_field_order(spec: Any | None) -> list[str]:
             out.append(str(key))
     # Variant metadata columns sit right after the spec fields (in group order),
     # before any other extras and before source_url (added last by callers).
+    # In merge mode the variants are encoded as per-variant column names instead,
+    # so the fixed metadata columns are not emitted.
     profile = getattr(spec, "interaction_profile", None)
-    if _interactions_enabled(profile):
+    if _interactions_enabled(profile) and not _interactions_merge_enabled(profile):
         for col in _interaction_metadata_columns(profile):
             if col not in out:
                 out.append(col)
