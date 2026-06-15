@@ -54,7 +54,7 @@ These must be green before any manual testing. They are the regression net.
 ```powershell
 # Backend — full suite (~16s)
 venv\Scripts\python.exe -m pytest -q
-# Expected: ~540 passed, ~10 skipped
+# Expected: ~554 passed, ~10 skipped
 
 # Optional: real-URL scope-recommendation check (needs network)
 venv\Scripts\python.exe -m tests.manual.verify_scope_recommendation
@@ -158,7 +158,7 @@ One pass each. Don't repeat across many sites — one representative URL per row
 | COLLECTION scope | `https://www.calories.info/food/beef-veal` | leave scope as suggested (should be **"Related list pages"**, not Paginated) → frontier preview | included URLs are the `/food/*` sibling category pages; AI suggestion is COLLECTION with pattern `/food/*` |
 | COLLECTION one‑click broaden | same | set scope to "This page only" → frontier preview → click **"Crawl N pages (Related list pages)"** in the preview | scope switches to COLLECTION + `/food/*`, re‑previews, sibling pages now included |
 | DATASET scope | B | scope = "Listing + detail pages" → confirm → frontier preview → extract (limit ~10) | listing + per‑item detail pages crawled |
-| Page variants (deterministic) | `https://www.calories.info/food/beef-veal` | Variants → **Detect variants** → enable → keep per‑100g + per‑serving → Save → Preview/extract | one row per food **per variant**; export has `serving_basis` column; per‑100g and per‑serving calories differ. No browser needed (both values are in the DOM). |
+| Page variants (deterministic, auto) | `https://www.calories.info/food/beef-veal` | Variants → **Detect variants** → a `Column set` group appears and the numbered fields (`Calories 1/2`) collapse to `Calories` → enable → Save → Preview/extract | one row per food **per variant** tagged `column_set`; `Variant 1`/`Variant 2` calories differ. No browser needed. You can rename variants and edit each variant's CSS selector inline. |
 | Page variants (interactive) | same | also select Imperial → Save → extract | needs a browser backend; without one, extraction fails with `INTERACTION_BROWSER_REQUIRED` (no silent skip) |
 | Page variants (merged) | same | Variants → enable → check **"Merge variants into one row"** → Save → extract | one row per food with columns `Calories (per 100 g)` and `Calories (per serving)` (no `serving_basis` column); ~46 rows not 92 |
 | FULL_SITE scope | B | scope = "Entire website" → **broad‑scope warning shown** → confirm → frontier preview | many same‑origin URLs included; warning visible |

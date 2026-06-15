@@ -7,7 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.job import ExtractionMode
-from app.services.crawl_scope import _collection_match, classify_links_for_scope
+from app.services.crawl_scope import (
+    _collection_match,
+    _pagination_decision,
+    classify_links_for_scope,
+)
 from app.services.interaction_extraction import (
     build_variant_url,
     extract_records_with_variants,
@@ -54,6 +58,40 @@ def test_collection_classifier_excludes_deeper_pages():
 
 
 # ---------------------------------------------------------------------------
+# P1a — PAGINATION classifier follows path-based page links (not only ?page=)
+# ---------------------------------------------------------------------------
+
+
+def test_pagination_classifier_includes_path_based_page_links():
+    """recommend_scope recommends PAGINATION for path links like
+    /catalogue/page-2.html; the classifier MUST enqueue them too, else the crawl
+    confirms PAGINATION but only ever sees the seed (the original bug)."""
+    scope = {"mode": "PAGINATION", "status": "USER_CONFIRMED", "pagination": {}}
+    for url in [
+        "https://x.com/catalogue/page-2.html",
+        "https://x.com/page/3",
+        "https://x.com/items?page=4",
+    ]:
+        d = _pagination_decision(url, "https://x.com/", scope, None, "pagination")
+        assert d is not None and d.decision == "included", url
+    # A normal content link is not pagination.
+    assert _pagination_decision(
+        "https://x.com/about-page", "https://x.com/", scope, None, "pagination"
+    ) is None
+
+
+def test_pagination_scope_enqueues_next_page_link():
+    html = '<a href="catalogue/page-2.html">next</a><a href="/about">about</a>'
+    scope = {"mode": "PAGINATION", "status": "USER_CONFIRMED", "pagination": {}}
+    decisions = classify_links_for_scope(
+        html, page_url="https://books.x/", root_url="https://books.x/", scope=scope,
+    )
+    inc = {d.normalized_url for d in decisions if d.decision == "included"}
+    assert "https://books.x/catalogue/page-2.html" in inc
+    assert "https://books.x/about" not in inc
+
+
+# ---------------------------------------------------------------------------
 # 3A — cross-variant row merge
 # ---------------------------------------------------------------------------
 
@@ -92,6 +130,70 @@ def _merge_spec():
             ],
         },
     )
+
+
+DUP_TABLE_HTML = """
+<table>
+  <tr><td>Beef</td><td>100 g</td><td>156</td><td>1 serving</td><td>265</td></tr>
+  <tr><td>Beef</td><td>100 g</td><td>242</td><td>1 serving</td><td>411</td></tr>
+</table>
+"""
+
+
+@pytest.mark.asyncio
+async def test_merge_falls_back_to_row_per_variant_on_nonunique_key():
+    """Two rows share the stable key (Food='Beef'). Merging by index would mix
+    entities, so merge must conservatively fall back to row-per-variant + warn."""
+    spec = _merge_spec()
+    project = SimpleNamespace(analysis={"repeated_item_selector": "tr"})
+    records, warnings = await extract_records_with_variants(
+        base_html=DUP_TABLE_HTML, source_url="u", project=project,
+        spec=spec, max_records=100,
+    )
+    # 2 rows x 2 variants, NOT merged.
+    assert len(records) == 4
+    assert all("interaction_variant_id" in r.normalized_data for r in records)
+    assert any("safely" in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_merge_falls_back_for_interactive_variants():
+    """Interactive variants change the whole page; we can't know which fields
+    vary, so merge must fall back rather than guess."""
+    profile = {
+        "enabled": True,
+        "merge_variants": True,
+        "max_variant_combinations": 12,
+        "groups": [
+            {
+                "label": "Unit system",
+                "metadata_key": "unit_system",
+                "execution": "interactive",
+                "options": [
+                    {"id": "metric", "label": "Metric", "selected": True, "recipe": []},
+                    {"id": "imperial", "label": "Imperial", "selected": True,
+                     "recipe": [{"action": "click", "by": "text", "value": "Imperial"}]},
+                ],
+            }
+        ],
+    }
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED, content_config={},
+        fields=[{"name": "Food", "selector": "td:nth-of-type(1)", "type": "string", "selected": True},
+                {"name": "Calories", "selector": "td:nth-of-type(3)", "type": "number", "selected": True}],
+        interaction_profile=profile,
+    )
+
+    async def fake_fetch(recipes):
+        return {cid: TABLE_HTML for cid in recipes}
+
+    project = SimpleNamespace(analysis={"repeated_item_selector": "tr"})
+    records, warnings = await extract_records_with_variants(
+        base_html=TABLE_HTML, source_url="u", project=project,
+        spec=spec, max_records=100, fetch_variant_htmls=fake_fetch,
+    )
+    assert any("safely" in w for w in warnings)
+    assert all("interaction_variant_id" in r.normalized_data for r in records)
 
 
 @pytest.mark.asyncio

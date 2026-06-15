@@ -19,7 +19,10 @@ from types import SimpleNamespace
 from app.core.logging_config import configure_logging
 from app.models.job import ExtractionMode
 from app.services.fetcher import fetch_url
-from app.services.interaction_detect import detect_interaction_groups
+from app.services.interaction_detect import (
+    detect_column_variants,
+    detect_interaction_groups,
+)
 from app.services.interaction_extraction import extract_records_with_variants
 
 configure_logging()
@@ -28,44 +31,41 @@ logger = logging.getLogger(__name__)
 URL = "https://www.calories.info/food/beef-veal"
 ROW = "table.MuiTable-root tr"
 
-
-def _spec():
-    return SimpleNamespace(
-        mode=ExtractionMode.STRUCTURED,
-        content_config={},
-        fields=[
-            {"name": "Food", "selector": "td:nth-of-type(1)", "type": "string", "selected": True},
-            {"name": "Calories", "selector": "td:nth-of-type(3)", "type": "number", "selected": True},
-        ],
-        interaction_profile={
-            "enabled": True,
-            "max_variant_combinations": 12,
-            "groups": [
-                {
-                    "label": "Serving basis",
-                    "metadata_key": "serving_basis",
-                    "execution": "deterministic",
-                    "options": [
-                        {"id": "per_100g", "label": "per 100 g", "selected": True,
-                         "field_selectors": {"Calories": "td:nth-of-type(3)"}},
-                        {"id": "per_serving", "label": "per serving", "selected": True,
-                         "field_selectors": {"Calories": "td:nth-of-type(5)"}},
-                    ],
-                }
-            ],
-        },
-    )
+# Flat fields exactly as the analyzer models this page (numbered parallel
+# columns). The deterministic variant group is then AUTO-detected from these —
+# proving the real product workflow (detect -> enable -> extract), not a
+# hand-authored profile.
+ANALYZER_FIELDS = [
+    {"name": "Food", "label": "Food", "user_label": "Food",
+     "selector": "td:nth-child(1) p", "type": "string", "selected": True},
+    {"name": "Serving Size 1", "label": "Serving Size 1", "user_label": "Serving Size 1",
+     "selector": "td:nth-child(2) p", "type": "string", "selected": True},
+    {"name": "Calories 1", "label": "Calories 1", "user_label": "Calories 1",
+     "selector": "td:nth-child(3) p", "type": "number", "selected": True},
+    {"name": "Serving Size 2", "label": "Serving Size 2", "user_label": "Serving Size 2",
+     "selector": "td:nth-child(4) p", "type": "string", "selected": True},
+    {"name": "Calories 2", "label": "Calories 2", "user_label": "Calories 2",
+     "selector": "td:nth-child(5) p", "type": "number", "selected": True},
+]
 
 
 async def main() -> int:
     fetched = await fetch_url(URL, "AUTO")
     project = SimpleNamespace(analysis={"repeated_item_selector": ROW})
 
+    # AUTO-detect the deterministic variant group + collapsed fields, then enable.
+    new_fields, group = detect_column_variants(ANALYZER_FIELDS)
+    profile = {"enabled": True, "max_variant_combinations": 12, "groups": [group]}
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED, content_config={},
+        fields=new_fields, interaction_profile=profile,
+    )
+
     records, warnings = await extract_records_with_variants(
         base_html=fetched.html,
         source_url=fetched.final_url,
         project=project,
-        spec=_spec(),
+        spec=spec,
         max_records=1000,
         fetch_variant_htmls=None,  # deterministic -> no browser needed
     )
@@ -73,50 +73,56 @@ async def main() -> int:
     by_food: dict[str, dict[str, object]] = {}
     for r in records:
         d = r.normalized_data
-        by_food.setdefault(str(d.get("Food")), {})[str(d.get("serving_basis"))] = d.get("Calories")
+        by_food.setdefault(str(d.get("Food")), {})[str(d.get("column_set"))] = d.get("Calories")
 
     sample = next(
         (f for f, v in by_food.items()
-         if v.get("per 100 g") is not None and v.get("per serving") is not None
-         and v["per 100 g"] != v["per serving"]),
+         if v.get("Variant 1") is not None and v.get("Variant 2") is not None
+         and v["Variant 1"] != v["Variant 2"]),
         None,
     )
-    bases = {str(r.normalized_data.get("serving_basis")) for r in records}
+    bases = {str(r.normalized_data.get("column_set")) for r in records}
 
     failures = 0
+    if group is None:
+        logger.error("column-variant auto-detection failed"); failures += 1
     if len(records) < 80:  # ~46 rows x 2 variants
         logger.error("too few records: %s", len(records)); failures += 1
-    if bases != {"per 100 g", "per serving"}:
+    if bases != {"Variant 1", "Variant 2"}:
         logger.error("unexpected variant labels: %s", bases); failures += 1
     if sample is None:
-        logger.error("no food had differing per-100g vs per-serving calories"); failures += 1
+        logger.error("no food had differing variant-1 vs variant-2 calories"); failures += 1
     else:
         v = by_food[sample]
         logger.info(
-            "OK deterministic variants: %s -> per100g=%s, perServing=%s",
-            sample, v["per 100 g"], v["per serving"],
+            "OK auto-detected deterministic variants: %s -> v1=%s, v2=%s",
+            sample, v["Variant 1"], v["Variant 2"],
         )
     logger.info("records=%s variants=%s warnings=%s", len(records), bases, warnings)
 
-    # Phase 3: merged output — one row per food with a column per variant.
-    merge_spec = _spec()
-    merge_spec.interaction_profile["merge_variants"] = True
-    merged, _ = await extract_records_with_variants(
+    # Phase 3: merge mode. beef-veal embeds a duplicate "CTA" row, so the stable
+    # key (Food) is non-unique -> merge must CONSERVATIVELY fall back to
+    # row-per-variant with a warning (P2b), never pair rows by index and mix
+    # entities. (The clean happy-path merge is covered by unit tests.)
+    merge_spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED, content_config={},
+        fields=new_fields,
+        interaction_profile={**profile, "merge_variants": True},
+    )
+    merged, merge_warnings = await extract_records_with_variants(
         base_html=fetched.html, source_url=fetched.final_url, project=project,
         spec=merge_spec, max_records=1000, fetch_variant_htmls=None,
     )
-    merged_ok = (
-        20 < len(merged) < 60
-        and any(
-            "Calories (per 100 g)" in r.normalized_data
-            and "Calories (per serving)" in r.normalized_data
-            for r in merged
+    fell_back = any("safely" in w for w in merge_warnings)
+    if fell_back and len(merged) == len(records):
+        logger.info(
+            "OK merge conservative fallback: non-unique key -> row-per-variant + warning"
         )
-    )
-    if merged_ok:
-        logger.info("OK merged output: %s rows, per-variant columns present", len(merged))
     else:
-        logger.error("merge check failed: %s rows", len(merged)); failures += 1
+        logger.error(
+            "merge fallback check failed: rows=%s warnings=%s", len(merged), merge_warnings
+        )
+        failures += 1
 
     logger.info(
         "detected controls on page (informational): %s",

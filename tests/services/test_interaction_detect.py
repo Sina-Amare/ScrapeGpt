@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.services.interaction_detect import (
+    detect_column_variants,
     detect_interaction_groups,
     detect_interaction_profile,
 )
@@ -90,11 +91,59 @@ def test_external_nav_links_not_a_variant_group():
 
 def test_detect_interaction_profile_is_disabled_draft():
     html = '<div><button class="active">Metric</button><button>Imperial</button></div>'
-    profile = detect_interaction_profile(html)
+    profile, new_fields = detect_interaction_profile(html)
     assert profile["enabled"] is False
     assert profile["max_variant_combinations"] == 12
     assert len(profile["groups"]) == 1
+    assert new_fields is None  # no fields passed -> no collapse
 
 
 def test_detect_empty_html():
     assert detect_interaction_groups("") == []
+
+
+# --- Deterministic parallel-column detection (numbered sibling fields) --------
+
+
+def _f(label, selector):
+    return {"name": label, "label": label, "user_label": label,
+            "selector": selector, "type": "string", "selected": True}
+
+
+def test_detect_column_variants_collapses_numbered_fields():
+    fields = [
+        _f("Food", "td:nth-child(1) p"),
+        _f("Serving Size 1", "td:nth-child(2) p"),
+        _f("Calories 1", "td:nth-child(3) p"),
+        _f("Serving Size 2", "td:nth-child(4) p"),
+        _f("Calories 2", "td:nth-child(5) p"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    # Calories 1/2 and Serving Size 1/2 collapse to single base fields.
+    labels = [f["label"] for f in new_fields]
+    assert labels == ["Food", "Serving Size", "Calories"]
+    assert group is not None
+    assert group["execution"] == "deterministic"
+    assert [o["label"] for o in group["options"]] == ["Variant 1", "Variant 2"]
+    v1, v2 = group["options"]
+    assert v1["field_selectors"]["Calories"] == "td:nth-child(3) p"
+    assert v2["field_selectors"]["Calories"] == "td:nth-child(5) p"
+    assert v2["field_selectors"]["Serving Size"] == "td:nth-child(4) p"
+
+
+def test_detect_column_variants_noop_without_numbered_fields():
+    fields = [_f("Title", ".t"), _f("Price", ".p")]
+    new_fields, group = detect_column_variants(fields)
+    assert group is None
+    assert new_fields == fields
+
+
+def test_detect_interaction_profile_includes_column_group_first():
+    fields = [
+        _f("Food", "td:nth-child(1) p"),
+        _f("Calories 1", "td:nth-child(3) p"),
+        _f("Calories 2", "td:nth-child(5) p"),
+    ]
+    profile, new_fields = detect_interaction_profile("", fields)
+    assert new_fields is not None
+    assert profile["groups"][0]["metadata_key"] == "column_set"
