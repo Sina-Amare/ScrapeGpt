@@ -97,6 +97,27 @@ async def main() -> int:
             sample, v["per 100 g"], v["per serving"],
         )
     logger.info("records=%s variants=%s warnings=%s", len(records), bases, warnings)
+
+    # Phase 3: merged output — one row per food with a column per variant.
+    merge_spec = _spec()
+    merge_spec.interaction_profile["merge_variants"] = True
+    merged, _ = await extract_records_with_variants(
+        base_html=fetched.html, source_url=fetched.final_url, project=project,
+        spec=merge_spec, max_records=1000, fetch_variant_htmls=None,
+    )
+    merged_ok = (
+        20 < len(merged) < 60
+        and any(
+            "Calories (per 100 g)" in r.normalized_data
+            and "Calories (per serving)" in r.normalized_data
+            for r in merged
+        )
+    )
+    if merged_ok:
+        logger.info("OK merged output: %s rows, per-variant columns present", len(merged))
+    else:
+        logger.error("merge check failed: %s rows", len(merged)); failures += 1
+
     logger.info(
         "detected controls on page (informational): %s",
         [g["metadata_key"] for g in detect_interaction_groups(fetched.html)],

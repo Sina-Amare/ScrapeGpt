@@ -54,7 +54,7 @@ These must be green before any manual testing. They are the regression net.
 ```powershell
 # Backend — full suite (~16s)
 venv\Scripts\python.exe -m pytest -q
-# Expected: ~533 passed, ~10 skipped
+# Expected: ~540 passed, ~10 skipped
 
 # Optional: real-URL scope-recommendation check (needs network)
 venv\Scripts\python.exe -m tests.manual.verify_scope_recommendation
@@ -160,6 +160,7 @@ One pass each. Don't repeat across many sites — one representative URL per row
 | DATASET scope | B | scope = "Listing + detail pages" → confirm → frontier preview → extract (limit ~10) | listing + per‑item detail pages crawled |
 | Page variants (deterministic) | `https://www.calories.info/food/beef-veal` | Variants → **Detect variants** → enable → keep per‑100g + per‑serving → Save → Preview/extract | one row per food **per variant**; export has `serving_basis` column; per‑100g and per‑serving calories differ. No browser needed (both values are in the DOM). |
 | Page variants (interactive) | same | also select Imperial → Save → extract | needs a browser backend; without one, extraction fails with `INTERACTION_BROWSER_REQUIRED` (no silent skip) |
+| Page variants (merged) | same | Variants → enable → check **"Merge variants into one row"** → Save → extract | one row per food with columns `Calories (per 100 g)` and `Calories (per serving)` (no `serving_basis` column); ~46 rows not 92 |
 | FULL_SITE scope | B | scope = "Entire website" → **broad‑scope warning shown** → confirm → frontier preview | many same‑origin URLs included; warning visible |
 | Export CSV | any completed | Results → Export → CSV | opens cleanly, spec field order, source_url last |
 | Export JSON | any completed | Export → JSON | valid JSON array of records |

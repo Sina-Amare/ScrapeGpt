@@ -875,9 +875,11 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
         "fetch_url",
         fake_fetch_url,
     )
+    # Extraction now flows through the variant orchestrator, which (with the
+    # default disabled profile) calls extract_records_from_html in
+    # interaction_extraction. Patch it there.
     monkeypatch.setattr(
-        project_extraction,
-        "extract_records_from_html",
+        "app.services.interaction_extraction.extract_records_from_html",
         lambda *args, **kwargs: [],
     )
 
