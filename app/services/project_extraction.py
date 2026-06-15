@@ -37,7 +37,13 @@ from app.services.crawl_scope import (
     scope_max_pages,
 )
 from app.services.extractor import extract_records_from_html
-from app.services.fetcher import FetchError, fetch_url
+from app.services.fetcher import (
+    FetchError,
+    apply_interactions_and_capture,
+    fetch_url,
+)
+from app.services.interaction_extraction import extract_records_with_variants
+from app.services.interaction_profile import InteractionError
 from app.services.project_events import record_project_event
 from app.services.url_normalizer import discover_same_site_links, normalize_url
 from app.services.url_validator import URLValidationError, validate_url
@@ -55,9 +61,10 @@ def _spec_hash(spec: ExtractionSpec) -> str:
         "page_limit": spec.page_limit,
         "export_format": spec.export_format,
         # crawl_scope changes the crawl frontier (e.g. CURRENT_PAGE vs
-        # COLLECTION), so it is part of the spec shape an export was produced
-        # from. interaction_profile joins this payload in Phase 2.
+        # COLLECTION) and interaction_profile changes which variants are
+        # extracted, so both are part of the spec shape an export came from.
         "crawl_scope": spec.crawl_scope or {},
+        "interaction_profile": getattr(spec, "interaction_profile", None) or {},
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -427,13 +434,36 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         remaining_slots=remaining,
                     )
 
-                    extracted = extract_records_from_html(
-                        fetched.html,
+                    async def _fetch_variant_htmls(
+                        recipes: dict[str, list[dict[str, Any]]],
+                        _url: str = fetched.final_url,
+                    ) -> dict[str, str]:
+                        try:
+                            return await apply_interactions_and_capture(
+                                _url, recipes, cookies=session_cookies
+                            )
+                        except FetchError as exc:
+                            if exc.error_code == "BROWSER_UNAVAILABLE":
+                                raise InteractionError(
+                                    "A browser backend is required to extract the "
+                                    "selected interactive variant(s).",
+                                    code="INTERACTION_BROWSER_REQUIRED",
+                                ) from exc
+                            raise
+
+                    extracted, variant_warnings = await extract_records_with_variants(
+                        base_html=fetched.html,
                         source_url=fetched.final_url,
                         project=project,
                         spec=spec,
                         max_records=settings.MAX_RECORDS_PER_PAGE,
+                        fetch_variant_htmls=_fetch_variant_htmls,
                     )
+                    for w in variant_warnings:
+                        logger.info(
+                            "extraction.variant_warning",
+                            extra={"project_id": project_id, "page_id": page.id, "warning": w},
+                        )
                     for item in extracted:
                         db.add(
                             ExtractedRecord(
@@ -472,6 +502,22 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                         page.block_reason = "SELECTOR_ZERO_MATCH"
                         page.error = "Selectors matched no elements on this page."
                     await db.commit()
+
+                except InteractionError as exc:
+                    # Spec-level variant config problem (browser missing / too many
+                    # combinations). Every page would fail identically, so abort the
+                    # whole run with the precise code rather than failing page-by-page.
+                    page.state = CrawlPageState.FAILED
+                    page.error = str(exc)
+                    page.block_reason = exc.code
+                    page.lease_expires_at = None
+                    await db.commit()
+                    await _mark_project_failed(db, project, str(exc), exc.code)
+                    logger.warning(
+                        "extraction.interaction_failed",
+                        extra={"project_id": project_id, "error_code": exc.code},
+                    )
+                    return
 
                 except (FetchError, URLValidationError) as exc:
                     page.state = CrawlPageState.FAILED

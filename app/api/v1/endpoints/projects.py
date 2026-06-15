@@ -59,6 +59,12 @@ from app.schemas.project import (
 )
 from app.services.crawl_scope import ScopeConfirmationError
 from app.services.extraction_mode import resolve_extraction_mode
+from app.services.fetcher import FetchError, fetch_url
+from app.services.interaction_detect import detect_interaction_profile
+from app.services.interaction_profile import is_enabled as _interactions_enabled
+from app.services.interaction_profile import metadata_columns as _interaction_metadata_columns
+from app.services.session_service import get_cookies_for_session
+from app.services.url_validator import URLValidationError, validate_url
 from app.services.project_events import list_project_events, record_project_event
 from app.services.extraction_spec_service import ensure_default_spec, latest_spec, selected_field_count
 from app.services.frontierpreview import create_frontier_preview, latest_frontier_preview
@@ -161,6 +167,7 @@ def _spec_response(spec: ExtractionSpec | None) -> ExtractionSpecResponse | None
         page_limit=spec.page_limit,
         export_format=spec.export_format,
         crawl_scope=spec.crawl_scope,
+        interaction_profile=spec.interaction_profile or {},
         quality_summary=spec.quality_summary,
         created_at=spec.created_at,
         updated_at=spec.updated_at,
@@ -402,9 +409,73 @@ async def update_project_spec(
         spec.export_format = payload.export_format
     if payload.crawl_scope is not None:
         spec.crawl_scope = payload.crawl_scope.model_dump(mode="json")
+    if payload.interaction_profile is not None:
+        spec.interaction_profile = payload.interaction_profile.model_dump(mode="json")
 
     await db.commit()
     await db.refresh(spec)
+    return _spec_response(spec)  # type: ignore[return-value]
+
+
+@router.post(
+    "/{project_id}/interactions/detect",
+    response_model=ExtractionSpecResponse,
+    summary="Detect page-variant controls",
+)
+async def detect_interactions(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ExtractionSpecResponse:
+    """Scan the seed page for variant toggles (metric/imperial, per-100g/serving,
+    …) and persist a disabled draft ``interaction_profile`` on the spec.
+
+    Returns the updated spec (no raw page HTML). Detection runs against the
+    static HTML, so it works whether or not a browser backend is installed; the
+    proposed groups are interactive, so selecting one without a browser later
+    fails with INTERACTION_BROWSER_REQUIRED (no silent downgrade)."""
+    project = await _owned_project(db, user, project_id)
+    spec = await ensure_default_spec(db, project)
+    if spec is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Project analysis is not ready",
+        )
+
+    try:
+        validated_url = validate_url(project.normalized_url or project.url)
+    except URLValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    effective_render_mode = project.render_mode.value
+    if (
+        effective_render_mode == "AUTO"
+        and isinstance(project.fetch_metadata, dict)
+        and project.fetch_metadata.get("render_mode_used") == "BROWSER"
+    ):
+        effective_render_mode = "BROWSER"
+
+    session_cookies = None
+    if project.browser_session_id is not None:
+        session_cookies = await get_cookies_for_session(
+            db, project.browser_session_id, owner_user_id=project.user_id
+        )
+
+    try:
+        fetched = await fetch_url(
+            validated_url, effective_render_mode, browser_session_cookies=session_cookies
+        )
+    except FetchError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    profile = detect_interaction_profile(fetched.html)
+    spec.interaction_profile = profile
+    await db.commit()
+    await db.refresh(spec)
+    logger.info(
+        "interaction.detected",
+        extra={"project_id": project.id, "group_count": len(profile.get("groups") or [])},
+    )
     return _spec_response(spec)  # type: ignore[return-value]
 
 
@@ -737,6 +808,13 @@ def _spec_field_order(spec: Any | None) -> list[str]:
         key = field.get("user_label") or field.get("label") or field.get("name")
         if key:
             out.append(str(key))
+    # Variant metadata columns sit right after the spec fields (in group order),
+    # before any other extras and before source_url (added last by callers).
+    profile = getattr(spec, "interaction_profile", None)
+    if _interactions_enabled(profile):
+        for col in _interaction_metadata_columns(profile):
+            if col not in out:
+                out.append(col)
     return out
 
 

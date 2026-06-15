@@ -722,6 +722,147 @@ async def _camoufox_fetch(
 
 
 # ---------------------------------------------------------------------------
+# Interaction runner — apply per-variant click/select recipes in a browser
+# ---------------------------------------------------------------------------
+
+async def _run_interaction_steps(page, steps: list[dict]) -> None:
+    """Apply one variant's ordered recipe to an already-loaded page.
+
+    Supported steps (kept deliberately small and safe):
+      * {"action":"click","by":"selector","value":"css"}      -> page.click(css)
+      * {"action":"click","by":"text","value":"Imperial"}     -> click by text
+      * {"action":"select","by":"selector","value":"css::Opt"} -> select_option
+      * {"action":"wait","value":"500"} (ms) or a CSS selector to wait for
+    """
+    for step in steps or []:
+        action = str(step.get("action") or "click")
+        by = str(step.get("by") or "selector")
+        value = str(step.get("value") or "").strip()
+        if not value and action != "wait":
+            continue
+        if action == "click":
+            if by == "text":
+                await page.get_by_text(value, exact=False).first.click(
+                    timeout=_BROWSER_SETTLE_MS
+                )
+            else:
+                await page.click(value, timeout=_BROWSER_SETTLE_MS)
+        elif action == "select":
+            selector, _, option = value.partition("::")
+            if option:
+                await page.select_option(selector, label=option, timeout=_BROWSER_SETTLE_MS)
+            else:
+                await page.select_option(selector, index=0, timeout=_BROWSER_SETTLE_MS)
+        elif action == "wait":
+            if value.isdigit():
+                await page.wait_for_timeout(int(value))
+            elif value:
+                await page.wait_for_selector(value, timeout=_BROWSER_SETTLE_MS)
+            else:
+                await page.wait_for_timeout(_BROWSER_SETTLE_MS)
+        # Let the DOM settle after each step.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
+        except Exception:
+            pass
+
+
+async def _apply_interactions_async(
+    url: str,
+    recipes: dict[str, list[dict]],
+    cookies: list[dict] | None = None,
+) -> dict[str, str]:
+    """Capture one HTML snapshot per recipe by re-navigating and applying steps.
+
+    Uses one camoufox session for all recipes (re-goto per recipe resets state).
+    Returns {recipe_id: html}. Raises FetchError("BROWSER_UNAVAILABLE") when no
+    browser backend is installed — never returns a partial/guessed result.
+    """
+    try:
+        from camoufox.async_api import AsyncCamoufox
+    except ImportError as exc:
+        raise FetchError(
+            "camoufox not installed. Install: pip install \"camoufox[geoip]\"",
+            "BROWSER_UNAVAILABLE",
+        ) from exc
+
+    out: dict[str, str] = {}
+    blocked: list[FetchError] = []
+    async with AsyncCamoufox(headless=True, geoip=True, humanize=True) as browser:
+        context = await browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            extra_http_headers=_BROWSER_HEADERS,
+        )
+        if cookies:
+            await context.add_cookies(cookies)
+        try:
+            await context.route("**", _make_route_handler(blocked, is_async=True))
+            page = await context.new_page()
+            for recipe_id, steps in recipes.items():
+                response = await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=settings.SCRAPE_TIMEOUT * 1000,
+                )
+                if blocked:
+                    raise blocked[0]
+                if response is None:
+                    raise FetchError("camoufox got no response", "FETCH_FAILED")
+                try:
+                    validate_url(page.url)
+                except URLValidationError as exc:
+                    raise FetchError(
+                        f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
+                    ) from exc
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
+                except Exception:
+                    pass
+                await _run_interaction_steps(page, steps)
+                out[recipe_id] = await page.content()
+        finally:
+            await context.close()
+    return out
+
+
+def _apply_interactions_in_thread(
+    url: str,
+    recipes: dict[str, list[dict]],
+    cookies: list[dict] | None = None,
+) -> dict[str, str]:
+    _ensure_windows_proactor_policy_for_playwright()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(
+            _apply_interactions_async(url, recipes, cookies)
+        )
+    finally:
+        loop.close()
+
+
+async def apply_interactions_and_capture(
+    url: str,
+    recipes: dict[str, list[dict]],
+    *,
+    cookies: list[dict] | None = None,
+) -> dict[str, str]:
+    """Public entry: {recipe_id: [steps]} -> {recipe_id: html} via a browser.
+
+    Raises FetchError("BROWSER_UNAVAILABLE") when no browser is installed so the
+    caller can surface INTERACTION_BROWSER_REQUIRED instead of silently dropping
+    an interactive variant.
+    """
+    if not recipes:
+        return {}
+    if _should_use_threaded_browser_fetch():
+        return await asyncio.to_thread(
+            _apply_interactions_in_thread, url, recipes, cookies
+        )
+    return await _apply_interactions_async(url, recipes, cookies)
+
+
+# ---------------------------------------------------------------------------
 # FlareSolverr fetch — Docker-based CF challenge solver (Tier 2, nuclear option)
 # ---------------------------------------------------------------------------
 

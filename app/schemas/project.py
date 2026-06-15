@@ -186,6 +186,77 @@ class CrawlScope(BaseModel):
         return self
 
 
+VALID_INTERACTION_EXECUTIONS = ("deterministic", "interactive")
+VALID_INTERACTION_STEP_ACTIONS = ("click", "select", "wait")
+VALID_INTERACTION_STEP_BY = ("selector", "text")
+MAX_INTERACTION_COMBINATIONS = 12
+
+
+class InteractionStep(BaseModel):
+    action: str = "click"
+    by: str = "selector"
+    value: str = ""
+
+    @field_validator("action")
+    @classmethod
+    def _validate_action(cls, value: str) -> str:
+        if value not in VALID_INTERACTION_STEP_ACTIONS:
+            raise ValueError(
+                f"interaction step action must be one of {VALID_INTERACTION_STEP_ACTIONS}"
+            )
+        return value
+
+    @field_validator("by")
+    @classmethod
+    def _validate_by(cls, value: str) -> str:
+        if value not in VALID_INTERACTION_STEP_BY:
+            raise ValueError(
+                f"interaction step 'by' must be one of {VALID_INTERACTION_STEP_BY}"
+            )
+        return value
+
+
+class InteractionOption(BaseModel):
+    id: str
+    label: str
+    selected: bool = True
+    # Deterministic groups: per-field selector overrides {field_name: css}.
+    field_selectors: dict[str, str] = Field(default_factory=dict)
+    # Interactive groups: ordered browser steps to reach this option.
+    recipe: list[InteractionStep] = Field(default_factory=list)
+
+
+class InteractionGroup(BaseModel):
+    label: str
+    metadata_key: str
+    execution: str = "deterministic"
+    options: list[InteractionOption] = Field(default_factory=list)
+
+    @field_validator("execution")
+    @classmethod
+    def _validate_execution(cls, value: str) -> str:
+        if value not in VALID_INTERACTION_EXECUTIONS:
+            raise ValueError(
+                f"interaction group execution must be one of {VALID_INTERACTION_EXECUTIONS}"
+            )
+        return value
+
+
+class InteractionProfile(BaseModel):
+    enabled: bool = False
+    max_variant_combinations: int = MAX_INTERACTION_COMBINATIONS
+    groups: list[InteractionGroup] = Field(default_factory=list)
+
+    @field_validator("max_variant_combinations")
+    @classmethod
+    def _validate_cap(cls, value: int) -> int:
+        if value < 1 or value > MAX_INTERACTION_COMBINATIONS:
+            raise ValueError(
+                f"max_variant_combinations must be between 1 and {MAX_INTERACTION_COMBINATIONS}"
+            )
+        return value
+
+
 class FrontierUrlDecision(BaseModel):
     url: str
     normalized_url: str
@@ -228,6 +299,7 @@ class ExtractionSpecUpdate(BaseModel):
     page_limit: int | None = Field(default=None, ge=1, le=5000)
     export_format: str | None = None
     crawl_scope: CrawlScope | None = None
+    interaction_profile: InteractionProfile | None = None
 
     @field_validator("export_format")
     @classmethod
@@ -248,6 +320,7 @@ class ExtractionSpecResponse(BaseModel):
     page_limit: int
     export_format: str
     crawl_scope: dict[str, Any] | None = None
+    interaction_profile: dict[str, Any] | None = None
     quality_summary: dict[str, Any] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

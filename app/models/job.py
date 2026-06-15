@@ -354,6 +354,11 @@ class ExtractionSpec(Base):
     page_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=500, server_default="500")
     export_format: Mapped[str] = mapped_column(String(16), nullable=False, default="csv", server_default="csv")
     crawl_scope: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Page-variant interaction config (per-100g/serving, metric/imperial, …).
+    # Default {} means "disabled" -> existing projects behave exactly as before.
+    interaction_profile: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="'{}'::jsonb"
+    )
     quality_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

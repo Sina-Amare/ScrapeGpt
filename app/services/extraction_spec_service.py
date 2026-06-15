@@ -175,6 +175,9 @@ def default_spec_from_analysis(project: Project) -> dict[str, Any]:
         "page_limit": settings.MAX_PAGES_PER_JOB,
         "export_format": "csv",
         "crawl_scope": default_crawl_scope(project, analysis),
+        # Disabled by default: single-variant extraction, exactly as before.
+        # Populated by POST /projects/{id}/interactions/detect.
+        "interaction_profile": {},
     }
 
 

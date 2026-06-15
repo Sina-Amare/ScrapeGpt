@@ -11,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.job import ExtractionSpec, PreviewResult, Project, ProjectState
 from app.services.anti_bot import CHALLENGE_MESSAGES, anti_bot_challenge_reason
 from app.services.extractor import extract_records_from_html
-from app.services.fetcher import FetchError, fetch_url
+from app.services.fetcher import (
+    FetchError,
+    apply_interactions_and_capture,
+    fetch_url,
+)
+from app.services.interaction_extraction import extract_records_with_variants
+from app.services.interaction_profile import InteractionError, is_enabled
 from app.services.session_service import get_cookies_for_session
 from app.services.url_validator import URLValidationError, validate_url
 
@@ -118,14 +124,35 @@ async def build_selector_preview_payload(
             CHALLENGE_MESSAGES.get(challenge_reason, f"Anti-bot challenge detected: {challenge_reason}")
         )
 
-    extracted = extract_records_from_html(
-        fetched.html,
+    variants_on = is_enabled(getattr(spec, "interaction_profile", None))
+
+    async def _fetch_variant_htmls(
+        recipes: dict[str, list[dict]],
+    ) -> dict[str, str]:
+        try:
+            return await apply_interactions_and_capture(
+                fetched.final_url, recipes, cookies=session_cookies
+            )
+        except FetchError as exc:
+            if exc.error_code == "BROWSER_UNAVAILABLE":
+                raise InteractionError(
+                    "A browser backend is required to preview the selected "
+                    "interactive variant(s).",
+                    code="INTERACTION_BROWSER_REQUIRED",
+                ) from exc
+            raise
+
+    extracted, variant_warnings = await extract_records_with_variants(
+        base_html=fetched.html,
         source_url=fetched.final_url,
         project=project,
         spec=spec,
         max_records=5,
+        fetch_variant_htmls=_fetch_variant_htmls,
     )
-    sample_records = [item.normalized_data for item in extracted[:5]]
+    # Show more sample rows when variants are on so several show through.
+    display_limit = 10 if variants_on else 5
+    sample_records = [item.normalized_data for item in extracted[:display_limit]]
     selected_fields = _selected_fields(spec)
     missing_fields = []
     for field in selected_fields:
@@ -139,6 +166,7 @@ async def build_selector_preview_payload(
                 }
             )
     warnings = list(project.warnings or [])
+    warnings.extend(variant_warnings)
     for item in extracted:
         warnings.extend(item.warnings)
 
@@ -182,7 +210,9 @@ async def create_preview(
     except Exception as exc:
         project.transition_to(ProjectState.FAILED)
         project.error = f"Preview failed: {exc}"
-        project.error_code = "PREVIEW_FAILED"
+        # Surface the precise variant error code (browser required / variant cap)
+        # instead of the generic PREVIEW_FAILED so the UI can explain it.
+        project.error_code = getattr(exc, "code", None) or "PREVIEW_FAILED"
         await db.flush()
         raise
 

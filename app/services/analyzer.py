@@ -51,6 +51,9 @@ Return a JSON object with this exact schema (no extra keys):
   "warnings": ["<any concerns about extraction>"],
   "confidence": 0.0-1.0
 }}
+If the page shows the same metric in several parallel columns (e.g. "per 100 g" \
+and "per serving", or metric vs imperial), add each as its own candidate field \
+with a clear, distinct label instead of inventing generic "Secondary" names.
 Confidence 1.0 = very certain. Provide at least 1 candidate field."""
 
 _CONTENT_PROMPT = """\
