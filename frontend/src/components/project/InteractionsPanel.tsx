@@ -4,11 +4,16 @@ import type {
   InteractionGroup,
   InteractionProfile,
 } from "../../types";
+import {
+  MAX_INTERACTION_COMBOS as MAX_COMBOS,
+  countCombinations,
+  normalizeInteractionProfile,
+} from "../../lib/interactionProfile";
 import { Alert } from "../ui/Alert";
 import { Button } from "../ui/Button";
 
 type Props = {
-  profile: InteractionProfile | null | undefined;
+  profile: Partial<InteractionProfile> | null | undefined;
   disabled?: boolean;
   detecting?: boolean;
   saving?: boolean;
@@ -17,26 +22,6 @@ type Props = {
   onDetect: () => void;
   onSave: (profile: InteractionProfile) => void;
 };
-
-const MAX_COMBOS = 12;
-
-function emptyProfile(): InteractionProfile {
-  return {
-    enabled: false,
-    merge_variants: false,
-    max_variant_combinations: MAX_COMBOS,
-    groups: [],
-  };
-}
-
-function countCombinations(groups: InteractionGroup[]): number {
-  const active = groups.filter((g) => g.options.some((o) => o.selected));
-  if (!active.length) return 0;
-  return active.reduce(
-    (acc, g) => acc * g.options.filter((o) => o.selected).length,
-    1
-  );
-}
 
 export function InteractionsPanel({
   profile,
@@ -48,13 +33,13 @@ export function InteractionsPanel({
   onDetect,
   onSave,
 }: Props) {
-  const [draft, setDraft] = useState<InteractionProfile>(
-    profile ?? emptyProfile()
+  const [draft, setDraft] = useState<InteractionProfile>(() =>
+    normalizeInteractionProfile(profile)
   );
 
   // Re-sync when the saved profile changes (e.g. after Detect).
   useEffect(() => {
-    setDraft(profile ?? emptyProfile());
+    setDraft(normalizeInteractionProfile(profile));
   }, [profile]);
 
   const combos = useMemo(
