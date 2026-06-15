@@ -27,7 +27,7 @@ alembic upgrade head
 # Frontend deps
 cd frontend; npm install; cd ..
 
-# Run both servers in the background
+# Run both servers in the background for manual UI testing
 .\dev-start.ps1     # backend 127.0.0.1:8000, frontend 127.0.0.1:5173
 ```
 
@@ -52,13 +52,17 @@ venv\Scripts\python.exe -c "from httpx._decoders import SUPPORTED_DECODERS; prin
 These must be green before any manual testing. They are the regression net.
 
 ```powershell
-# Backend — full suite (~15s)
+# Backend — full suite (~16s)
 venv\Scripts\python.exe -m pytest -q
-# Expected: ~487 passed, ~10 skipped
+# Expected: ~506 passed, ~10 skipped
+
+# Optional: real-URL scope-recommendation check (needs network)
+venv\Scripts\python.exe -m tests.manual.verify_scope_recommendation
+# Expected: all OK, failures=0 (calories.info -> COLLECTION; books/quotes/scrapethissite -> PAGINATION)
 
 # Frontend
 cd frontend
-npm.cmd test          # ~70 passed
+npm.cmd test          # ~78 passed
 npm.cmd run typecheck
 npm.cmd run lint
 npm.cmd run build
@@ -77,6 +81,9 @@ state‑machine transitions. Focused files worth knowing:
 Optional scripted E2E harness (8 API scenarios, no UI):
 
 ```powershell
+# Important: this script starts its own backend on port 8000 and kills anything
+# already listening there. Run it with dev-start stopped.
+.\dev-stop.ps1
 venv\Scripts\python.exe tests\validation\run_validation.py   # expect 8/8 PASSED
 ```
 
@@ -85,7 +92,9 @@ venv\Scripts\python.exe tests\validation\run_validation.py   # expect 8/8 PASSED
 ## 2. Real‑URL test targets (curated, stable, ethical)
 
 All are public **scraping sandboxes** or scrape‑tolerant references. The
-"Encoding" column matters for the decode tests (verified live):
+"Encoding" column is what this environment most recently observed with
+`Accept-Encoding: gzip, deflate, br, zstd`; CDNs can vary it, so verify with the
+script in Tier 2 if a decode case behaves differently.
 
 | # | URL | Shape | Encoding | Good for |
 |---|-----|-------|----------|----------|
@@ -98,7 +107,11 @@ All are public **scraping sandboxes** or scrape‑tolerant references. The
 | G | `https://webscraper.io/test-sites/e-commerce/allinone` | Product grid | gzip | Structured, DATASET |
 | H | `https://en.wikipedia.org/wiki/List_of_countries_and_dependencies_by_population` | Large reference table | gzip | Structured table, large export |
 | I | `https://news.ycombinator.com/` | Repeated rows, no obvious table | gzip | Repeated‑container vs table |
-| J | A long article / docs page (e.g. any Wikipedia article) | Prose | — | CONTENT mode |
+| J | `https://en.wikipedia.org/wiki/Web_scraping` | Prose/article | gzip | CONTENT mode |
+
+Fallback rule: if one real site is temporarily slow or blocked from your network,
+try the named alternative in the same row or move to the next row. Do not chase
+more than one replacement per case; record the network failure and continue.
 
 SSRF / negative targets (must be **rejected**, never fetched):
 `http://127.0.0.1:8000/`, `http://localhost/`, `http://169.254.169.254/latest/meta-data/`,
@@ -115,7 +128,7 @@ If this passes, the core pipeline is alive. ~5 minutes.
 
 1. Log in; confirm a provider is configured (Providers shows it; **Test** passes).
 2. **New Extraction** → URL **A** (`calories.info/food/beef-veal`), mode
-   **"Rows in a table"** → Analyze.
+   **"Structured data"** → Analyze.
 3. Project reaches **Analysis ready** (not Failed). Open the workspace.
 4. **Crawl scope** → "This page only" (CURRENT_PAGE) — no confirmation needed.
 5. **Fields** → at least Food Name + Calories selected → Save.
@@ -136,8 +149,10 @@ One pass each. Don't repeat across many sites — one representative URL per row
 | Case | URL | Steps | Expected |
 |------|-----|-------|----------|
 | Structured / CURRENT_PAGE | E | analyze (table mode) → fields → preview → extract | rows from the single page |
-| Content / RAG mode | J | analyze as **"Content for knowledge base"** → preview → extract | cleaned primary text + selected metadata, not tabular noise |
+| Content / RAG mode | J | analyze as **"Content / documents"** → preview → extract | cleaned primary text + selected metadata, not tabular noise |
 | PAGINATION scope | C or F | scope = "Paginated list" → **confirm scope** → frontier preview → extract (limit ~5) | crawls page 1..N; records from multiple pages |
+| COLLECTION scope | `https://www.calories.info/food/beef-veal` | leave scope as suggested (should be **"Related list pages"**, not Paginated) → frontier preview | included URLs are the `/food/*` sibling category pages; AI suggestion is COLLECTION with pattern `/food/*` |
+| COLLECTION one‑click broaden | same | set scope to "This page only" → frontier preview → click **"Crawl N pages (Related list pages)"** in the preview | scope switches to COLLECTION + `/food/*`, re‑previews, sibling pages now included |
 | DATASET scope | B | scope = "Listing + detail pages" → confirm → frontier preview → extract (limit ~10) | listing + per‑item detail pages crawled |
 | FULL_SITE scope | B | scope = "Entire website" → **broad‑scope warning shown** → confirm → frontier preview | many same‑origin URLs included; warning visible |
 | Export CSV | any completed | Results → Export → CSV | opens cleanly, spec field order, source_url last |
@@ -164,11 +179,54 @@ ScrapeGPT should crawl"). Confirm, then extract proceeds.
 | **Browser render mode** | D | set render mode **BROWSER**; content extracted via headless browser |
 | **Anti‑bot / Cloudflare** | any CF‑protected site you know | challenge detected → if JS challenge + browser available, retried; interactive Turnstile/CAPTCHA → fails cleanly as `BOT_PROTECTION_BLOCKED` with a guidance message (never silently "0 records"). *Don't pin a fragile CF URL into a permanent test — verify once.* |
 
-Quick scripted proof of the **decode + table fallback** without the UI:
+Quick scripted proof of **brotli decode** without the UI:
 
 ```powershell
-venv\Scripts\python.exe -c "import asyncio; from app.services.fetcher import fetch_url; r=asyncio.run(fetch_url('https://books.toscrape.com/','STATIC')); print(len(r.html), 'Books to Scrape' in r.html, '�' in r.html)"
+venv\Scripts\python.exe -c "import asyncio; from app.services.fetcher import fetch_url; r=asyncio.run(fetch_url('https://quotes.toscrape.com/','STATIC')); print(len(r.html), 'Quotes to Scrape' in r.html, '�' in r.html)"
 # Expect: large length, True, False  (br decoded cleanly)
+```
+
+Quick scripted proof of the **zstd decode + table fallback** without the UI:
+
+```powershell
+$env:DEBUG='false'  # only needed if your shell has a non-boolean DEBUG value
+@'
+import asyncio
+from types import SimpleNamespace
+from app.models.job import ExtractionMode
+from app.services.fetcher import fetch_url
+from app.services.extractor import extract_records_from_html
+
+async def main():
+    fetched = await fetch_url("https://www.calories.info/food/beef-veal", "STATIC")
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED,
+        content_config={},
+        fields=[
+            {"selected": True, "label": "Food Name", "type": "string", "selector": ".wrong-food"},
+            {"selected": True, "label": "Calories (kcal)", "type": "number", "selector": ".wrong-cal"},
+        ],
+    )
+    rows = extract_records_from_html(
+        fetched.html,
+        source_url=fetched.final_url,
+        project=SimpleNamespace(analysis={}),
+        spec=spec,
+    )
+    print(
+        fetched.fetch_metadata.get("content_type"),
+        len(fetched.html),
+        "Calories" in fetched.html,
+        "\ufffd" in fetched.html,
+        fetched.render_mode_used,
+        len(rows),
+        rows[0].normalized_data if rows else None,
+    )
+
+asyncio.run(main())
+'@ | venv\Scripts\python.exe -
+# Expect: text/html, large length, True, False, STATIC, ~40+ rows,
+# and a first row with Food Name + Calories.
 ```
 
 ---
@@ -193,7 +251,7 @@ data** for details).
 | No preview | extract before previewing (no `extract_anyway`) | 409 `NO_PREVIEW`; "Extract anyway" offered |
 | Stale preview | change fields after a preview, then extract | 409 `STALE_PREVIEW`; "Extract anyway" offered |
 | **Zero‑record preview (hard gate)** | preview returns 0 rows, then click extract | 409 `ZERO_PREVIEW_RECORDS`; **"Extract anyway" is NOT offered** — only "Adjust fields" |
-| Scope mismatch | PAGINATION scope on a page with detail links but no pagination | frontier preview shows `SCOPE_NO_MATCHING_LINKS` recommending DATASET |
+| Scope too narrow | Any narrow scope (CURRENT_PAGE, or PAGINATION on a page with no pagination) that links to ≥10 same‑origin pages | frontier preview shows `SCOPE_TOO_NARROW` with a **"Crawl N pages"** button (suggested_mode COLLECTION for sibling lists, DATASET for detail pages) |
 | Cancel | start a crawl, hit Cancel | project → CANCELED; crawl stops |
 | Retry | on a FAILED project, Retry (optionally new provider) | reopens from field setup (analysis kept) or re‑analyzes |
 
@@ -291,6 +349,6 @@ sites — the matrix above is representative by design.
 ```powershell
 venv\Scripts\python.exe -m pytest -q                       # backend tests
 cd frontend; npm.cmd test; npm.cmd run typecheck; npm.cmd run lint; npm.cmd run build; cd ..
-venv\Scripts\python.exe tests\validation\run_validation.py # scripted E2E
+.\dev-stop.ps1; venv\Scripts\python.exe tests\validation\run_validation.py # scripted E2E
 .\dev-start.ps1 ; .\dev-stop.ps1                            # run / stop servers
 ```

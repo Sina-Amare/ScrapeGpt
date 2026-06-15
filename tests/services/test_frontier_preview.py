@@ -314,8 +314,9 @@ def test_select_links_to_enqueue_returns_empty_for_legacy_no_scope():
     assert "https://other.example.com/x" not in out
 
 
-def test_pagination_warns_when_no_pagination_but_detail_links_exist():
-    """PAGINATION chosen, page links to detail pages, no pagination -> recommend DATASET."""
+def test_too_narrow_cta_suggests_dataset_for_detail_links():
+    """PAGINATION chosen, no pagination links, but the page links to many detail
+    pages -> SCOPE_TOO_NARROW CTA suggesting DATASET with a derived pattern."""
     project = SimpleNamespace(
         id=1,
         url="https://example.com/list",
@@ -323,19 +324,46 @@ def test_pagination_warns_when_no_pagination_but_detail_links_exist():
         analysis={"detail_link_selector": "a.detail"},
     )
     spec = _spec(mode="PAGINATION")
-    html = """
-    <html><body>
-      <a class="detail" href="/item/1">Item 1</a>
-      <a class="detail" href="/item/2">Item 2</a>
-      <a class="detail" href="/item/3">Item 3</a>
-    </body></html>
-    """
+    items = "".join(
+        f'<a class="detail" href="/item/{i}">Item {i}</a>' for i in range(1, 13)
+    )
+    html = f"<html><body>{items}</body></html>"
     preview = build_frontier_preview_from_fetch(project, spec, html)
-    codes = {w["code"] for w in (preview.warnings or [])}
-    assert "SCOPE_NO_MATCHING_LINKS" in codes
+    warning = next(
+        (w for w in (preview.warnings or []) if w["code"] == "SCOPE_TOO_NARROW"),
+        None,
+    )
+    assert warning is not None
+    assert warning["suggested_mode"] == "DATASET"
+    assert warning["suggested_include_patterns"] == ["/item/*"]
+    assert warning["count"] == 12
 
 
-def test_pagination_no_mismatch_warning_without_detail_links():
+def test_too_narrow_cta_suggests_collection_for_sibling_links():
+    """CURRENT_PAGE seed with many same-origin sibling category links and no
+    detail selector -> SCOPE_TOO_NARROW CTA suggesting COLLECTION."""
+    project = SimpleNamespace(
+        id=1,
+        url="https://example.com/food/beef",
+        normalized_url="https://example.com/food/beef",
+        analysis=None,
+    )
+    spec = _spec(mode="CURRENT_PAGE")
+    cats = "".join(
+        f'<a href="/food/cat{i}">Cat {i}</a>' for i in range(1, 13)
+    )
+    html = f"<html><body>{cats}</body></html>"
+    preview = build_frontier_preview_from_fetch(project, spec, html)
+    warning = next(
+        (w for w in (preview.warnings or []) if w["code"] == "SCOPE_TOO_NARROW"),
+        None,
+    )
+    assert warning is not None
+    assert warning["suggested_mode"] == "COLLECTION"
+    assert warning["suggested_include_patterns"] == ["/food/*"]
+
+
+def test_no_too_narrow_cta_without_enough_links():
     project = SimpleNamespace(
         id=1,
         url="https://example.com/list",
@@ -343,7 +371,12 @@ def test_pagination_no_mismatch_warning_without_detail_links():
         analysis={"detail_link_selector": "a.detail"},
     )
     spec = _spec(mode="PAGINATION")
-    html = "<html><body><p>Just text, no links.</p></body></html>"
+    html = (
+        "<html><body>"
+        '<a class="detail" href="/item/1">Item 1</a>'
+        '<a class="detail" href="/item/2">Item 2</a>'
+        "</body></html>"
+    )
     preview = build_frontier_preview_from_fetch(project, spec, html)
     codes = {w["code"] for w in (preview.warnings or [])}
-    assert "SCOPE_NO_MATCHING_LINKS" not in codes
+    assert "SCOPE_TOO_NARROW" not in codes
