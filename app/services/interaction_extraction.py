@@ -80,35 +80,70 @@ def build_variant_url(source_url: str, url_params: dict[str, str]) -> str:
 def _merge_variant_records(
     per_combo: list[tuple[VariantCombination, list[ExtractedPayload]]],
     field_keys: list[str],
-) -> list[ExtractedPayload]:
-    """Collapse aligned per-variant records into one row per entity.
+) -> list[ExtractedPayload] | None:
+    """Collapse per-variant records into one row per entity, matched by a stable
+    key — NOT by row index (different variants can omit/sort/filter rows).
 
-    Records from each combo are paired by extraction order (same page, same row
-    order across variants). A field whose value is identical across variants is
-    written once; a field that differs gets one column per variant, named
-    ``"<field> (<variant label>)"``.
+    The key is the set of fields no variant overrides (deterministic
+    ``field_selectors``). Returns ``None`` to signal the caller to fall back to
+    row-per-variant (with a warning) when a safe merge is not possible:
+    interactive/url-param variants (we can't know which fields vary), no stable
+    key fields, or a key that is non-unique within a variant.
     """
-    n = max((len(recs) for _, recs in per_combo), default=0)
+    combos = [c for c, _ in per_combo]
+    # Interactive / url_param variants change the whole page, so we cannot tell
+    # which columns vary — index/key merging both risk mixing entities.
+    if any(c.requires_browser or c.requires_url_fetch for c in combos):
+        return None
+
+    varying: set[str] = set()
+    for c in combos:
+        varying |= set(c.field_selectors.keys())
+    key_fields = [k for k in field_keys if k not in varying]
+    if not key_fields:
+        return None
+
+    def _key(p: ExtractedPayload) -> tuple:
+        return tuple(str(p.normalized_data.get(k)) for k in key_fields)
+
+    # Index each combo's rows by key; bail if a key is ambiguous within a combo.
+    per_combo_by_key: list[tuple[VariantCombination, dict[tuple, ExtractedPayload]]] = []
+    order: list[tuple] = []
+    seen_keys: set[tuple] = set()
+    for combo, recs in per_combo:
+        by_key: dict[tuple, ExtractedPayload] = {}
+        for p in recs:
+            k = _key(p)
+            if k in by_key:
+                return None  # non-unique key within a variant -> unsafe to merge
+            by_key[k] = p
+            if k not in seen_keys:
+                seen_keys.add(k)
+                order.append(k)
+        per_combo_by_key.append((combo, by_key))
+
     merged: list[ExtractedPayload] = []
-    for i in range(n):
-        group = [(combo, recs[i]) for combo, recs in per_combo if i < len(recs)]
-        if not group:
+    for k in order:
+        present = [(c, bk[k]) for c, bk in per_combo_by_key if k in bk]
+        if not present:
             continue
-        first = group[0][1]
+        first = present[0][1]
         raw: dict[str, Any] = {"source_url": first.raw_data.get("source_url")}
         norm: dict[str, Any] = {"source_url": first.normalized_data.get("source_url")}
+        # Stable key fields appear once.
+        for kf in key_fields:
+            norm[kf] = first.normalized_data.get(kf)
+            raw[kf] = first.raw_data.get(kf)
+        # Varying fields get one column per variant.
         warns: list[str] = []
         for fk in field_keys:
-            values = [p.normalized_data.get(fk) for _c, p in group]
-            if len({str(v) for v in values}) <= 1:
-                norm[fk] = values[0]
-                raw[fk] = group[0][1].raw_data.get(fk)
-            else:
-                for combo, p in group:
-                    col = f"{fk} ({combo.label})"
-                    norm[col] = p.normalized_data.get(fk)
-                    raw[col] = p.raw_data.get(fk)
-        for _c, p in group:
+            if fk in key_fields:
+                continue
+            for combo, p in present:
+                col = f"{fk} ({combo.label})"
+                norm[col] = p.normalized_data.get(fk)
+                raw[col] = p.raw_data.get(fk)
+        for _c, p in present:
             warns.extend(p.warnings or [])
         merged.append(ExtractedPayload(raw, norm, list(dict.fromkeys(warns))))
     return merged
@@ -203,8 +238,24 @@ async def extract_records_with_variants(
             zero_variants.append(combo.label)
         per_combo.append((combo, records))
 
-    if merge_enabled(profile):
-        payloads = _merge_variant_records(per_combo, _field_keys(spec))
+    warnings: list[str] = []
+
+    merged_payloads = (
+        _merge_variant_records(per_combo, _field_keys(spec))
+        if merge_enabled(profile)
+        else None
+    )
+    if merge_enabled(profile) and merged_payloads is None:
+        # A safe one-row-per-entity merge was not possible (interactive/url-param
+        # variants, no stable key, or a non-unique key). Fall back to the
+        # row-per-variant output and tell the user, rather than pairing rows by
+        # index and silently mixing different entities.
+        warnings.append(
+            "Could not merge variants into one row per item safely; output is "
+            "one row per variant instead."
+        )
+    if merged_payloads is not None:
+        payloads = merged_payloads
     else:
         payloads = [
             ExtractedPayload(
@@ -216,7 +267,6 @@ async def extract_records_with_variants(
             for r in records
         ]
 
-    warnings: list[str] = []
     # Partial-zero is a warning, not a hard failure: some variants may legitimately
     # be empty on a given page. An all-zero result falls through to the caller's
     # existing NO_RECORDS / ZERO_PREVIEW gate (payloads is empty).

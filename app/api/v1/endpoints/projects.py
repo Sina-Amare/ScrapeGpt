@@ -469,13 +469,21 @@ async def detect_interactions(
     except FetchError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    profile = detect_interaction_profile(fetched.html)
+    profile, new_fields = detect_interaction_profile(fetched.html, spec.fields or [])
     spec.interaction_profile = profile
+    if new_fields is not None:
+        # Numbered parallel columns (e.g. "Calories 1/2") were collapsed into
+        # base fields the deterministic group overrides per variant.
+        spec.fields = new_fields
     await db.commit()
     await db.refresh(spec)
     logger.info(
         "interaction.detected",
-        extra={"project_id": project.id, "group_count": len(profile.get("groups") or [])},
+        extra={
+            "project_id": project.id,
+            "group_count": len(profile.get("groups") or []),
+            "collapsed_fields": new_fields is not None,
+        },
     )
     return _spec_response(spec)  # type: ignore[return-value]
 

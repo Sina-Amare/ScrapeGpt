@@ -21,6 +21,7 @@ from typing import Any
 from bs4 import BeautifulSoup, Tag
 
 from app.services.interaction_profile import (
+    EXECUTION_DETERMINISTIC,
     EXECUTION_INTERACTIVE,
     sanitize_metadata_key,
 )
@@ -270,11 +271,125 @@ def detect_interaction_groups(html: str) -> list[dict[str, Any]]:
     return groups[:_MAX_GROUPS]
 
 
-def detect_interaction_profile(html: str) -> dict[str, Any]:
-    """Build a draft (disabled) interaction_profile from detected controls."""
-    groups = detect_interaction_groups(html)
-    return {
-        "enabled": False,
-        "max_variant_combinations": 12,
-        "groups": groups,
+_SUFFIX_RE = re.compile(r"^(.*?)[\s_:#-]*(\d+)$")
+
+
+def _split_suffix(label: str) -> tuple[str, int | None]:
+    """('Calories 1' -> ('Calories', 1)); ('Food' -> ('Food', None))."""
+    m = _SUFFIX_RE.match((label or "").strip())
+    if m and m.group(1).strip():
+        return m.group(1).strip(), int(m.group(2))
+    return (label or "").strip(), None
+
+
+def _field_label(field: dict[str, Any]) -> str:
+    return str(field.get("user_label") or field.get("label") or field.get("name") or "")
+
+
+def detect_column_variants(
+    fields: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Detect parallel in-DOM columns expressed as numbered sibling fields.
+
+    Analyzers model pages like calories.info as flat fields — ``Calories 1`` /
+    ``Calories 2``, ``Serving Size 1`` / ``Serving Size 2`` — one per parallel
+    column. This collapses each numbered family into a single base field
+    (``Calories``) and returns a **deterministic** variant group whose options
+    override those base fields to each column's selector. Returns
+    ``(new_fields, group)`` or ``(fields, None)`` when there is no such pattern.
+    No browser needed: the alternate values are already in the static DOM.
+    """
+    families: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for f in fields:
+        base, idx = _split_suffix(_field_label(f))
+        if idx is not None and base:
+            families.setdefault(base, []).append((idx, f))
+    # Keep only families with >=2 distinct indices.
+    families = {
+        b: sorted(v, key=lambda t: t[0])
+        for b, v in families.items()
+        if len({i for i, _ in v}) >= 2
     }
+    if not families:
+        return fields, None
+
+    indices = sorted({i for v in families.values() for i, _ in v})
+    options: list[dict[str, Any]] = []
+    for i in indices:
+        field_selectors: dict[str, str] = {}
+        for base, members in families.items():
+            sel = next(
+                (fld.get("selector") for (idx, fld) in members if idx == i), None
+            )
+            if sel:
+                field_selectors[base] = str(sel)
+        if field_selectors:
+            options.append({
+                "id": f"set_{i}",
+                "label": f"Variant {i}",
+                "selected": True,
+                "field_selectors": field_selectors,
+                "recipe": [],
+            })
+    if len(options) < 2:
+        return fields, None
+
+    group = {
+        "label": "Column set",
+        "metadata_key": "column_set",
+        "execution": EXECUTION_DETERMINISTIC,
+        "options": options,
+    }
+
+    # Collapse each family to one base field (keeping the first member's spot),
+    # defaulting its selector to the first variant; drop the other members.
+    member_ids = {id(fld) for members in families.values() for _, fld in members}
+    done: set[str] = set()
+    new_fields: list[dict[str, Any]] = []
+    for f in fields:
+        if id(f) not in member_ids:
+            new_fields.append(dict(f))
+            continue
+        base, _ = _split_suffix(_field_label(f))
+        if base in families and base not in done:
+            done.add(base)
+            collapsed = dict(f)
+            collapsed["name"] = base
+            collapsed["label"] = base
+            collapsed["user_label"] = base
+            collapsed["selector"] = options[0]["field_selectors"].get(
+                base, f.get("selector")
+            )
+            collapsed["selected"] = True
+            new_fields.append(collapsed)
+        # subsequent members of the same family are dropped
+    return new_fields, group
+
+
+def detect_interaction_profile(
+    html: str, fields: list[dict[str, Any]] | None = None
+) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
+    """Build a draft (disabled) interaction_profile.
+
+    Combines static-HTML control detection (interactive groups) with numbered
+    parallel-column detection over the spec ``fields`` (a deterministic group,
+    listed first). Returns ``(profile, new_fields_or_None)`` — ``new_fields`` is
+    the collapsed field list the caller should persist when a column-variant
+    group was found, else ``None``.
+    """
+    groups = detect_interaction_groups(html)
+    new_fields: list[dict[str, Any]] | None = None
+    if fields:
+        collapsed, col_group = detect_column_variants(fields)
+        if col_group is not None:
+            groups = [col_group, *groups]
+            new_fields = collapsed
+    return (
+        {
+            "enabled": False,
+            "merge_variants": False,
+            "max_variant_combinations": 12,
+            "groups": groups,
+        },
+        new_fields,
+    )

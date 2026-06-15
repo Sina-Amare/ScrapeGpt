@@ -767,26 +767,46 @@ async def _run_interaction_steps(page, steps: list[dict]) -> None:
             pass
 
 
-async def _apply_interactions_async(
-    url: str,
-    recipes: dict[str, list[dict]],
-    cookies: list[dict] | None = None,
+async def _capture_recipes_on_context(
+    context, url: str, recipes: dict[str, list[dict]], blocked: list[FetchError]
 ) -> dict[str, str]:
-    """Capture one HTML snapshot per recipe by re-navigating and applying steps.
+    """Shared per-recipe loop: re-navigate, apply steps, capture HTML.
 
-    Uses one camoufox session for all recipes (re-goto per recipe resets state).
-    Returns {recipe_id: html}. Raises FetchError("BROWSER_UNAVAILABLE") when no
-    browser backend is installed — never returns a partial/guessed result.
+    Works on any Playwright-compatible context (camoufox or Playwright), since
+    both expose the same page API. Re-goto per recipe resets to the base state.
     """
-    try:
-        from camoufox.async_api import AsyncCamoufox
-    except ImportError as exc:
-        raise FetchError(
-            "camoufox not installed. Install: pip install \"camoufox[geoip]\"",
-            "BROWSER_UNAVAILABLE",
-        ) from exc
-
     out: dict[str, str] = {}
+    page = await context.new_page()
+    for recipe_id, steps in recipes.items():
+        response = await page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=settings.SCRAPE_TIMEOUT * 1000,
+        )
+        if blocked:
+            raise blocked[0]
+        if response is None:
+            raise FetchError("Browser got no response", "FETCH_FAILED")
+        try:
+            validate_url(page.url)
+        except URLValidationError as exc:
+            raise FetchError(
+                f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
+            ) from exc
+        try:
+            await page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
+        except Exception:
+            pass
+        await _run_interaction_steps(page, steps)
+        out[recipe_id] = await page.content()
+    return out
+
+
+async def _apply_interactions_camoufox(
+    url: str, recipes: dict[str, list[dict]], cookies: list[dict] | None
+) -> dict[str, str]:
+    from camoufox.async_api import AsyncCamoufox  # may ImportError -> caller cascades
+
     blocked: list[FetchError] = []
     async with AsyncCamoufox(headless=True, geoip=True, humanize=True) as browser:
         context = await browser.new_context(
@@ -797,32 +817,65 @@ async def _apply_interactions_async(
             await context.add_cookies(cookies)
         try:
             await context.route("**", _make_route_handler(blocked, is_async=True))
-            page = await context.new_page()
-            for recipe_id, steps in recipes.items():
-                response = await page.goto(
-                    url,
-                    wait_until="domcontentloaded",
-                    timeout=settings.SCRAPE_TIMEOUT * 1000,
-                )
-                if blocked:
-                    raise blocked[0]
-                if response is None:
-                    raise FetchError("camoufox got no response", "FETCH_FAILED")
-                try:
-                    validate_url(page.url)
-                except URLValidationError as exc:
-                    raise FetchError(
-                        f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
-                    ) from exc
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
-                except Exception:
-                    pass
-                await _run_interaction_steps(page, steps)
-                out[recipe_id] = await page.content()
+            return await _capture_recipes_on_context(context, url, recipes, blocked)
         finally:
             await context.close()
-    return out
+
+
+async def _apply_interactions_playwright(
+    url: str, recipes: dict[str, list[dict]], cookies: list[dict] | None
+) -> dict[str, str]:
+    from playwright.async_api import async_playwright  # may ImportError
+
+    blocked: list[FetchError] = []
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            context = await browser.new_context(
+                user_agent=settings.USER_AGENT,
+                java_script_enabled=True,
+                viewport={"width": 1920, "height": 1080},
+                extra_http_headers=_BROWSER_HEADERS,
+            )
+            if cookies:
+                await context.add_cookies(cookies)
+            try:
+                await context.route("**", _make_route_handler(blocked, is_async=True))
+                return await _capture_recipes_on_context(context, url, recipes, blocked)
+            finally:
+                await context.close()
+        finally:
+            await browser.close()
+
+
+async def _apply_interactions_async(
+    url: str,
+    recipes: dict[str, list[dict]],
+    cookies: list[dict] | None = None,
+) -> dict[str, str]:
+    """Capture one HTML snapshot per recipe by re-navigating and applying steps.
+
+    Mirrors the fetch stealth cascade: try camoufox (best evasion), then fall
+    back to stealth Playwright — the documented browser backend. Returns
+    {recipe_id: html}. Raises FetchError("BROWSER_UNAVAILABLE") only when neither
+    backend is installed — never a partial/guessed result.
+    """
+    try:
+        return await _apply_interactions_camoufox(url, recipes, cookies)
+    except ImportError:
+        pass
+    except FetchError as exc:
+        if exc.error_code != "BROWSER_UNAVAILABLE":
+            raise
+    try:
+        return await _apply_interactions_playwright(url, recipes, cookies)
+    except ImportError as exc:
+        raise FetchError(
+            "No browser backend available for interactive variants. Install "
+            "camoufox (\"pip install camoufox[geoip]\") or Playwright "
+            "(\"pip install playwright && python -m playwright install chromium\").",
+            "BROWSER_UNAVAILABLE",
+        ) from exc
 
 
 def _apply_interactions_in_thread(

@@ -479,22 +479,22 @@ def _pagination_decision(
             reason=f"Matched pagination URL pattern '{url_pattern}'.",
         )
 
-    # Heuristic: page numbers and common pagination params.
-    parsed = _safe_urlparse(normalized)
-    if parsed:
-        query = parsed.query.lower()
-        for token in ("page=", "p=", "offset=", "start="):
-            if token in query:
-                return UrlDecision(
-                    url=normalized,
-                    normalized_url=normalized,
-                    source_url=page_url,
-                    depth=0,
-                    decision="included",
-                    role=role,
-                    reason_code=REASON_PAGINATION_PATTERN_MATCH,
-                    reason=f"URL contains pagination parameter '{token.rstrip('=')}'.",
-                )
+    # Heuristic: query-param OR path-based page links (e.g. ?page=2 AND
+    # /catalogue/page-2.html, /page/2, /p/2). This MUST agree with
+    # ``_looks_like_pagination`` used by ``recommend_scope`` — otherwise the AI
+    # can recommend PAGINATION for a site whose next links the classifier then
+    # refuses to enqueue, crawling only the seed (the original bug report).
+    if _looks_like_pagination(normalized):
+        return UrlDecision(
+            url=normalized,
+            normalized_url=normalized,
+            source_url=page_url,
+            depth=0,
+            decision="included",
+            role=role,
+            reason_code=REASON_PAGINATION_PATTERN_MATCH,
+            reason="URL looks like a page-number link.",
+        )
 
     # Heuristic: pagination selector from the analysis (if AI suggested one).
     if analysis and pagination.get("selector"):
