@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { AnalysisPipeline } from "../components/project/AnalysisPipeline";
 import { FrontierPreviewPanel } from "../components/project/FrontierPreviewPanel";
+import { InteractionsPanel } from "../components/project/InteractionsPanel";
 import { PaginatedResultsTable } from "../components/project/PaginatedResultsTable";
 import { ScopeSelector } from "../components/project/ScopeSelector";
 import { TrustSummaryPanel } from "../components/project/TrustSummaryPanel";
@@ -22,7 +23,7 @@ import { ApiError, api } from "../lib/api";
 import { canRetryWithProvider, errorHelp } from "../lib/errorHelp";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject } from "../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation, scopeModeLabel } from "../lib/scopeCopy";
-import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, ProjectRecord, ProjectState } from "../types";
+import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, InteractionProfile, ProjectRecord, ProjectState } from "../types";
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const pct = value == null ? 0 : Math.round(value * 100);
@@ -52,6 +53,7 @@ const TABS = [
   { label: "Overview", id: "overview" },
   { label: "Scope",    id: "scope" },
   { label: "Fields",   id: "fields" },
+  { label: "Variants", id: "variants" },
   { label: "Preview",  id: "preview" },
   { label: "Extract",  id: "extract" },
   { label: "Quality",  id: "quality" },
@@ -417,6 +419,23 @@ export function ProjectDetailPage() {
       setDraftMode(vars.mode);
       setScopeChangedAfterPreview(false);
       setExtractScopeError(null);
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    }
+  });
+
+  // Detect page-variant controls and persist a draft interaction_profile.
+  const detectInteractionsMutation = useMutation({
+    mutationFn: () => api.detectInteractions(projectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    }
+  });
+
+  // Save the edited interaction_profile (enable, option selection, metadata keys).
+  const saveInteractionsMutation = useMutation({
+    mutationFn: (next: InteractionProfile) =>
+      api.updateProjectSpec(projectId, { interaction_profile: next }),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     }
   });
@@ -901,6 +920,24 @@ export function ProjectDetailPage() {
             </div>
             {saveSpec.error ? <Alert tone="danger">{saveSpec.error.message}</Alert> : null}
             <FieldEditor fields={fields} onChange={setFields} />
+          </section>
+
+          {/* Page variants */}
+          <section id="variants" className="scroll-mt-32 card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
+            <div className="mb-4">
+              <h2 className="font-bold text-ink">Page variants <span className="text-xs font-normal text-muted">(optional)</span></h2>
+              <p className="text-sm text-muted">Extract per-100g/per-serving, metric/imperial and similar toggles as separate labelled rows.</p>
+            </div>
+            <InteractionsPanel
+              profile={project.spec?.interaction_profile ?? null}
+              disabled={!project.spec || isActive}
+              detecting={detectInteractionsMutation.isPending}
+              saving={saveInteractionsMutation.isPending}
+              detectError={detectInteractionsMutation.error?.message ?? null}
+              saveError={saveInteractionsMutation.error?.message ?? null}
+              onDetect={() => detectInteractionsMutation.mutate()}
+              onSave={(next: InteractionProfile) => saveInteractionsMutation.mutate(next)}
+            />
           </section>
 
           {/* Sample Preview */}

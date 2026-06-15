@@ -11,6 +11,7 @@ import {
   FieldSpec,
   FrontierPreviewResponse,
   HealthResponse,
+  InteractionProfile,
   JobCreateInput,
   JobListItem,
   JobResponse,
@@ -373,6 +374,7 @@ export const api = {
       page_limit?: number;
       export_format?: string;
       crawl_scope?: Partial<CrawlScope>;
+      interaction_profile?: Partial<InteractionProfile>;
     }
   ): Promise<ExtractionSpecResponse> {
     return apiRequest<ExtractionSpecResponse>(`/projects/${id}/spec`, {
@@ -380,6 +382,13 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input)
     });
+  },
+
+  detectInteractions(id: number): Promise<ExtractionSpecResponse> {
+    return apiRequest<ExtractionSpecResponse>(
+      `/projects/${id}/interactions/detect`,
+      { method: "POST" }
+    );
   },
 
   createFrontierPreview(id: number): Promise<FrontierPreviewResponse> {

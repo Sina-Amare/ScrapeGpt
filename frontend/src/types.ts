@@ -352,6 +352,39 @@ export type RecordPageResponse = {
   columns: string[];
 };
 
+// ---------------------------------------------------------------------------
+// Interaction profile (page variants: per-100g/serving, metric/imperial, …)
+// ---------------------------------------------------------------------------
+
+export type InteractionExecution = "deterministic" | "interactive";
+
+export type InteractionStep = {
+  action: "click" | "select" | "wait";
+  by: "selector" | "text";
+  value: string;
+};
+
+export type InteractionOption = {
+  id: string;
+  label: string;
+  selected: boolean;
+  field_selectors: Record<string, string>;
+  recipe: InteractionStep[];
+};
+
+export type InteractionGroup = {
+  label: string;
+  metadata_key: string;
+  execution: InteractionExecution;
+  options: InteractionOption[];
+};
+
+export type InteractionProfile = {
+  enabled: boolean;
+  max_variant_combinations: number;
+  groups: InteractionGroup[];
+};
+
 export type ExtractionSpecResponse = {
   id: number;
   project_id: number;
@@ -362,6 +395,7 @@ export type ExtractionSpecResponse = {
   page_limit: number;
   export_format: "csv" | "json" | "xlsx" | string;
   crawl_scope: CrawlScope | null;
+  interaction_profile: InteractionProfile | null;
   quality_summary: Record<string, unknown> | null;
   created_at: string;
   updated_at: string | null;
