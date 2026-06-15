@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Sparkles, MousePointerClick, Layers } from "lucide-react";
 import type {
   InteractionGroup,
+  InteractionOption,
   InteractionProfile,
 } from "../../types";
 import {
@@ -61,7 +62,7 @@ export function InteractionsPanel({
     }));
   }
 
-  function toggleOption(gi: number, oi: number) {
+  function patchOption(gi: number, oi: number, next: Partial<InteractionOption>) {
     setDraft((d) => ({
       ...d,
       groups: d.groups.map((g, i) =>
@@ -69,12 +70,28 @@ export function InteractionsPanel({
           ? {
               ...g,
               options: g.options.map((o, j) =>
-                j === oi ? { ...o, selected: !o.selected } : o
+                j === oi ? { ...o, ...next } : o
               ),
             }
           : g
       ),
     }));
+  }
+
+  function toggleOption(gi: number, oi: number) {
+    patchOption(gi, oi, { selected: !draft.groups[gi].options[oi].selected });
+  }
+
+  function setOptionSelector(
+    gi: number,
+    oi: number,
+    fieldName: string,
+    selector: string
+  ) {
+    const current = draft.groups[gi].options[oi].field_selectors ?? {};
+    patchOption(gi, oi, {
+      field_selectors: { ...current, [fieldName]: selector },
+    });
   }
 
   return (
@@ -147,22 +164,75 @@ export function InteractionsPanel({
                   className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink"
                 />
               </label>
-              <div className="flex flex-wrap gap-3">
-                {group.options.map((option, oi) => (
-                  <label key={oi} className="flex items-center gap-1.5 text-sm text-ink">
-                    <input
-                      type="checkbox"
-                      checked={option.selected}
-                      disabled={disabled}
-                      onChange={() => toggleOption(gi, oi)}
-                    />
-                    {option.label}
-                    {option.recipe.length === 0 ? (
-                      <span className="text-[10px] text-muted/70">(no browser)</span>
-                    ) : null}
-                  </label>
-                ))}
-              </div>
+              {group.execution === "deterministic" ? (
+                <div className="grid gap-2">
+                  {group.options.map((option, oi) => (
+                    <div key={oi} className="rounded-md border border-line/70 bg-porcelain/50 p-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={option.selected}
+                          disabled={disabled}
+                          onChange={() => toggleOption(gi, oi)}
+                        />
+                        <input
+                          type="text"
+                          value={option.label}
+                          disabled={disabled}
+                          onChange={(e) => patchOption(gi, oi, { label: e.target.value })}
+                          className="rounded border border-line bg-surface px-2 py-1 text-sm font-semibold text-ink"
+                          aria-label="Variant label"
+                        />
+                        <span className="text-[10px] text-muted/70">(no browser)</span>
+                      </div>
+                      <div className="mt-2 grid gap-1 pl-6">
+                        {Object.entries(option.field_selectors ?? {}).map(
+                          ([fieldName, selector]) => (
+                            <div key={fieldName} className="flex items-center gap-2 text-xs">
+                              <span className="w-32 shrink-0 truncate text-muted" title={fieldName}>
+                                {fieldName}
+                              </span>
+                              <input
+                                type="text"
+                                value={selector}
+                                disabled={disabled}
+                                onChange={(e) =>
+                                  setOptionSelector(gi, oi, fieldName, e.target.value)
+                                }
+                                className="flex-1 rounded border border-line bg-surface px-2 py-1 font-mono text-xs text-ink"
+                                placeholder="CSS selector for this variant's column"
+                              />
+                            </div>
+                          )
+                        )}
+                        {Object.keys(option.field_selectors ?? {}).length === 0 ? (
+                          <span className="text-[10px] text-muted/60">
+                            No per-field selectors — this variant reads the base
+                            field selectors.
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {group.options.map((option, oi) => (
+                    <label key={oi} className="flex items-center gap-1.5 text-sm text-ink">
+                      <input
+                        type="checkbox"
+                        checked={option.selected}
+                        disabled={disabled}
+                        onChange={() => toggleOption(gi, oi)}
+                      />
+                      {option.label}
+                      {option.recipe.length === 0 ? (
+                        <span className="text-[10px] text-muted/70">(no browser)</span>
+                      ) : null}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
 
