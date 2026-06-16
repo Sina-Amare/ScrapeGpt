@@ -283,6 +283,7 @@ async def _project_response(db: AsyncSession, project: Project) -> ProjectRespon
         frontier_preview=_frontier_preview_response(frontier_preview),
         extraction_quality=_extraction_quality(spec),
         preview_stale=preview_stale,
+        current_extraction_run_id=project.current_extraction_run_id,
         progress=await _progress(db, project.id),
         last_activity=last_activity,
         error=project.error,

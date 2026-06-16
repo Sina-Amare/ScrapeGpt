@@ -400,6 +400,8 @@ class ProjectResponse(ProjectListItem):
     frontier_preview: FrontierPreviewResponse | None = None
     extraction_quality: ExtractionQuality | None = None
     preview_stale: bool = False
+    # The completed run whose records/exports are shown (UI/debug clarity).
+    current_extraction_run_id: int | None = None
     progress: ExtractionProgress = Field(default_factory=ExtractionProgress)
     created_at: datetime | None = None
     updated_at: datetime | None = None

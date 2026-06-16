@@ -54,7 +54,12 @@ These must be green before any manual testing. They are the regression net.
 ```powershell
 # Backend — full suite (~16s)
 venv\Scripts\python.exe -m pytest -q
-# Expected: ~554 passed, ~10 skipped
+# Expected: ~564 passed, ~10 skipped
+
+# Optional: real-DB run-model check (non-destructive re-extract, concurrency
+# guard, record idempotency, lease fencing, run-scoped reads). Needs DB at head.
+venv\Scripts\python.exe -m tests.manual.verify_extraction_runs
+# Expected: failures=0
 
 # Optional: real-URL scope-recommendation check (needs network)
 venv\Scripts\python.exe -m tests.manual.verify_scope_recommendation
@@ -284,8 +289,11 @@ Mostly covered by the automated suite; spot‑check live only if you changed the
 
 | Case | How | Expected |
 |------|-----|----------|
-| Crash recovery | kill the backend mid‑extraction, restart | watchdog fails the stuck project after the EXTRACTING timeout (default 10 min); not stuck forever |
-| Lease reaper | (unit‑tested) | FETCHING pages with expired leases reset to PENDING within 60s, active projects only |
+| Crash recovery | kill the backend mid‑extraction, restart | startup watchdog sweep + periodic sweep fail the stuck project/run after the EXTRACTING timeout; not stuck forever (production needs an external supervisor to restart the process) |
+| Concurrent extract | POST /extract twice quickly (or double‑click Extract) | exactly one run starts; the second returns 409 `EXTRACTION_ALREADY_RUNNING` |
+| Non‑destructive retry | complete a run, edit fields, re‑extract, then force a failure | prior records/exports stay visible; `current_extraction_run_id` only moves when the new run completes |
+| Idempotent records | (real‑DB verifier) | re‑processing a page in a run never duplicates rows; `GET /metrics` shows run/page counters |
+| Lease reaper | (unit‑tested) | FETCHING pages with expired leases reset to PENDING (+ lease_token cleared) within 60s, active projects only |
 | Analysis cache | analyze the same URL twice | 2nd is a cache hit (`analyzer.cache_hit` in logs), faster, no 2nd LLM call |
 | Cache not poisoned | a binary/garbage fetch | analysis is **not** cached (`analyzer.cache_skipped_binary_summary`) |
 | Export cap | extract a large set (H) then export | all rows exported in chunks; warning logged if >10k |
