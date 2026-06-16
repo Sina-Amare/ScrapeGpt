@@ -8,7 +8,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,6 +68,21 @@ class CrawlScopeStatus(str, enum.Enum):
     AI_SUGGESTED = "AI_SUGGESTED"
     USER_CONFIRMED = "USER_CONFIRMED"
     SYSTEM_DEFAULTED = "SYSTEM_DEFAULTED"
+
+
+class ExtractionRunState(str, enum.Enum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELED = "CANCELED"
+
+
+# A run is "active" (owns the project's extraction) while QUEUED or RUNNING.
+ACTIVE_EXTRACTION_RUN_STATES = (
+    ExtractionRunState.QUEUED.value,
+    ExtractionRunState.RUNNING.value,
+)
 
 
 CRAWL_SCOPE_VERSION = 1
@@ -245,6 +260,13 @@ class Project(Base):
 
     fetch_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
+    # The completed run whose pages/records/exports the read endpoints surface.
+    # A retry writes to a new run and only promotes it here on success, so a
+    # failed retry leaves prior results visible.
+    current_extraction_run_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("extraction_runs.id", ondelete="SET NULL"), nullable=True
+    )
+
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
@@ -405,14 +427,71 @@ class PreviewResult(Base):
     spec = relationship("ExtractionSpec")
 
 
-class CrawlPage(Base):
-    __tablename__ = "crawl_pages"
-    __table_args__ = (UniqueConstraint("project_id", "normalized_url", name="uq_crawl_pages_project_url"),)
+class ExtractionRun(Base):
+    """One extraction attempt. Crawl pages, records, and exports belong to a run
+    so a re-extraction writes to a NEW run and only becomes visible
+    (``projects.current_extraction_run_id``) once it completes — a failed retry
+    never destroys the previous results. ``state`` is stored as a plain string."""
+
+    __tablename__ = "extraction_runs"
+    __table_args__ = (
+        # At most one QUEUED/RUNNING run per project (serializes /extract).
+        Index(
+            "uq_active_extraction_run_per_project",
+            "project_id",
+            unique=True,
+            postgresql_where=text("state IN ('QUEUED','RUNNING')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    spec_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("extraction_specs.id", ondelete="SET NULL"), nullable=True
+    )
+    spec_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=ExtractionRunState.QUEUED.value
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_pages: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    total_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), nullable=True
+    )
+
+    project = relationship("Project", foreign_keys=[project_id])
+
+
+class CrawlPage(Base):
+    __tablename__ = "crawl_pages"
+    __table_args__ = (
+        UniqueConstraint(
+            "extraction_run_id", "normalized_url", name="uq_crawl_pages_run_url"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    extraction_run_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("extraction_runs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # Fencing token: a worker writes a fresh token when it claims a page and
+    # only finalizes the page / inserts its records if it still owns that token.
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
     normalized_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     state: Mapped[CrawlPageState] = mapped_column(
@@ -441,14 +520,27 @@ class CrawlPage(Base):
 
 class ExtractedRecord(Base):
     __tablename__ = "extracted_records"
+    __table_args__ = (
+        # Idempotency: re-processing the same page in a run cannot duplicate rows.
+        UniqueConstraint(
+            "extraction_run_id", "page_id", "record_ordinal",
+            name="uq_extracted_records_run_page_ordinal",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    extraction_run_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("extraction_runs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     page_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("crawl_pages.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Per-(run,page) row index; with the unique constraint above it makes record
+    # insertion idempotent under retries / re-leases.
+    record_ordinal: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     raw_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     normalized_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
@@ -470,6 +562,9 @@ class Export(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    extraction_run_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("extraction_runs.id", ondelete="CASCADE"), nullable=True, index=True
     )
     format: Mapped[str] = mapped_column(String(16), nullable=False)
     file_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)

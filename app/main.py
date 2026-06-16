@@ -67,6 +67,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         },
     )
 
+    # Recover state left stuck by a previous process death BEFORE scheduling
+    # periodic sweeps, so a restart (by an external supervisor — which
+    # production still requires) immediately fails orphaned runs/projects.
+    try:
+        from app.services.watchdog import run_watchdog_once
+        await run_watchdog_once()
+        logger.info("watchdog.startup_sweep_complete")
+    except Exception:
+        logger.exception("watchdog.startup_sweep_failed")
+
     # Start background scheduler
     from app.core.scheduler import start_scheduler
     start_scheduler()

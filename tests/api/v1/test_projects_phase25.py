@@ -1,6 +1,7 @@
 """Step 3 API contract tests: frontier preview, records-page, scope enforcement, quality exposure."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -285,9 +286,9 @@ async def test_extract_proceeds_when_scope_confirmed(async_client, app, monkeypa
         return None  # no preview; extract_anyway bypasses the preview gate
 
     async def fake_start_extraction(db, project, spec, *, allow_unconfirmed=False):
-        pass  # succeeds
+        return SimpleNamespace(id=4242)  # the new run
 
-    async def fake_execute(project_id, spec_id):
+    async def fake_execute(project_id, spec_id, run_id=None):
         pass
 
     async def fake_ensure_default_spec(db, proj):
@@ -310,6 +311,39 @@ async def test_extract_proceeds_when_scope_confirmed(async_client, app, monkeypa
     response = await async_client.post("/api/v1/projects/1/extract", json={"extract_anyway": True})
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_extract_returns_409_when_already_running(async_client, app, monkeypatch):
+    """A second /extract while a run is active returns 409 EXTRACTION_ALREADY_RUNNING."""
+    from app.services.project_extraction import ExtractionAlreadyRunningError
+
+    project = _project(state=ProjectState.PREVIEW_READY)
+    spec = _spec(crawl_scope={"mode": "PAGINATION", "status": "USER_CONFIRMED"})
+
+    async def fake_latest_spec(db, project_id):
+        return spec
+
+    async def fake_latest_preview(db, project_id):
+        m = MagicMock()
+        m.sample_records = [{"id": 1}]
+        m.created_at = datetime.now(timezone.utc)
+        m.spec_id = spec.id
+        return m
+
+    async def fake_start(db, project, spec, *, allow_unconfirmed=False):
+        raise ExtractionAlreadyRunningError("already running")
+
+    monkeypatch.setattr("app.api.v1.endpoints.projects.latest_spec", fake_latest_spec)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.latest_preview", fake_latest_preview)
+    monkeypatch.setattr("app.api.v1.endpoints.projects.start_project_extraction", fake_start)
+
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeSession(project=project, spec=spec))
+
+    response = await async_client.post("/api/v1/projects/1/extract", json={"extract_anyway": True})
+    assert response.status_code == 409
+    assert response.json()["detail"]["error_code"] == "EXTRACTION_ALREADY_RUNNING"
 
 
 # ─── Frontier preview endpoints ───────────────────────────────────────────────

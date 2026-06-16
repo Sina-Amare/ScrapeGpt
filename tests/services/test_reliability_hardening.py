@@ -23,6 +23,7 @@ from app.models.job import (
     CrawlPage,
     CrawlPageState,
     ExtractionMode,
+    ExtractionRun,
     ExtractionSpec,
     Project,
     ProjectState,
@@ -544,6 +545,9 @@ class FakeExtractionDB:
         self.pages_zero_match = pages_zero_match
         self.commits = 0
         self.added = []
+        self.run = ExtractionRun(
+            id=9001, project_id=project.id, spec_id=spec.id, state="RUNNING"
+        )
 
     async def __aenter__(self):
         return self
@@ -556,6 +560,8 @@ class FakeExtractionDB:
             return self.project
         if model == ExtractionSpec and pk == self.spec.id:
             return self.spec
+        if model == ExtractionRun and pk == self.run.id:
+            return self.run
         return None
 
     async def commit(self):
@@ -642,8 +648,16 @@ async def test_execute_project_extraction_all_pages_failed_real_path(
     async def not_canceled(db, project_id):
         return False
 
-    async def next_pending_page(db, project_id):
-        return pending_pages.pop(0) if pending_pages else None
+    async def next_pending_page(db, run_id):
+        page = pending_pages.pop(0) if pending_pages else None
+        if page is None:
+            return None
+        page.state = CrawlPageState.FETCHING
+        page.lease_token = "tok"
+        return page, "tok"
+
+    async def _owns_lease(db, page_id, token):
+        return True
 
     monkeypatch.setattr(
         project_extraction,
@@ -652,16 +666,17 @@ async def test_execute_project_extraction_all_pages_failed_real_path(
     )
     monkeypatch.setattr(
         project_extraction,
-        "_pending_page",
+        "_claim_pending_page",
         next_pending_page,
     )
+    monkeypatch.setattr(project_extraction, "_still_owns_lease", _owns_lease)
 
     async def fake_fetch_url(url, render_mode, **kwargs):
         raise FetchError("boom", "FETCH_FAILED")
 
     monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
 
-    await project_extraction.execute_project_extraction(project.id, spec.id)
+    await project_extraction.execute_project_extraction(project.id, spec.id, db.run.id)
 
     assert project.state == ProjectState.FAILED
     assert project.error_code == "ALL_PAGES_FAILED"
@@ -701,8 +716,16 @@ async def test_execute_project_extraction_blocks_cloudflare_challenge(
     async def not_canceled(db, project_id):
         return False
 
-    async def next_pending_page(db, project_id):
-        return pending_pages.pop(0) if pending_pages else None
+    async def next_pending_page(db, run_id):
+        page = pending_pages.pop(0) if pending_pages else None
+        if page is None:
+            return None
+        page.state = CrawlPageState.FETCHING
+        page.lease_token = "tok"
+        return page, "tok"
+
+    async def _owns_lease(db, page_id, token):
+        return True
 
     async def fake_fetch_url(url, render_mode, **kwargs):
         return SimpleNamespace(
@@ -715,10 +738,11 @@ async def test_execute_project_extraction_blocks_cloudflare_challenge(
         )
 
     monkeypatch.setattr(project_extraction, "_project_was_canceled", not_canceled)
-    monkeypatch.setattr(project_extraction, "_pending_page", next_pending_page)
+    monkeypatch.setattr(project_extraction, "_claim_pending_page", next_pending_page)
+    monkeypatch.setattr(project_extraction, "_still_owns_lease", _owns_lease)
     monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
 
-    await project_extraction.execute_project_extraction(project.id, spec.id)
+    await project_extraction.execute_project_extraction(project.id, spec.id, db.run.id)
 
     assert project.state == ProjectState.FAILED
     assert project.error_code == "ALL_PAGES_FAILED"
@@ -773,8 +797,16 @@ async def test_execute_project_extraction_fails_structured_zero_records(
     async def not_canceled(db, project_id):
         return False
 
-    async def next_pending_page(db, project_id):
-        return pending_pages.pop(0) if pending_pages else None
+    async def next_pending_page(db, run_id):
+        page = pending_pages.pop(0) if pending_pages else None
+        if page is None:
+            return None
+        page.state = CrawlPageState.FETCHING
+        page.lease_token = "tok"
+        return page, "tok"
+
+    async def _owns_lease(db, page_id, token):
+        return True
 
     async def crawl_page_count(db, project_id):
         return 1
@@ -786,11 +818,12 @@ async def test_execute_project_extraction_fails_structured_zero_records(
         )
 
     monkeypatch.setattr(project_extraction, "_project_was_canceled", not_canceled)
-    monkeypatch.setattr(project_extraction, "_pending_page", next_pending_page)
+    monkeypatch.setattr(project_extraction, "_claim_pending_page", next_pending_page)
+    monkeypatch.setattr(project_extraction, "_still_owns_lease", _owns_lease)
     monkeypatch.setattr(project_extraction, "_crawl_page_count", crawl_page_count)
     monkeypatch.setattr(project_extraction, "fetch_url", fake_fetch_url)
 
-    await project_extraction.execute_project_extraction(project.id, spec.id)
+    await project_extraction.execute_project_extraction(project.id, spec.id, db.run.id)
 
     assert project.state == ProjectState.FAILED
     assert project.error_code == "NO_RECORDS_EXTRACTED"
@@ -843,8 +876,16 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
     async def not_canceled(db, project_id):
         return False
 
-    async def next_pending_page(db, project_id):
-        return pending_pages.pop(0) if pending_pages else None
+    async def next_pending_page(db, run_id):
+        page = pending_pages.pop(0) if pending_pages else None
+        if page is None:
+            return None
+        page.state = CrawlPageState.FETCHING
+        page.lease_token = "tok"
+        return page, "tok"
+
+    async def _owns_lease(db, page_id, token):
+        return True
 
     async def crawl_page_count(db, project_id):
         return 1
@@ -862,9 +903,10 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
     )
     monkeypatch.setattr(
         project_extraction,
-        "_pending_page",
+        "_claim_pending_page",
         next_pending_page,
     )
+    monkeypatch.setattr(project_extraction, "_still_owns_lease", _owns_lease)
     monkeypatch.setattr(
         project_extraction,
         "_crawl_page_count",
@@ -883,7 +925,7 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
         lambda *args, **kwargs: [],
     )
 
-    await project_extraction.execute_project_extraction(project.id, spec.id)
+    await project_extraction.execute_project_extraction(project.id, spec.id, db.run.id)
 
     assert project.state == ProjectState.FAILED
     assert project.error_code == "EXTRACTION_FAILED"

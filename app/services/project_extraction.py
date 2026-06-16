@@ -6,22 +6,27 @@ import asyncio
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.log_context import set_page_context, set_task_context
 from app.db.database import async_session_factory
 from app.models.job import (
+    ACTIVE_EXTRACTION_RUN_STATES,
     CrawlPage,
     CrawlPageState,
     Export,
     ExtractedRecord,
     ExtractionMode,
+    ExtractionRun,
+    ExtractionRunState,
     ExtractionSpec,
     Project,
     ProjectState,
@@ -68,20 +73,39 @@ def _spec_hash(spec: ExtractionSpec) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+class ExtractionAlreadyRunningError(RuntimeError):
+    """Raised when a project already has an active (QUEUED/RUNNING) run."""
+
+    code = "EXTRACTION_ALREADY_RUNNING"
+
+
+async def _active_run(db: AsyncSession, project_id: int) -> ExtractionRun | None:
+    return (
+        await db.execute(
+            select(ExtractionRun).where(
+                ExtractionRun.project_id == project_id,
+                ExtractionRun.state.in_(ACTIVE_EXTRACTION_RUN_STATES),
+            )
+        )
+    ).scalars().first()
+
+
 async def start_project_extraction(
     db: AsyncSession,
     project: Project,
     spec: ExtractionSpec,
     *,
     allow_unconfirmed: bool = False,
-) -> None:
-    """Prepare extraction state and queue the seed page.
+) -> ExtractionRun:
+    """Create a new extraction run and queue its seed page (non-destructive).
 
-    Enforces the scope confirmation policy. By default, non-CURRENT_PAGE
-    scopes with status != USER_CONFIRMED are rejected with
-    ``ScopeConfirmationError``. The API layer is expected to translate
-    that error into HTTP 409. The background executor and tests may pass
-    ``allow_unconfirmed=True`` for explicit legacy-compat paths.
+    Serializes concurrent starts: the project row is locked ``FOR UPDATE`` and a
+    pre-check (backed by a partial unique index) rejects a second active run with
+    :class:`ExtractionAlreadyRunningError`. Prior pages/records/exports are NOT
+    deleted — the new run is invisible to read endpoints until it completes and
+    is promoted to ``project.current_extraction_run_id``.
+
+    Enforces the scope confirmation policy (``ScopeConfirmationError``).
     """
     assert_scope_confirmed(
         spec.crawl_scope,
@@ -89,18 +113,41 @@ async def start_project_extraction(
         allow_legacy_missing=True,
         project_id=project.id,
     )
+
+    # Lock the project row so two concurrent /extract calls serialize here.
+    await db.execute(
+        select(Project.id).where(Project.id == project.id).with_for_update()
+    )
+    if await _active_run(db, project.id) is not None:
+        raise ExtractionAlreadyRunningError(
+            f"Project {project.id} already has an extraction in progress."
+        )
+
+    run = ExtractionRun(
+        project_id=project.id,
+        spec_id=spec.id,
+        spec_hash=_spec_hash(spec),
+        state=ExtractionRunState.RUNNING.value,
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(run)
+    try:
+        await db.flush()  # assigns run.id; partial unique index is the final guard
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ExtractionAlreadyRunningError(
+            f"Project {project.id} already has an extraction in progress."
+        ) from exc
+
     project.transition_to(ProjectState.DISCOVERING)
     project.error = None
     project.error_code = None
-
-    await db.execute(delete(ExtractedRecord).where(ExtractedRecord.project_id == project.id))
-    await db.execute(delete(CrawlPage).where(CrawlPage.project_id == project.id))
-    await db.execute(delete(Export).where(Export.project_id == project.id))
 
     normalized = normalize_url(project.normalized_url or project.url)
     db.add(
         CrawlPage(
             project_id=project.id,
+            extraction_run_id=run.id,
             url=project.url,
             normalized_url=normalized,
             state=CrawlPageState.PENDING,
@@ -108,6 +155,7 @@ async def start_project_extraction(
         )
     )
     await db.flush()
+    return run
 
 
 def select_links_to_enqueue(
@@ -164,18 +212,49 @@ async def _project_was_canceled(db: AsyncSession, project_id: int) -> bool:
     return state == ProjectState.CANCELED
 
 
-async def _pending_page(db: AsyncSession, project_id: int) -> CrawlPage | None:
+async def _claim_pending_page(
+    db: AsyncSession, run_id: int
+) -> tuple[CrawlPage, str] | None:
+    """Atomically claim the next PENDING page for a run and fence it.
+
+    Uses ``FOR UPDATE SKIP LOCKED`` so two workers on the same run never grab the
+    same row, and stamps a fresh ``lease_token`` the worker must still own to
+    finalize the page. Returns (page, lease_token) or None when none remain.
+    """
     result = await db.execute(
         select(CrawlPage)
-        .where(CrawlPage.project_id == project_id, CrawlPage.state == CrawlPageState.PENDING)
+        .where(
+            CrawlPage.extraction_run_id == run_id,
+            CrawlPage.state == CrawlPageState.PENDING,
+        )
         .order_by(CrawlPage.depth.asc(), CrawlPage.id.asc())
         .limit(1)
+        .with_for_update(skip_locked=True)
     )
-    return result.scalar_one_or_none()
+    page = result.scalar_one_or_none()
+    if page is None:
+        return None
+    token = uuid.uuid4().hex
+    page.state = CrawlPageState.FETCHING
+    page.lease_token = token
+    page.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+    return page, token
 
 
-async def _crawl_page_count(db: AsyncSession, project_id: int) -> int:
-    value = await db.scalar(select(func.count(CrawlPage.id)).where(CrawlPage.project_id == project_id))
+async def _still_owns_lease(db: AsyncSession, page_id: int, token: str) -> bool:
+    """Re-check (under row lock) that this worker still owns the page lease."""
+    result = await db.execute(
+        select(CrawlPage).where(CrawlPage.id == page_id).with_for_update()
+    )
+    page = result.scalar_one_or_none()
+    return page is not None and page.lease_token == token
+
+
+async def _crawl_page_count(db: AsyncSession, run_id: int) -> int:
+    value = await db.scalar(
+        select(func.count(CrawlPage.id)).where(CrawlPage.extraction_run_id == run_id)
+    )
     return int(value or 0)
 
 
@@ -183,6 +262,7 @@ async def _insert_discovered_pages(
     db: AsyncSession,
     *,
     project_id: int,
+    run_id: int,
     urls: list[str],
     depth: int,
     remaining_slots: int,
@@ -192,6 +272,7 @@ async def _insert_discovered_pages(
     rows = [
         {
             "project_id": project_id,
+            "extraction_run_id": run_id,
             "url": url,
             "normalized_url": url,
             "state": CrawlPageState.PENDING.value,
@@ -200,14 +281,29 @@ async def _insert_discovered_pages(
         for url in urls[:remaining_slots]
     ]
     statement = insert(CrawlPage).values(rows).on_conflict_do_nothing(
-        constraint="uq_crawl_pages_project_url"
+        constraint="uq_crawl_pages_run_url"
     )
     result = await db.execute(statement)
     return int(result.rowcount or 0)
 
 
+async def _mark_run_failed(
+    db: AsyncSession, run_id: int | None, message: str, code: str
+) -> None:
+    """Mark a run FAILED without touching the project's current (visible) run."""
+    if run_id is None:
+        return
+    run = await db.get(ExtractionRun, run_id)
+    if run is not None and run.state in ACTIVE_EXTRACTION_RUN_STATES:
+        run.state = ExtractionRunState.FAILED.value
+        run.error = message
+        run.error_code = code
+        run.finished_at = datetime.now(timezone.utc)
+
+
 async def _mark_project_failed(
-    db: AsyncSession, project: Project, message: str, code: str
+    db: AsyncSession, project: Project, message: str, code: str,
+    *, run_id: int | None = None,
 ) -> None:
     """Transition project to FAILED, enforcing the state machine.
 
@@ -216,6 +312,9 @@ async def _mark_project_failed(
     error and force the transition as a defensive fallback — this
     should not happen with the current transition table but must
     not leave the project in an active state.
+
+    Also marks the active run FAILED (``run_id``) but never clears
+    ``current_extraction_run_id`` — the previous completed run stays visible.
     """
     if project.state == ProjectState.FAILED:
         # Already failed — just update error details.
@@ -233,6 +332,7 @@ async def _mark_project_failed(
         project.state = ProjectState.FAILED
     project.error = message
     project.error_code = code
+    await _mark_run_failed(db, run_id, message, code)
     await db.commit()
     await record_project_event(
         project.id,
@@ -244,11 +344,13 @@ async def _mark_project_failed(
     )
 
 
-async def execute_project_extraction(project_id: int, spec_id: int) -> None:
-    """Run the crawl/extract pipeline as a background task."""
+async def execute_project_extraction(
+    project_id: int, spec_id: int, run_id: int | None = None
+) -> None:
+    """Run the crawl/extract pipeline for one run as a background task."""
     logger.info(
         "project_extraction.started",
-        extra={"project_id": project_id, "spec_id": spec_id},
+        extra={"project_id": project_id, "spec_id": spec_id, "run_id": run_id},
     )
     async with async_session_factory() as db:
         project = await db.get(Project, project_id)
@@ -262,6 +364,25 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 },
             )
             return
+
+        # Resolve the run this task owns. Legacy callers without run_id fall back
+        # to the project's active run (defensive; the API always passes run_id).
+        run = await db.get(ExtractionRun, run_id) if run_id is not None else None
+        if run is None:
+            run = await _active_run(db, project_id)
+        if run is None or run.project_id != project_id:
+            logger.error(
+                "project_extraction.no_active_run",
+                extra={"project_id": project_id, "run_id": run_id},
+            )
+            return
+        if run.state not in ACTIVE_EXTRACTION_RUN_STATES:
+            logger.info(
+                "project_extraction.run_not_active",
+                extra={"project_id": project_id, "run_id": run.id, "state": run.state},
+            )
+            return
+        run_id = run.id
 
         set_task_context(
             project_id=project_id,
@@ -331,13 +452,10 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     logger.info("project_extraction.canceled", extra={"project_id": project_id})
                     return
 
-                page = await _pending_page(db, project_id)
-                if page is None:
+                claimed = await _claim_pending_page(db, run_id)
+                if claimed is None:
                     break
-
-                page.state = CrawlPageState.FETCHING
-                page.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-                await db.commit()
+                page, lease_token = claimed
                 set_page_context(page_id=page.id)
 
                 try:
@@ -402,7 +520,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     page.url = fetched.final_url
                     page.normalized_url = normalize_url(fetched.final_url)
 
-                    current_count = await _crawl_page_count(db, project_id)
+                    current_count = await _crawl_page_count(db, run_id)
                     remaining = max(0, page_limit - current_count)
                     if isinstance(scope, dict) and scope_mode:
                         links = select_links_to_enqueue(
@@ -428,6 +546,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     await _insert_discovered_pages(
                         db,
                         project_id=project_id,
+                        run_id=run_id,
                         urls=links,
                         depth=page.depth + 1,
                         remaining_slots=remaining,
@@ -477,15 +596,40 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                             "extraction.variant_warning",
                             extra={"project_id": project_id, "page_id": page.id, "warning": w},
                         )
-                    for item in extracted:
-                        db.add(
-                            ExtractedRecord(
-                                project_id=project.id,
-                                page_id=page.id,
-                                source_url=fetched.final_url,
-                                raw_data=item.raw_data,
-                                normalized_data=item.normalized_data,
-                                warnings=item.warnings,
+
+                    # Fencing: only write/finalize if we still own the lease.
+                    # If the watchdog reclaimed this slow page, skip silently so we
+                    # don't double-insert under another owner.
+                    if not await _still_owns_lease(db, page.id, lease_token):
+                        logger.warning(
+                            "extraction.page_lease_lost",
+                            extra={"project_id": project_id, "page_id": page.id, "run_id": run_id},
+                        )
+                        await db.rollback()
+                        processed_pages += 1
+                        continue
+
+                    if extracted:
+                        record_rows = [
+                            {
+                                "project_id": project.id,
+                                "extraction_run_id": run_id,
+                                "page_id": page.id,
+                                "record_ordinal": idx,
+                                "source_url": fetched.final_url,
+                                "raw_data": item.raw_data,
+                                "normalized_data": item.normalized_data,
+                                "warnings": item.warnings,
+                            }
+                            for idx, item in enumerate(extracted)
+                        ]
+                        # ON CONFLICT DO NOTHING on (run, page, ordinal) makes
+                        # re-processing the same page idempotent.
+                        await db.execute(
+                            insert(ExtractedRecord)
+                            .values(record_rows)
+                            .on_conflict_do_nothing(
+                                constraint="uq_extracted_records_run_page_ordinal"
                             )
                         )
                     total_records += len(extracted)
@@ -525,7 +669,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     page.block_reason = exc.code
                     page.lease_expires_at = None
                     await db.commit()
-                    await _mark_project_failed(db, project, str(exc), exc.code)
+                    await _mark_project_failed(db, project, str(exc), exc.code, run_id=run_id)
                     logger.warning(
                         "extraction.interaction_failed",
                         extra={"project_id": project_id, "error_code": exc.code},
@@ -560,7 +704,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             # CrawlPage row for debugging.
             pages_extracted = await db.scalar(
                 select(func.count(CrawlPage.id)).where(
-                    CrawlPage.project_id == project_id,
+                    CrawlPage.extraction_run_id == run_id,
                     CrawlPage.state == CrawlPageState.EXTRACTED,
                 )
             )
@@ -571,7 +715,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             # ALL_PAGES_FAILED (couldn't fetch anything).
             pages_zero_match = int(await db.scalar(
                 select(func.count(CrawlPage.id)).where(
-                    CrawlPage.project_id == project_id,
+                    CrawlPage.extraction_run_id == run_id,
                     CrawlPage.state == CrawlPageState.FAILED,
                     CrawlPage.block_reason == "SELECTOR_ZERO_MATCH",
                 )
@@ -592,13 +736,13 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     # so the UI can offer a session-based retry.
                     blocked_rows = (await db.execute(
                         select(CrawlPage.block_reason).where(
-                            CrawlPage.project_id == project_id,
+                            CrawlPage.extraction_run_id == run_id,
                             CrawlPage.state == CrawlPageState.BLOCKED,
                         )
                     )).scalars().all()
                     failed_count = int(await db.scalar(
                         select(func.count(CrawlPage.id)).where(
-                            CrawlPage.project_id == project_id,
+                            CrawlPage.extraction_run_id == run_id,
                             CrawlPage.state == CrawlPageState.FAILED,
                         )
                     ) or 0)
@@ -624,7 +768,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                             "were blocked during extraction"
                         )
                         code = "ALL_PAGES_FAILED"
-                    await _mark_project_failed(db, project, msg, code)
+                    await _mark_project_failed(db, project, msg, code, run_id=run_id)
                 return
 
             if spec.mode == ExtractionMode.STRUCTURED and total_records == 0:
@@ -648,6 +792,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                             f"nothing. Adjust the fields and run Preview again."
                         ),
                         "NO_RECORDS_EXTRACTED",
+                        run_id=run_id,
                     )
                 return
 
@@ -672,7 +817,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 records = (
                     await db.execute(
                         select(ExtractedRecord).where(
-                            ExtractedRecord.project_id == project_id
+                            ExtractedRecord.extraction_run_id == run_id
                         )
                     )
                 ).scalars().all()
@@ -681,7 +826,7 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                     1
                     for page_row in (
                         await db.execute(
-                            select(CrawlPage).where(CrawlPage.project_id == project_id)
+                            select(CrawlPage).where(CrawlPage.extraction_run_id == run_id)
                         )
                     ).scalars()
                     if page_row.state == CrawlPageState.FAILED
@@ -716,14 +861,27 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
                 )
                 spec.quality_summary = {}
 
+            # Use the authoritative DB count for this run (idempotent inserts
+            # mean total_records could double-count on a re-leased page).
+            run_record_count = len(records)
             db.add(
                 Export(
                     project_id=project.id,
+                    extraction_run_id=run_id,
                     format=spec.export_format or "csv",
-                    record_count=total_records,
+                    record_count=run_record_count,
                     spec_hash=_spec_hash(spec),
                 )
             )
+            # Promote this run: mark it COMPLETED and make it the project's
+            # visible run. Only now do prior results get superseded.
+            run = await db.get(ExtractionRun, run_id)
+            if run is not None:
+                run.state = ExtractionRunState.COMPLETED.value
+                run.finished_at = datetime.now(timezone.utc)
+                run.total_pages = await _crawl_page_count(db, run_id)
+                run.total_records = run_record_count
+            project.current_extraction_run_id = run_id
             project.transition_to(ProjectState.COMPLETED)
             await db.commit()
             await record_project_event(
@@ -749,12 +907,19 @@ async def execute_project_extraction(project_id: int, spec_id: int) -> None:
             logger.exception("project_extraction.scope_unconfirmed", extra={"project_id": project_id, "error": str(exc)})
             project = await db.get(Project, project_id)
             if project and project.state != ProjectState.CANCELED:
-                await _mark_project_failed(db, project, str(exc), exc.code)
+                await _mark_project_failed(db, project, str(exc), exc.code, run_id=run_id)
         except Exception as exc:
             logger.exception("project_extraction.failed", extra={"project_id": project_id, "error": str(exc)})
             project = await db.get(Project, project_id)
             if project and project.state != ProjectState.CANCELED:
-                await _mark_project_failed(db, project, f"Extraction failed: {exc}", "EXTRACTION_FAILED")
+                await _mark_project_failed(db, project, f"Extraction failed: {exc}", "EXTRACTION_FAILED", run_id=run_id)
+
+
+async def _current_run_id(db: AsyncSession, project_id: int) -> int | None:
+    """The completed run the read endpoints should surface for a project."""
+    return await db.scalar(
+        select(Project.current_extraction_run_id).where(Project.id == project_id)
+    )
 
 
 async def list_records(
@@ -763,9 +928,12 @@ async def list_records(
     skip: int,
     limit: int,
 ) -> list[ExtractedRecord]:
+    run_id = await _current_run_id(db, project_id)
+    if run_id is None:
+        return []
     result = await db.execute(
         select(ExtractedRecord)
-        .where(ExtractedRecord.project_id == project_id)
+        .where(ExtractedRecord.extraction_run_id == run_id)
         .order_by(ExtractedRecord.id.asc())
         .offset(skip)
         .limit(limit)
@@ -774,7 +942,12 @@ async def list_records(
 
 
 async def count_records(db: AsyncSession, project_id: int) -> int:
+    run_id = await _current_run_id(db, project_id)
+    if run_id is None:
+        return 0
     result = await db.scalar(
-        select(func.count(ExtractedRecord.id)).where(ExtractedRecord.project_id == project_id)
+        select(func.count(ExtractedRecord.id)).where(
+            ExtractedRecord.extraction_run_id == run_id
+        )
     )
     return int(result or 0)

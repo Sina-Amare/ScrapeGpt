@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_db
 from app.core.rate_limit import SCRAPE_RATE_LIMIT, limiter
 from app.models.job import (
+    ACTIVE_EXTRACTION_RUN_STATES,
     ACTIVE_PROJECT_STATES,
     DELETABLE_PROJECT_STATES,
     CrawlPage,
@@ -34,6 +35,7 @@ from app.models.job import (
     Export,
     ExtractedRecord,
     ExtractionMode,
+    ExtractionRun,
     ExtractionSpec,
     Project,
     ProjectState,
@@ -73,7 +75,13 @@ from app.services.job_admission import JobAdmissionError, JobAdmissionErrorType,
 from app.services.job_executor import execute_job_pipeline
 from app.services.job_state import transition_job_to_canceled
 from app.services.project_lifecycle import delete_project_tree
-from app.services.project_extraction import count_records, execute_project_extraction, list_records, start_project_extraction
+from app.services.project_extraction import (
+    ExtractionAlreadyRunningError,
+    count_records,
+    execute_project_extraction,
+    list_records,
+    start_project_extraction,
+)
 from app.services.project_preview import create_preview, latest_preview
 from app.services.project_retry import RetryError, retry_failed_project
 from app.services.project_status import confidence_label, detected_type, product_status_for
@@ -83,15 +91,34 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 logger = logging.getLogger(__name__)
 
 
+async def _display_run_id(db: AsyncSession, project_id: int) -> int | None:
+    """The run whose progress/pages we surface: the active run if one is in
+    flight (so live progress shows), else the project's current completed run."""
+    active = await db.scalar(
+        select(ExtractionRun.id).where(
+            ExtractionRun.project_id == project_id,
+            ExtractionRun.state.in_(ACTIVE_EXTRACTION_RUN_STATES),
+        )
+    )
+    if active is not None:
+        return active
+    return await db.scalar(
+        select(Project.current_extraction_run_id).where(Project.id == project_id)
+    )
+
+
 async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
+    run_id = await _display_run_id(db, project_id)
+    if run_id is None:
+        return ExtractionProgress()
     crawl_pages_total = await db.scalar(
         select(func.count(CrawlPage.id)).where(
-            CrawlPage.project_id == project_id
+            CrawlPage.extraction_run_id == run_id
         )
     )
     page_counts_result = await db.execute(
         select(CrawlPage.state, func.count(CrawlPage.id))
-        .where(CrawlPage.project_id == project_id)
+        .where(CrawlPage.extraction_run_id == run_id)
         .group_by(CrawlPage.state)
     )
     page_counts = {
@@ -100,17 +127,17 @@ async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
     }
     records = await db.scalar(
         select(func.count(ExtractedRecord.id)).where(
-            ExtractedRecord.project_id == project_id
+            ExtractedRecord.extraction_run_id == run_id
         )
     )
     exports = await db.scalar(
-        select(func.count(Export.id)).where(Export.project_id == project_id)
+        select(func.count(Export.id)).where(Export.extraction_run_id == run_id)
     )
 
     blocked_rows = (await db.execute(
         select(CrawlPage.normalized_url, CrawlPage.block_reason, CrawlPage.error)
         .where(
-            CrawlPage.project_id == project_id,
+            CrawlPage.extraction_run_id == run_id,
             CrawlPage.state == CrawlPageState.BLOCKED,
         )
         .limit(100)
@@ -127,7 +154,7 @@ async def _progress(db: AsyncSession, project_id: int) -> ExtractionProgress:
     failed_rows = (await db.execute(
         select(CrawlPage.normalized_url, CrawlPage.block_reason, CrawlPage.error)
         .where(
-            CrawlPage.project_id == project_id,
+            CrawlPage.extraction_run_id == run_id,
             CrawlPage.state == CrawlPageState.FAILED,
         )
         .limit(50)
@@ -645,15 +672,20 @@ async def extract_project(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project is not ready for extraction")
 
     try:
-        await start_project_extraction(db, project, spec)
+        run = await start_project_extraction(db, project, spec)
     except ScopeConfirmationError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"message": str(exc), "error_code": exc.code, "scope": exc.scope},
         )
+    except ExtractionAlreadyRunningError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": str(exc), "error_code": exc.code},
+        )
     await db.commit()
     await db.refresh(project)
-    background_tasks.add_task(execute_project_extraction, project.id, spec.id)
+    background_tasks.add_task(execute_project_extraction, project.id, spec.id, run.id)
     return await _project_response(db, project)
 
 

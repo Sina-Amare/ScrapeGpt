@@ -33,9 +33,12 @@ from sqlalchemy import select, func, update
 from app.core.config import settings
 from app.db.database import async_session_factory
 from app.models.job import (
+    ACTIVE_EXTRACTION_RUN_STATES,
     AnalysisCache,
     CrawlPage,
     CrawlPageState,
+    ExtractionRun,
+    ExtractionRunState,
     Job,
     JobState,
     Project,
@@ -307,6 +310,9 @@ async def cleanup_expired_crawl_page_leases() -> int:
         for page in expired_pages:
             page.state = CrawlPageState.PENDING
             page.lease_expires_at = None
+            # Clear the fencing token so the previous (lost) worker can no longer
+            # finalize this page — only a fresh claimant's token will match.
+            page.lease_token = None
             page.error = None
             reset_count += 1
             logger.info(
@@ -469,7 +475,30 @@ async def cleanup_stuck_projects() -> int:
                 },
             )
 
-        if cleaned > 0:
+        # Keep run state consistent with project state: any active run whose
+        # project the watchdog just failed (or that is otherwise FAILED) is
+        # marked FAILED. current_extraction_run_id is left untouched so the
+        # previous completed run stays visible.
+        run_stmt = (
+            update(ExtractionRun)
+            .where(
+                ExtractionRun.state.in_(ACTIVE_EXTRACTION_RUN_STATES),
+                ExtractionRun.project_id.in_(
+                    select(Project.id).where(Project.state == ProjectState.FAILED)
+                ),
+            )
+            .values(
+                state=ExtractionRunState.FAILED.value,
+                finished_at=now,
+                error="Watchdog: project failed while run was active",
+                error_code="EXTRACTION_FAILED",
+            )
+        )
+        runs_failed = (await db.execute(run_stmt)).rowcount or 0
+        if runs_failed:
+            logger.info("watchdog.run_failed", extra={"count": runs_failed})
+
+        if cleaned > 0 or runs_failed:
             await db.commit()
 
     return cleaned
