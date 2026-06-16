@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -117,7 +118,9 @@ async def build_selector_preview_payload(
         )
     except FetchError as exc:
         raise RuntimeError(str(exc)) from exc
-    challenge_reason = anti_bot_challenge_reason(fetched.html, fetched.final_url)
+    challenge_reason = await asyncio.to_thread(
+        anti_bot_challenge_reason, fetched.html, fetched.final_url
+    )
     if challenge_reason:
         raise RuntimeError(
             CHALLENGE_MESSAGES.get(challenge_reason, f"Anti-bot challenge detected: {challenge_reason}")

@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 from dataclasses import dataclass
 from typing import Any, Sequence
+
+from app.core.metrics import record_rate_limit_retry
 
 from cryptography.fernet import Fernet
 from pydantic import BaseModel, ValidationError
@@ -50,6 +53,40 @@ class ProviderJSONError(ProviderServiceError):
 
 class ProviderCallError(ProviderServiceError):
     """Raised when the provider call fails before parsing."""
+
+    def __init__(self, message: str, *, rate_limited: bool = False) -> None:
+        super().__init__(message)
+        self.rate_limited = rate_limited
+
+
+_RATE_LIMIT_TOKENS = ("rate limit", "ratelimit", "429", "too many requests")
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Whether an exception represents a provider rate limit (HTTP 429)."""
+    status = getattr(exc, "status_code", None)
+    if status == 429:
+        return True
+    if type(exc).__name__ in ("RateLimitError", "Throttled"):
+        return True
+    return any(t in str(exc).lower() for t in _RATE_LIMIT_TOKENS)
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    """Best-effort parse of a provider ``Retry-After`` hint (seconds)."""
+    for attr in ("retry_after", "retry_after_ms"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, (int, float)) and val > 0:
+            return float(val) / (1000.0 if attr.endswith("_ms") else 1.0)
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers:
+        try:
+            raw = headers.get("retry-after") or headers.get("Retry-After")
+            if raw is not None:
+                return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    return None
 
 
 class CapabilityProbeResponse(BaseModel):
@@ -312,6 +349,11 @@ def _extract_message_content(response: Any) -> str:
     return content
 
 
+_RATE_LIMIT_MAX_RETRIES = 4
+_RATE_LIMIT_BASE_DELAY = 1.0  # seconds
+_RATE_LIMIT_MAX_DELAY = 30.0  # seconds
+
+
 async def _completion(
     provider_config: ProviderConfig,
     api_key: str,
@@ -332,19 +374,52 @@ async def _completion(
         if response_format is not None:
             kwargs["response_format"] = response_format
 
-        # asyncio.wait_for guarantees the timeout fires even when LiteLLM's
-        # internal HTTP client does not raise (e.g. slow free-tier models that
-        # queue the request without ever timing out at the TCP layer).
-        try:
-            response = await asyncio.wait_for(
-                litellm.acompletion(**kwargs),
-                timeout=settings.LLM_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            raise ProviderCallError(
-                f"Provider did not respond within {settings.LLM_TIMEOUT}s (timeout)."
-            )
-        return _extract_message_content(response)
+        # Rate-limit (429) backoff: honor Retry-After, else exponential backoff
+        # with jitter. This is a TRANSPORT retry — distinct from the JSON-mode
+        # fallback in call_json_model, which must NOT treat 429 as "no native
+        # JSON". The recommended free tier is exactly the path that 429s.
+        for attempt in range(_RATE_LIMIT_MAX_RETRIES + 1):
+            # asyncio.wait_for guarantees the timeout fires even when LiteLLM's
+            # internal HTTP client does not raise (e.g. slow free-tier models
+            # that queue the request without ever timing out at the TCP layer).
+            try:
+                response = await asyncio.wait_for(
+                    litellm.acompletion(**kwargs),
+                    timeout=settings.LLM_TIMEOUT,
+                )
+                return _extract_message_content(response)
+            except asyncio.TimeoutError:
+                raise ProviderCallError(
+                    f"Provider did not respond within {settings.LLM_TIMEOUT}s (timeout)."
+                )
+            except ProviderServiceError:
+                raise
+            except Exception as exc:
+                if _is_rate_limit_error(exc) and attempt < _RATE_LIMIT_MAX_RETRIES:
+                    delay = _retry_after_seconds(exc)
+                    if delay is None:
+                        delay = min(
+                            _RATE_LIMIT_BASE_DELAY * (2 ** attempt),
+                            _RATE_LIMIT_MAX_DELAY,
+                        )
+                    delay += random.uniform(0, min(delay, 1.0))  # jitter
+                    record_rate_limit_retry()
+                    logger.warning(
+                        "provider.rate_limited_retry",
+                        extra={
+                            "attempt": attempt + 1,
+                            "delay_s": round(delay, 2),
+                            "provider": provider_config.provider,
+                            "model": provider_config.model,
+                        },
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                # Non-rate-limit, or retries exhausted.
+                msg = safe_provider_error_message(exc, api_key)
+                raise ProviderCallError(
+                    msg, rate_limited=_is_rate_limit_error(exc)
+                ) from exc
     except ProviderServiceError:
         raise
     except Exception as exc:
@@ -424,6 +499,11 @@ async def call_json_model(
             )
         except ProviderCallError as exc:
             safe_error = safe_provider_error_message(exc, api_key)
+            # A rate limit is a transport failure (already backed-off+retried in
+            # _completion), NOT a sign the model lacks native JSON. Do not flip
+            # native_json_available or burn a strict-prompt retry on it.
+            if getattr(exc, "rate_limited", False):
+                raise ProviderCallError(safe_error, rate_limited=True) from exc
             if native_json_available:
                 native_json_available = False
                 last_error = safe_error

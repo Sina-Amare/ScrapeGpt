@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.log_context import set_page_context, set_task_context
+from app.core import metrics
 from app.db.database import async_session_factory
 from app.models.job import (
     ACTIVE_EXTRACTION_RUN_STATES,
@@ -299,6 +300,11 @@ async def _mark_run_failed(
         run.error = message
         run.error_code = code
         run.finished_at = datetime.now(timezone.utc)
+        metrics.record_run_state("failed")
+        if run.started_at is not None:
+            metrics.observe_run_duration(
+                (run.finished_at - run.started_at).total_seconds()
+            )
 
 
 async def _mark_project_failed(
@@ -473,7 +479,9 @@ async def execute_project_extraction(
                         effective_render_mode,
                         browser_session_cookies=session_cookies,
                     )
-                    challenge_reason = anti_bot_challenge_reason(fetched.html, fetched.final_url)
+                    challenge_reason = await asyncio.to_thread(
+                        anti_bot_challenge_reason, fetched.html, fetched.final_url
+                    )
                     if challenge_reason:
                         page.state = CrawlPageState.BLOCKED
                         page.block_reason = "ANTI_BOT_CHALLENGE"
@@ -497,7 +505,10 @@ async def execute_project_extraction(
 
                     # Undecodable/garbled body — fail this page with a precise
                     # cause instead of "extracting" 0 records from garbage.
-                    if assess_html_quality(fetched.html).is_binary:
+                    quality = await asyncio.to_thread(
+                        assess_html_quality, fetched.html
+                    )
+                    if quality.is_binary:
                         page.state = CrawlPageState.FAILED
                         page.block_reason = "PAGE_DECODE_FAILED"
                         page.error = (
@@ -522,8 +533,10 @@ async def execute_project_extraction(
 
                     current_count = await _crawl_page_count(db, run_id)
                     remaining = max(0, page_limit - current_count)
+                    # Link classification parses HTML too — offload it.
                     if isinstance(scope, dict) and scope_mode:
-                        links = select_links_to_enqueue(
+                        links = await asyncio.to_thread(
+                            select_links_to_enqueue,
                             html=fetched.html,
                             page_url=fetched.final_url,
                             root_url=validated_seed,
@@ -535,7 +548,8 @@ async def execute_project_extraction(
                         )
                     else:
                         # Legacy: no scope, fall back to same-site BFS.
-                        links = discover_same_site_links(
+                        links = await asyncio.to_thread(
+                            discover_same_site_links,
                             fetched.html,
                             page_url=fetched.final_url,
                             root_url=validated_seed,
@@ -649,6 +663,7 @@ async def execute_project_extraction(
                         page.state = CrawlPageState.EXTRACTED
                         page.error = None
                         page.block_reason = None
+                        metrics.record_page_outcome("extracted")
                     else:
                         # Fetched fine, but selectors matched nothing. Mark it
                         # non-success (FAILED + reason) so progress and the UI
@@ -658,6 +673,7 @@ async def execute_project_extraction(
                         page.state = CrawlPageState.FAILED
                         page.block_reason = "SELECTOR_ZERO_MATCH"
                         page.error = "Selectors matched no elements on this page."
+                        metrics.record_page_outcome("zero_match")
                     await db.commit()
 
                 except InteractionError as exc:
@@ -881,6 +897,11 @@ async def execute_project_extraction(
                 run.finished_at = datetime.now(timezone.utc)
                 run.total_pages = await _crawl_page_count(db, run_id)
                 run.total_records = run_record_count
+                metrics.record_run_state("completed")
+                if run.started_at is not None:
+                    metrics.observe_run_duration(
+                        (run.finished_at - run.started_at).total_seconds()
+                    )
             project.current_extraction_run_id = run_id
             project.transition_to(ProjectState.COMPLETED)
             await db.commit()

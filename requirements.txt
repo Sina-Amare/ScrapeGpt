@@ -118,6 +118,13 @@ httpx[brotli,zstd]~=0.28.0
 apscheduler~=3.10.0
 
 # -----------------------------------------------------------------------------
+# Observability
+# -----------------------------------------------------------------------------
+# prometheus-client: extraction run/page/rate-limit metrics at /metrics.
+# Optional at runtime — app degrades to no-op metrics if absent.
+prometheus-client~=0.21.0
+
+# -----------------------------------------------------------------------------
 # Rate Limiting
 # -----------------------------------------------------------------------------
 # SlowAPI: Rate limiting for FastAPI

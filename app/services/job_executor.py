@@ -6,6 +6,7 @@ Orchestrates: QUEUED → ANALYZING → AWAITING_SETUP | ANALYSIS_READY | FAILED
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.core.config import settings
@@ -108,7 +109,7 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
         # (even after the fetcher's browser fallback), fail with a precise cause
         # instead of feeding garbage to the LLM (which hallucinates selectors)
         # and poisoning the analysis cache.
-        quality = assess_html_quality(fetch_result.html)
+        quality = await asyncio.to_thread(assess_html_quality, fetch_result.html)
         if not quality.is_usable:
             code = "PAGE_DECODE_FAILED" if quality.is_binary else "FETCH_HTML_QUALITY_FAILED"
             detail = "; ".join(quality.reasons) or "unusable page content"
@@ -136,7 +137,9 @@ async def execute_job_pipeline(job_id: int, provider_config_id: int) -> None:
             return
 
         # ---- Phase 5: Build DOM summary ----
-        dom_summary = build_dom_summary(fetch_result.html, fetch_result.final_url)
+        dom_summary = await asyncio.to_thread(
+            build_dom_summary, fetch_result.html, fetch_result.final_url
+        )
 
         # ---- Phase 6: Analyze ----
         try:

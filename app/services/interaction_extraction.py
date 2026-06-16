@@ -20,6 +20,7 @@ Each record is tagged with metadata columns (``interaction_variant_id``,
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
@@ -168,14 +169,24 @@ async def extract_records_with_variants(
     project with that error code.
     """
     profile = getattr(spec, "interaction_profile", None)
-    if not is_enabled(profile):
-        records = extract_records_from_html(
-            base_html,
+    # CPU-bound BeautifulSoup/lxml parsing runs in a worker thread so a large
+    # page can't block the event loop (and the whole worker) for everyone.
+    # Snapshot the only ORM attribute the extractor reads — never hand a live
+    # SQLAlchemy object to a thread (a lazy load there would be unsafe).
+    proj_snap = SimpleNamespace(analysis=getattr(project, "analysis", None))
+
+    async def _extract(html: str, spec_view: Any) -> list[ExtractedPayload]:
+        return await asyncio.to_thread(
+            extract_records_from_html,
+            html,
             source_url=source_url,
-            project=project,
-            spec=spec,
+            project=proj_snap,
+            spec=spec_view,
             max_records=max_records,
         )
+
+    if not is_enabled(profile):
+        records = await _extract(base_html, _variant_spec(spec, spec.fields or []))
         return records, []
 
     combos = selected_combinations(profile)  # may raise VARIANT_LIMIT_EXCEEDED
@@ -225,13 +236,7 @@ async def extract_records_with_variants(
             html = base_html
 
         variant_fields = apply_field_overrides(base_fields, combo)
-        records = extract_records_from_html(
-            html,
-            source_url=source_url,
-            project=project,
-            spec=_variant_spec(spec, variant_fields),
-            max_records=max_records,
-        )
+        records = await _extract(html, _variant_spec(spec, variant_fields))
         if records:
             nonzero += 1
         else:

@@ -209,6 +209,13 @@ def create_app() -> FastAPI:
         prefix=settings.API_V1_PREFIX,
     )
     
+    # Prometheus metrics (no-op text when prometheus_client is not installed).
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics_endpoint():
+        from fastapi import Response
+        from app.core.metrics import CONTENT_TYPE_LATEST, render_latest
+        return Response(content=render_latest(), media_type=CONTENT_TYPE_LATEST)
+
     # Root endpoint for basic info
     @app.get("/", include_in_schema=False)
     async def root():
