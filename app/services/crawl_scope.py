@@ -143,6 +143,14 @@ def normalize_crawl_scope(
     out.setdefault("exclude_patterns", [])
     out.setdefault("pagination", {})
     out.setdefault("link_rules", [])
+    # Defense-in-depth: COLLECTION is meant to crawl one level of sibling/category
+    # list pages. The classifier only caps depth when a positive max_depth is set
+    # (None/<=0 == unbounded), so guarantee a positive bound here for any
+    # COLLECTION scope that was constructed without one.
+    if out.get("mode") == CrawlScopeMode.COLLECTION.value:
+        md = out.get("max_depth")
+        if not isinstance(md, int) or isinstance(md, bool) or md < 1:
+            out["max_depth"] = 1
     return out
 
 
