@@ -118,9 +118,6 @@ foundation), 009 (analysis cache TTL), `dcbda4fc8a19` (browser sessions), 010
   mean exactly one process must run. No Redis-backed rate limiting.
 - Durable job queue. Extraction runs as in-process `BackgroundTasks`; A1 resume
   recovers a stalled run on the next sweep, but there is no external queue.
-- `normalized_data` population (column exists, always null; export falls back to
-  `raw_data`).
-- Selector smoke-test at spec save / preview-before-extract soft gate.
 - Retiring the legacy `/scrape` + `/jobs` surfaces and duplicate admission
   services.
 - SSRF DNS-rebinding mitigation beyond DNS-time validation (TOCTOU; documented).
@@ -135,9 +132,13 @@ foundation), 009 (analysis cache TTL), `dcbda4fc8a19` (browser sessions), 010
 - **In-process BackgroundTasks do not survive a restart.** A1 re-dispatch now
   resumes a stalled run (bounded) instead of always hard-failing, but recovery
   still waits for the watchdog sweep; there is no live failover.
-- **AI selectors are unvalidated until preview.** Nothing blocks Extract with
-  zero-match selectors (surfaced afterward as `NO_RECORDS_EXTRACTED`).
-- **`normalized_data` is never populated.**
+- **AI selectors are unvalidated until preview against real HTML.** A spec-save
+  smoke-test rejects malformed selectors and a `preview_stale` flag warns when the
+  spec changed since the last preview, but a syntactically-valid selector that
+  matches nothing is still only proven wrong at preview/extract time.
+- **`normalized_data` holds type-coerced values** (numbers/booleans coerced from
+  the raw strings; equal to `raw_data` for string fields). It is populated, not
+  null — exports use `normalized_data` and fall back to `raw_data` only if absent.
 
 ## Verification Snapshot
 

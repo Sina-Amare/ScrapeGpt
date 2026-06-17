@@ -15,6 +15,14 @@ class ProductStatus:
 
 
 def product_status_for(project: Project) -> ProductStatus:
+    """Single source of truth for the system-state -> product-status mapping.
+
+    ``system_state`` (ProjectState) stays the authoritative state used for all
+    control flow; ``product_status`` is only the user-facing presentation derived
+    here and serialized onto ProjectResponse. The frontend renders the serialized
+    product_status_* fields and must NOT re-derive a parallel mapping from
+    system_state — keep this the one place the mapping lives.
+    """
     mapping = {
         ProjectState.QUEUED: ProductStatus("analyzing", "Analyzing site", "warning"),
         ProjectState.ANALYZING: ProductStatus("analyzing", "Analyzing site", "warning"),
