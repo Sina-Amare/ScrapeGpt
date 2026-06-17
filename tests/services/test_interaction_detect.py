@@ -923,3 +923,63 @@ async def test_merge_triggers_with_inconsistent_alternate_column_labels():
     assert by["Show per 100 g"]["Calories"] == "156"
     assert by["Show per serving"]["Serving Size"] == "1 portion (170 g)"
     assert by["Show per serving"]["Calories"] == "265"
+
+
+@pytest.mark.asyncio
+async def test_merge_generalizes_to_non_serving_axis():
+    """The merge is axis-agnostic (NOT hardcoded to serving): a metric/imperial
+    column set whose Weight column is toggle-dependent merges with the
+    unit_system toggle — static columns for the distinct field (Height) + the
+    browser recipe for the toggle-only field (Weight)."""
+    base_html = (
+        "<main>"
+        "<div class='u'><button class='active'>Metric</button>"
+        "<button>Imperial</button></div>"
+        "<table><tbody>"
+        # Weight identical statically (toggle-only); Height distinct (10/20).
+        "<tr><td>Item</td><td><p>n/a</p></td><td>10</td>"
+        "<td><p>n/a</p></td><td>20</td></tr>"
+        "</tbody></table></main>"
+    )
+    imperial_html = base_html.replace("<p>n/a</p>", "<p>2.2 lb</p>")
+    fields = [
+        _f("Name", "td:nth-child(1)"),
+        _f("Weight (metric)", "td:nth-child(2) p"),
+        _f("Height (metric)", "td:nth-child(3)"),
+        _f("Weight (imperial)", "td:nth-child(4) p"),
+        _f("Height (imperial)", "td:nth-child(5)"),
+    ]
+    profile, new_fields = detect_interaction_profile(
+        base_html, fields, repeated_item_selector="tbody tr"
+    )
+    assert [g["metadata_key"] for g in profile["groups"]] == ["unit_system"]
+    merged = profile["groups"][0]
+    assert merged["execution"] == "mixed"
+    assert [o["label"] for o in merged["options"]] == ["Metric", "Imperial"]
+    assert [f["label"] for f in new_fields] == ["Name", "Weight", "Height"]
+
+    async def browser(recipes):
+        return {
+            rid: (
+                imperial_html
+                if any(s.get("value") == "Imperial" for s in recipe)
+                else base_html
+            )
+            for rid, recipe in recipes.items()
+        }
+
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED, content_config={},
+        fields=new_fields, interaction_profile={**profile, "enabled": True},
+    )
+    records, _w = await extract_records_with_variants(
+        base_html=base_html, source_url="https://x",
+        project=SimpleNamespace(analysis={"repeated_item_selector": "tbody tr"}),
+        spec=spec, max_records=50, fetch_variant_htmls=browser,
+    )
+    by = {str(r.normalized_data.get("unit_system")): r.normalized_data
+          for r in records}
+    assert by["Metric"]["Weight"] == "n/a"      # static identical placeholder
+    assert by["Metric"]["Height"] == "10"
+    assert by["Imperial"]["Weight"] == "2.2 lb"  # from the browser toggle
+    assert by["Imperial"]["Height"] == "20"

@@ -624,29 +624,89 @@ def _is_serving_ordinal_column_set(col_group: dict[str, Any]) -> bool:
     return all(_SERVING_RE.search(lbl) for lbl in labels)
 
 
-def _column_set_has_toggle_dependent_serving(
+def _toggle_dependent_fields(
     col_group: dict[str, Any],
     html: str,
     repeated_item_selector: str | None,
-) -> bool:
-    """True if the column set has a serving-named base field whose static columns
-    read IDENTICAL values — meaning the real per-variant value lives only behind
-    the browser toggle. This is the structural (label-independent) signal that a
-    serving_basis toggle should be MERGED in, regardless of how the analyzer
-    named the columns (``per serving`` / ``alternate column`` / …)."""
+) -> set[str]:
+    """Base fields whose static columns show IDENTICAL PRESENT values across
+    options — the real per-variant value lives only behind a browser toggle.
+
+    Requires, on at least one row, every option's value to be present (non-empty)
+    AND equal. Empty / no-match selectors are NOT toggle-dependent (that's a
+    broken or absent field, not a duplicated one). Axis-agnostic (any field)."""
     opts = col_group.get("options") or []
     if len(opts) < 2:
-        return False
-    serving_bases = {
-        base
-        for o in opts
-        for base in (o.get("field_selectors") or {})
-        if _SERVING_RE.search(str(base))
-    }
-    return any(
-        not _base_values_distinct(opts, base, html, repeated_item_selector)
-        for base in serving_bases
+        return set()
+    bases = {base for o in opts for base in (o.get("field_selectors") or {})}
+    dependent: set[str] = set()
+    for base in bases:
+        per_opt = [
+            sample_selector_values(
+                html,
+                repeated_item_selector=repeated_item_selector,
+                selector=str((o.get("field_selectors") or {}).get(base) or ""),
+            )
+            for o in opts
+        ]
+        n = max((len(v) for v in per_opt), default=0)
+        for i in range(n):
+            row = [v[i] if i < len(v) else None for v in per_opt]
+            if all(x not in (None, "") for x in row) and len(set(row)) == 1:
+                dependent.add(base)
+                break
+    return dependent
+
+
+def _axis_overlap(
+    col_group: dict[str, Any],
+    toggle: dict[str, Any],
+    dep_fields: set[str],
+) -> int:
+    """Axis-token overlap between (column option labels + toggle-dependent field
+    names) and the toggle's option labels — the generic signal that a column set
+    and a toggle are on the SAME axis. No per-axis hardcoding; uses the shared
+    ``_AXIS_PATTERNS`` vocabulary, so it works for serving basis, units, etc."""
+    col_tokens = _axis_tokens(
+        [str(o.get("label", "")) for o in col_group.get("options") or []]
     )
+    col_tokens |= _axis_tokens([str(b) for b in dep_fields])
+    tog_tokens = _axis_tokens(
+        [str(o.get("label", "")) for o in toggle.get("options") or []]
+    )
+    return len(col_tokens & tog_tokens)
+
+
+def _find_mergeable_toggle(
+    col_group: dict[str, Any],
+    interactive_groups: list[dict[str, Any]],
+    html: str,
+    repeated_item_selector: str | None,
+) -> dict[str, Any] | None:
+    """Pick the interactive toggle to MERGE with *col_group* — axis-agnostic.
+
+    Requires the column set to have a toggle-dependent field (identical static
+    values). Among interactive toggles with the same option count, chooses the
+    one with the highest axis-token overlap (>=1); if none share a token, only a
+    UNIQUE candidate is accepted (avoids guessing among several). Works for any
+    axis the token vocabulary recognizes (serving basis, metric/imperial, …),
+    not just serving. Returns the toggle group or None.
+    """
+    n = len(col_group.get("options") or [])
+    candidates = [
+        g for g in interactive_groups
+        if g.get("execution") == EXECUTION_INTERACTIVE
+        and len(g.get("options") or []) == n
+    ]
+    if not candidates:
+        return None
+    dep = _toggle_dependent_fields(col_group, html, repeated_item_selector)
+    if not dep:
+        return None
+    best = max(candidates, key=lambda g: _axis_overlap(col_group, g, dep))
+    if _axis_overlap(col_group, best, dep) >= 1:
+        return best
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _serving_axis_values_distinct(
@@ -764,7 +824,11 @@ def _merge_column_set_with_toggle(
 
     return {
         "label": toggle_group.get("label") or col_group.get("label") or "Variant",
-        "metadata_key": toggle_group.get("metadata_key") or "serving_basis",
+        "metadata_key": (
+            toggle_group.get("metadata_key")
+            or sanitize_metadata_key(str(toggle_group.get("label", "")))
+            or "variant"
+        ),
         "execution": EXECUTION_MIXED,
         "options": merged_options,
     }
@@ -1015,49 +1079,40 @@ def detect_interaction_profile(
             new_fields = collapsed
 
     if col_group is not None:
-        # A serving_basis toggle with the same option count as the column set.
-        n_opts = len(col_group.get("options") or [])
-        toggle = next(
-            (
-                g for g in interactive_groups
-                if g.get("metadata_key") == "serving_basis"
-                and len(g.get("options") or []) == n_opts
-            ),
-            None,
+        # Axis-agnostic: find a toggle on the SAME axis whose values the column
+        # set is missing (a toggle-dependent field), and MERGE them — static
+        # columns for the distinct fields + the browser recipe for the rest.
+        merge_toggle = _find_mergeable_toggle(
+            col_group, interactive_groups, html, repeated_item_selector
         )
-
-        merged = None
-        if toggle is not None and _column_set_has_toggle_dependent_serving(
-            col_group, html, repeated_item_selector
-        ):
-            # A serving column reads identical static values (the real per-serving
-            # size lives only behind the toggle): MERGE static calories + browser
-            # serving into one axis instead of leaving both representations.
-            # Label-independent, so it works however the analyzer named columns.
-            merged = _merge_column_set_with_toggle(
-                col_group, toggle, html, repeated_item_selector
+        merged = (
+            _merge_column_set_with_toggle(
+                col_group, merge_toggle, html, repeated_item_selector
             )
+            if merge_toggle is not None
+            else None
+        )
 
         if merged is not None:
             others = [
                 g for g in interactive_groups
-                if g is not toggle and not _covers_same_axis(merged, g)
+                if g is not merge_toggle and not _covers_same_axis(merged, g)
             ]
             groups = [merged, *others]
         else:
             kept: list[dict[str, Any]] = []
             for g in interactive_groups:
                 if _covers_same_axis(col_group, g):
-                    continue  # strict token match (metric/imperial, per-100g/serving)
+                    continue  # complete column set already covers this axis
                 if (
-                    g.get("metadata_key") == "serving_basis"
-                    and _is_serving_ordinal_column_set(col_group)
+                    _is_serving_ordinal_column_set(col_group)
+                    and g.get("metadata_key") == "serving_basis"
                     and len(g.get("options") or []) == len(col_group.get("options") or [])
                     and _serving_axis_values_distinct(
                         col_group, html, repeated_item_selector
                     )
                 ):
-                    continue  # ordinal serving column set already covers this axis
+                    continue  # serving column set already covers this axis
                 kept.append(g)
             groups = [col_group, *kept]
     else:
