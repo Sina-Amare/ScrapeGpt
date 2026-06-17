@@ -73,7 +73,7 @@ function ApiKeyField({
         autoComplete="new-password"
         required={required}
         placeholder={placeholder}
-        className="h-10 w-full rounded-xl border border-line bg-white px-3.5 pr-11 font-mono text-sm text-ink outline-none transition placeholder:text-muted focus:border-teal focus:ring-2 focus:ring-teal/15"
+        className="h-10 w-full rounded-xl border border-line bg-surface autofill-surface px-3.5 pr-11 font-mono text-sm text-ink outline-none transition placeholder:text-muted focus:border-teal focus:ring-2 focus:ring-teal/15"
       />
       <button
         type="button"

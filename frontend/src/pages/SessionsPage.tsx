@@ -124,7 +124,7 @@ export function SessionsPage() {
       {isLoading && <Skeleton className="mt-6 h-24 w-full" />}
 
       {!isLoading && (!sessions || sessions.length === 0) && (
-        <div className="mt-8 rounded-lg border border-dashed border-gray-300 p-8 text-center text-gray-500">
+        <div className="mt-8 rounded-lg border border-dashed border-line p-8 text-center text-muted">
           <p className="text-sm">No sessions yet.</p>
           <p className="mt-1 text-xs">
             Export cookies from your browser (e.g. with{" "}
@@ -173,7 +173,7 @@ export function SessionsPage() {
             hint='Paste a JSON cookie array from Cookie-Editor, or "name=value; name2=value2" from DevTools.'
           >
             <textarea
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs focus:border-blue-500 focus:outline-none disabled:opacity-60"
+              className="w-full rounded-md border border-line bg-surface px-3 py-2 font-mono text-xs text-ink outline-none transition placeholder:text-muted focus:border-teal focus:ring-2 focus:ring-teal/15 disabled:opacity-60"
               rows={5}
               value={form.cookies_raw}
               disabled={createMutation.isPending}
