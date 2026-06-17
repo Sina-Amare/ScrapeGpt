@@ -228,3 +228,40 @@ def test_spec_field_order_ignores_disabled_profile():
         interaction_profile={"enabled": False, "groups": []},
     )
     assert projects._spec_field_order(spec) == ["Food"]
+
+
+# ---------------------------------------------------------------------------
+# AZ1: the interaction endpoints are owner-checked (404 on mismatch, do not
+# reveal existence). Invariant #1 applied to the interaction API.
+# ---------------------------------------------------------------------------
+
+
+def _other_users_project() -> Project:
+    project = _project()
+    project.user_id = 2  # owned by someone other than the caller (id=1)
+    return project
+
+
+@pytest.mark.asyncio
+async def test_detect_interactions_404_for_other_user(async_client, app):
+    """User A cannot run interaction detection on User B's project."""
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()  # id=1
+    app.dependency_overrides[deps.get_db] = lambda: (
+        yield FakeSession(_other_users_project(), _spec())
+    )
+
+    response = await async_client.post("/api/v1/projects/1/interactions/detect")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_spec_interactions_404_for_other_user(async_client, app):
+    """User A cannot edit the interaction profile on User B's project."""
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()  # id=1
+    app.dependency_overrides[deps.get_db] = lambda: (
+        yield FakeSession(_other_users_project(), _spec())
+    )
+
+    payload = {"interaction_profile": {"enabled": True, "groups": []}}
+    response = await async_client.patch("/api/v1/projects/1/spec", json=payload)
+    assert response.status_code == 404
