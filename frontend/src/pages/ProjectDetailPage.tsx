@@ -23,7 +23,7 @@ import { ApiError, api } from "../lib/api";
 import { canRetryWithProvider, errorHelp } from "../lib/errorHelp";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject } from "../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation, scopeModeLabel } from "../lib/scopeCopy";
-import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, InteractionProfile, ProjectRecord, ProjectState } from "../types";
+import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, InteractionProfile, ProjectRecord, ProjectResponse, ProjectState } from "../types";
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const pct = value == null ? 0 : Math.round(value * 100);
@@ -508,8 +508,28 @@ export function ProjectDetailPage() {
   });
 
   const previewMutation = useMutation({
-    mutationFn: () => api.previewProject(projectId),
-    onSuccess: () => {
+    mutationFn: async () => {
+      const spec = await api.updateProjectSpec(projectId, {
+        fields,
+        page_limit: pageLimit,
+      });
+      const preview = await api.previewProject(projectId);
+      return { spec, preview };
+    },
+    onSuccess: ({ spec, preview }) => {
+      queryClient.setQueryData<ProjectResponse | undefined>(
+        ["project", projectId],
+        (current) =>
+          current
+            ? {
+                ...current,
+                spec,
+                preview,
+                preview_stale: false,
+                selected_field_count: spec.fields.filter((field) => field.selected).length,
+              }
+            : current
+      );
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
     }
