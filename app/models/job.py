@@ -459,6 +459,10 @@ class ExtractionRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     total_pages: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     total_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # How many times the watchdog has re-dispatched this run after its in-process
+    # worker stalled/crashed. Bounds crash-loop resume (A1): once it reaches
+    # WATCHDOG_MAX_RESUME_ATTEMPTS the project is hard-failed instead.
+    resume_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

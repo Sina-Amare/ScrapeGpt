@@ -3,11 +3,10 @@
 Covers:
 1. Legacy /scrape endpoint SSRF validation (400 on private URLs)
 2. Legacy /scrape executor SSRF defense-in-depth (fails task on private URLs)
-3. Legacy /scrape executor robots.txt check
-4. CrawlPage lease reaper (expired leases reset to PENDING)
-5. Stuck-project watchdog (projects stuck beyond timeout → FAILED)
-6. Extraction completion semantics (all-pages-failed → FAILED)
-7. Config: CORS Vite origin, CRAWL_CONCURRENCY description, watchdog timeouts
+3. CrawlPage lease reaper (expired leases reset to PENDING)
+4. Stuck-project watchdog (resume / hard-fail semantics)
+5. Extraction completion semantics (all-pages-failed → FAILED)
+6. Config: CORS Vite origin, CRAWL_CONCURRENCY description, watchdog timeouts
 """
 
 from datetime import datetime, timezone, timedelta
@@ -373,109 +372,182 @@ async def test_lease_reaper_skips_pages_in_inactive_projects(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# A1: stalled DISCOVERING/EXTRACTING runs are RESUMED (re-dispatched), not
+# hard-failed, up to WATCHDOG_MAX_RESUME_ATTEMPTS. These exercise the resume
+# *decision* logic; the SQL itself is covered by the real-DB verifier
+# tests/manual/verify_watchdog_resume.py.
+# ---------------------------------------------------------------------------
+
+
+def _watchdog_settings(max_resume: int = 3):
+    return SimpleNamespace(
+        WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES=10,
+        WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES=10,
+        WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES=10,
+        WATCHDOG_MAX_RESUME_ATTEMPTS=max_resume,
+    )
+
+
+class _RowsResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _RowcountResult:
+    def __init__(self, rowcount):
+        self.rowcount = rowcount
+
+
+class _ResumeFakeDB:
+    """Returns programmed rows for the two SELECTs (DISCOVERING then
+    EXTRACTING) and rowcount 0 for the EXPORTING / cascade UPDATEs. ``get``
+    returns the pre-built ExtractionRun stand-in so resume_count mutations are
+    observable."""
+
+    def __init__(self, select_rows, runs):
+        self._select_rows = list(select_rows)
+        self._runs = runs
+        self.committed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def execute(self, statement):
+        if type(statement).__name__ == "Select":
+            rows = self._select_rows.pop(0) if self._select_rows else []
+            return _RowsResult(rows)
+        return _RowcountResult(0)
+
+    async def get(self, model, pk):
+        return self._runs.get(pk)
+
+    async def commit(self):
+        self.committed = True
+
+
 @pytest.mark.asyncio
-async def test_stuck_project_watchdog_fails_discovering_project(
-    monkeypatch,
-):
-    """cleanup_stuck_projects fails projects stuck in DISCOVERING."""
-    from app.services.watchdog import cleanup_stuck_projects
+async def test_stuck_extracting_project_is_resumed(monkeypatch):
+    """A stalled EXTRACTING run under the resume cap is re-dispatched, not failed."""
+    from app.services import watchdog
 
-    cutoff_minutes = 10
-
+    monkeypatch.setattr(watchdog, "settings", _watchdog_settings(max_resume=3))
+    # DISCOVERING select -> none; EXTRACTING select -> one candidate.
+    # tuple = (project_id, run_id, spec_id, resume_count)
+    run = SimpleNamespace(id=55, state="RUNNING", resume_count=0)
     monkeypatch.setattr(
-        "app.services.watchdog.settings",
-        type(
-            "S",
-            (),
-            {
-                "WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES": cutoff_minutes,
-                "WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES": 10,
-                "WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES": 10,
-            },
-        )(),
+        watchdog, "async_session_factory",
+        lambda: _ResumeFakeDB([[], [(101, 55, 9, 0)]], {55: run}),
     )
-
-    class FakeDB:
-        call_count = 0
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def execute(self, statement):
-            self.call_count += 1
-            result = FakeResult(scalar=None)
-            # Only the DISCOVERING UPDATE (first call) matches
-            if self.call_count == 1:
-                result.rowcount = 1
-            else:
-                result.rowcount = 0
-            return result
-
-        async def commit(self):
-            pass
-
+    scheduled: list = []
     monkeypatch.setattr(
-        "app.services.watchdog.async_session_factory",
-        lambda: FakeDB(),
+        watchdog, "_schedule_resume",
+        lambda pid, sid, rid: scheduled.append((pid, sid, rid)),
     )
+    watchdog._resuming_run_ids.clear()
 
-    result = await cleanup_stuck_projects()
+    failed = await watchdog.cleanup_stuck_projects()
 
-    assert result == 1
+    assert failed == 0
+    assert scheduled == [(101, 9, 55)]
+    assert run.resume_count == 1  # attempt recorded before re-dispatch
 
 
 @pytest.mark.asyncio
-async def test_stuck_project_watchdog_fails_extracting_project(
-    monkeypatch,
-):
-    """cleanup_stuck_projects fails projects stuck in EXTRACTING."""
-    from app.services.watchdog import cleanup_stuck_projects
+async def test_stuck_extraction_resume_exhausted_hard_fails(monkeypatch):
+    """Once resume_count hits the cap, the project is hard-failed instead."""
+    from app.services import watchdog
 
+    monkeypatch.setattr(watchdog, "settings", _watchdog_settings(max_resume=3))
+    run = SimpleNamespace(id=55, state="RUNNING", resume_count=3)
     monkeypatch.setattr(
-        "app.services.watchdog.settings",
-        type(
-            "S",
-            (),
-            {
-                "WATCHDOG_PROJECT_DISCOVERING_TIMEOUT_MINUTES": 10,
-                "WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES": 10,
-                "WATCHDOG_PROJECT_EXPORTING_TIMEOUT_MINUTES": 10,
-            },
-        )(),
+        watchdog, "async_session_factory",
+        lambda: _ResumeFakeDB([[], [(101, 55, 9, 3)]], {55: run}),
     )
+    scheduled: list = []
+    monkeypatch.setattr(watchdog, "_schedule_resume", lambda *a: scheduled.append(a))
+    hard_failed: list = []
 
-    # First UPDATE (DISCOVERING) matches 0, second (EXTRACTING) matches 1
-    class FakeDB:
-        call_count = 0
+    async def _fake_hard_fail(db, pid, msg, code):
+        hard_failed.append((pid, code))
+        return True
 
-        async def __aenter__(self):
-            return self
+    monkeypatch.setattr(watchdog, "_hard_fail_project", _fake_hard_fail)
+    watchdog._resuming_run_ids.clear()
 
-        async def __aexit__(self, *args):
-            pass
+    failed = await watchdog.cleanup_stuck_projects()
 
-        async def execute(self, statement):
-            self.call_count += 1
-            result = FakeResult(scalar=None)
-            if self.call_count == 2:
-                result.rowcount = 1
-            else:
-                result.rowcount = 0
-            return result
+    assert failed == 1
+    assert scheduled == []
+    assert hard_failed == [(101, "EXTRACTION_RESUME_EXHAUSTED")]
 
-        async def commit(self):
-            pass
 
+@pytest.mark.asyncio
+async def test_resume_skips_run_already_in_progress(monkeypatch):
+    """A run a prior sweep is still resuming is not re-dispatched again."""
+    from app.services import watchdog
+
+    monkeypatch.setattr(watchdog, "settings", _watchdog_settings(max_resume=3))
+    run = SimpleNamespace(id=55, state="RUNNING", resume_count=0)
     monkeypatch.setattr(
-        "app.services.watchdog.async_session_factory",
-        lambda: FakeDB(),
+        watchdog, "async_session_factory",
+        lambda: _ResumeFakeDB([[], [(101, 55, 9, 0)]], {55: run}),
     )
+    scheduled: list = []
+    monkeypatch.setattr(watchdog, "_schedule_resume", lambda *a: scheduled.append(a))
+    hard_failed: list = []
 
-    result = await cleanup_stuck_projects()
-    assert result == 1
+    async def _fake_hard_fail(db, pid, msg, code):
+        hard_failed.append((pid, code))
+        return True
+
+    monkeypatch.setattr(watchdog, "_hard_fail_project", _fake_hard_fail)
+    watchdog._resuming_run_ids.clear()
+    watchdog._resuming_run_ids.add(55)  # pretend a prior resume is still running
+    try:
+        failed = await watchdog.cleanup_stuck_projects()
+    finally:
+        watchdog._resuming_run_ids.discard(55)
+
+    assert failed == 0
+    assert scheduled == []
+    assert hard_failed == []
+    assert run.resume_count == 0  # untouched
+
+
+@pytest.mark.asyncio
+async def test_resume_disabled_hard_fails_immediately(monkeypatch):
+    """WATCHDOG_MAX_RESUME_ATTEMPTS=0 reproduces the pre-A1 hard-fail behavior."""
+    from app.services import watchdog
+
+    monkeypatch.setattr(watchdog, "settings", _watchdog_settings(max_resume=0))
+    run = SimpleNamespace(id=55, state="RUNNING", resume_count=0)
+    monkeypatch.setattr(
+        watchdog, "async_session_factory",
+        lambda: _ResumeFakeDB([[], [(101, 55, 9, 0)]], {55: run}),
+    )
+    scheduled: list = []
+    monkeypatch.setattr(watchdog, "_schedule_resume", lambda *a: scheduled.append(a))
+    hard_failed: list = []
+
+    async def _fake_hard_fail(db, pid, msg, code):
+        hard_failed.append((pid, code))
+        return True
+
+    monkeypatch.setattr(watchdog, "_hard_fail_project", _fake_hard_fail)
+    watchdog._resuming_run_ids.clear()
+
+    failed = await watchdog.cleanup_stuck_projects()
+
+    assert failed == 1
+    assert scheduled == []
+    assert hard_failed == [(101, "EXTRACTION_RESUME_EXHAUSTED")]
 
 
 # ---------------------------------------------------------------------------

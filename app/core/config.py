@@ -198,6 +198,16 @@ class Settings(BaseSettings):
         default=10, ge=1, le=30,
         description="Timeout for projects stuck in EXPORTING"
     )
+    WATCHDOG_MAX_RESUME_ATTEMPTS: int = Field(
+        default=3, ge=0, le=20,
+        description=(
+            "How many times the watchdog re-dispatches a stalled extraction run "
+            "(in-process worker died, e.g. server restart) before giving up and "
+            "hard-failing the project with EXTRACTION_RESUME_EXHAUSTED. 0 "
+            "disables resume — stalled runs are hard-failed immediately, the "
+            "pre-A1 behavior."
+        ),
+    )
 
     # -------------------------------------------------------------------------
     # Job / Analysis Settings
@@ -205,15 +215,6 @@ class Settings(BaseSettings):
     ALLOW_PRIVATE_NETWORK_URLS: bool = Field(
         default=False,
         description="Allow fetching private/localhost URLs (tests and dev only)"
-    )
-    ROBOTS_FAILURE_POLICY: str = Field(
-        default="allow",
-        pattern="^(deny|allow)$",
-        description=(
-            "What to do when robots.txt cannot be fetched. "
-            "allow = proceed with scraping (most sites lack robots.txt); "
-            "deny = fail the task/project if robots.txt is unreachable"
-        )
     )
     MAX_FETCH_BYTES: int = Field(
         default=2 * 1024 * 1024,
