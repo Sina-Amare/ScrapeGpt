@@ -12,6 +12,7 @@ from app.models.job import (
     Export,
     ExtractedRecord,
     ExtractionMode,
+    ExtractionRun,
     ExtractionSpec,
     FrontierPreview,
     PreviewResult,
@@ -178,6 +179,7 @@ async def test_delete_terminal_project_removes_project_tree(async_client, app):
         FrontierPreview.__tablename__,
         PreviewResult.__tablename__,
         CrawlPage.__tablename__,
+        ExtractionRun.__tablename__,
         ExtractionSpec.__tablename__,
         Project.__tablename__,
     ]
