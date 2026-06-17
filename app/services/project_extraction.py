@@ -715,7 +715,7 @@ async def execute_project_extraction(
             # Post-loop completion check: if no pages were successfully
             # extracted, the project should fail rather than complete
             # with zero results. This covers the case where every page
-            # hit a fetch error, URL validation error, or robots block.
+            # hit a fetch error or URL validation error.
             # Per-page failure reasons are already stored on each
             # CrawlPage row for debugging.
             pages_extracted = await db.scalar(

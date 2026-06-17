@@ -2,8 +2,8 @@
 Task executor with always-finalize guarantee.
 
 Orchestrates the scrape pipeline with exception handling.
-Includes SSRF-safe URL validation and robots.txt checks
-mirroring the project pipeline's safety checks.
+Includes SSRF-safe URL validation mirroring the project
+pipeline's safety checks.
 """
 
 import logging
