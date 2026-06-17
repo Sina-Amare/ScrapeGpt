@@ -35,6 +35,34 @@ def _validated_selector(raw: str | None, field_name: str | None) -> str | None:
         return None
 
 
+def flag_invalid_field_selectors(fields: list[dict[str, Any]]) -> int:
+    """Append a save-time warning to any field whose CSS selector will not
+    compile.
+
+    A syntactically-invalid selector can never match, so surfacing it when the
+    spec is saved beats silently failing later at preview/extract. This is a
+    cheap structural smoke-test (no page fetch); matching against real HTML still
+    happens in Preview. Returns the number of fields flagged.
+    """
+    flagged = 0
+    for field in fields or []:
+        selector = field.get("selector")
+        if not selector or not str(selector).strip():
+            continue
+        try:
+            sv.compile(str(selector).strip())
+        except Exception:
+            field.setdefault("warnings", [])
+            msg = (
+                f"Selector '{selector}' is not valid CSS; it will match nothing. "
+                "Fix it and run Preview."
+            )
+            if msg not in field["warnings"]:
+                field["warnings"].append(msg)
+            flagged += 1
+    return flagged
+
+
 def _selector_matches(scope: Any, selector: str) -> bool:
     """Return True if *selector* matches at least one element inside *scope*."""
     try:

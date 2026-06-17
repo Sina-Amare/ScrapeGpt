@@ -69,7 +69,12 @@ from app.services.interaction_profile import metadata_columns as _interaction_me
 from app.services.session_service import get_cookies_for_session
 from app.services.url_validator import URLValidationError, validate_url
 from app.services.project_events import list_project_events, record_project_event
-from app.services.extraction_spec_service import ensure_default_spec, latest_spec, selected_field_count
+from app.services.extraction_spec_service import (
+    ensure_default_spec,
+    flag_invalid_field_selectors,
+    latest_spec,
+    selected_field_count,
+)
 from app.services.frontierpreview import create_frontier_preview, latest_frontier_preview
 from app.services.job_admission import JobAdmissionError, JobAdmissionErrorType, admit_job
 from app.services.job_executor import execute_job_pipeline
@@ -428,6 +433,12 @@ async def update_project_spec(
 
     if payload.fields is not None:
         spec.fields = [field.model_dump() for field in payload.fields]
+        invalid = flag_invalid_field_selectors(spec.fields)
+        if invalid:
+            logger.warning(
+                "spec.invalid_selectors_on_save",
+                extra={"project_id": project.id, "invalid_count": invalid},
+            )
     if payload.content_config is not None:
         spec.content_config = payload.content_config
     if payload.url_patterns is not None:
@@ -690,7 +701,12 @@ async def extract_project(
     return await _project_response(db, project)
 
 
-@router.get("/{project_id}/records", response_model=list[RecordResponse], summary="List extracted records")
+@router.get(
+    "/{project_id}/records",
+    response_model=list[RecordResponse],
+    summary="List extracted records (deprecated — use /records-page)",
+    deprecated=True,
+)
 async def get_project_records(
     project_id: int,
     user: User = Depends(get_current_user),

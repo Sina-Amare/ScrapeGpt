@@ -23,7 +23,7 @@ import { ApiError, api } from "../lib/api";
 import { canRetryWithProvider, errorHelp } from "../lib/errorHelp";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject } from "../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation, scopeModeLabel } from "../lib/scopeCopy";
-import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, InteractionProfile, ProjectRecord, ProjectResponse, ProjectState } from "../types";
+import { BrowserSession, CrawlScope, CrawlScopeMode, CrawlScopeStatus, FieldSpec, InteractionProfile, ProjectResponse, ProjectState } from "../types";
 
 function ConfidenceBar({ value }: { value: number | null }) {
   const pct = value == null ? 0 : Math.round(value * 100);
@@ -587,14 +587,10 @@ export function ProjectDetailPage() {
     ? (["DISCOVERING", "EXTRACTING", "EXPORTING"] as ProjectState[]).includes(project.system_state)
     : false;
 
-  // Legacy records fallback (used in sample preview only)
-  const legacyRecordsQuery = useQuery({
-    queryKey: ["project-records", projectId],
-    queryFn: () => api.listProjectRecords(projectId),
-    enabled: isCompleted,
-    retry: false
-  });
-  const legacyRecords: ProjectRecord[] = legacyRecordsQuery.data ?? [];
+  // Results use the paginated /records-page endpoint (PaginatedResultsTable).
+  // Whether any records exist comes from the project progress, not a second
+  // full /records fetch.
+  const hasRecords = (project?.progress?.extracted_records_total ?? 0) > 0;
 
   function handleModeChange(mode: CrawlScopeMode) {
     setDraftMode(mode);
@@ -1137,7 +1133,7 @@ export function ProjectDetailPage() {
                 <h2 className="font-bold text-ink">Results</h2>
                 <p className="text-sm text-muted">Extracted records from this project.</p>
               </div>
-              {legacyRecords.length ? (
+              {hasRecords ? (
                 <div className="flex flex-wrap items-center gap-3">
                   <label className="flex items-center gap-2 text-sm text-muted">
                     Export:

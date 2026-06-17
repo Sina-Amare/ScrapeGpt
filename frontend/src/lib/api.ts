@@ -17,7 +17,6 @@ import {
   JobResponse,
   ProjectAnalyzeInput,
   ProjectListItem,
-  ProjectRecord,
   ProjectResponse,
   ProviderConfig,
   ProviderCreateInput,
@@ -422,10 +421,6 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ extract_anyway: extractAnyway })
     });
-  },
-
-  listProjectRecords(id: number, limit = 100): Promise<ProjectRecord[]> {
-    return apiRequest<ProjectRecord[]>(`/projects/${id}/records?limit=${limit}`);
   },
 
   cancelProject(id: number): Promise<ProjectResponse> {
