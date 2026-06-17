@@ -54,6 +54,24 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Pull the backend `error_code` out of an ApiError raised from a structured
+ * `detail={message, error_code}` body (FastAPI nests it as
+ * `{ detail: { message, error_code } }`). Returns null when absent.
+ */
+export function apiErrorCode(error: unknown): string | null {
+  if (!(error instanceof ApiError)) return null;
+  const body = error.detail;
+  if (body && typeof body === "object" && "detail" in body) {
+    const inner = (body as { detail?: unknown }).detail;
+    if (inner && typeof inner === "object" && "error_code" in inner) {
+      const code = (inner as { error_code?: unknown }).error_code;
+      if (typeof code === "string") return code;
+    }
+  }
+  return null;
+}
+
 export function setAccessToken(token: string | null): void {
   accessToken = token;
 }

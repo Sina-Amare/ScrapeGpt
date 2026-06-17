@@ -31,6 +31,26 @@ const HELP: Record<string, ErrorHelp> = {
     title: "No records extracted",
     guidance:
       "Pages were fetched but the selectors matched nothing. Re-check your fields in the Fields step and run Preview before extracting."
+  },
+  BROWSER_DRIVER_CRASHED: {
+    title: "The browser closed unexpectedly",
+    guidance:
+      "The page needed a browser to render and it crashed mid-load. This is usually temporary — just retry. If it keeps happening, try Browser rendering off or a simpler crawl scope."
+  },
+  INTERACTION_BROWSER_REQUIRED: {
+    title: "A browser is required for the selected variants",
+    guidance:
+      "The interactive page variants you turned on need a browser backend that isn't installed. Turn the variants off, or install a browser backend (Playwright/Camoufox), then retry."
+  },
+  BROWSER_UNAVAILABLE: {
+    title: "No browser backend available",
+    guidance:
+      "This page needs a browser to render, but no browser backend is installed. Install Playwright or Camoufox on the server, then retry."
+  },
+  FETCH_TIMEOUT: {
+    title: "The page timed out",
+    guidance:
+      "The site took too long to respond. Retry — if it persists, the site may be slow or blocking automated requests."
   }
 };
 

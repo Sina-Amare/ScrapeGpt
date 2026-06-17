@@ -234,6 +234,68 @@ class FetchError(Exception):
         self.error_code = error_code
 
 
+# Driver/transport-level browser crash signatures. These mean the browser
+# process or its IPC pipe died mid-operation (not a page-level error such as a
+# bad selector), so a single retry on a fresh browser usually succeeds. Matched
+# case-insensitively as substrings of ``str(exc)`` — backend-agnostic
+# (Playwright + camoufox share the same driver transport wording).
+_BROWSER_CRASH_SIGNATURES = (
+    "connection closed while reading from the driver",
+    "target closed",
+    "target page, context or browser has been closed",
+    "browser has been closed",
+    "browser closed unexpectedly",
+    "connection lost",
+    "websocket connection closed",
+    "the browser process exited",
+    "browser process exited",
+    "pipe closed",
+)
+
+
+def _is_browser_driver_crash(exc: Exception) -> bool:
+    """True when *exc* looks like a transient browser-driver/transport crash."""
+    text = str(exc).lower()
+    return any(sig in text for sig in _BROWSER_CRASH_SIGNATURES)
+
+
+def _browser_exception_to_fetch_error(exc: Exception) -> FetchError:
+    """Map a raw browser exception to a FetchError with a stable error code.
+
+    Transient driver/transport crashes get ``BROWSER_DRIVER_CRASHED`` (the
+    caller retries these once); everything else collapses to ``FETCH_FAILED`` as
+    before. No raw driver strings leak past this boundary as an unknown code.
+    """
+    if _is_browser_driver_crash(exc):
+        detail = str(exc).strip() or exc.__class__.__name__
+        return FetchError(
+            f"The browser closed unexpectedly while loading the page ({detail}).",
+            "BROWSER_DRIVER_CRASHED",
+        )
+    return FetchError(_format_browser_exception(exc), "FETCH_FAILED")
+
+
+async def _retry_once_on_driver_crash(op: Any, *args: Any, **kwargs: Any) -> Any:
+    """Await ``op(*args, **kwargs)``; retry exactly once on a transient crash.
+
+    Only ``BROWSER_DRIVER_CRASHED`` is retried — every other FetchError (bad
+    selector, blocked URL, browser unavailable, timeout) is re-raised
+    immediately. The retry runs the op from scratch, which for our backends
+    launches a brand-new browser process, so a dead driver from the first
+    attempt cannot poison the second.
+    """
+    try:
+        return await op(*args, **kwargs)
+    except FetchError as exc:
+        if exc.error_code != "BROWSER_DRIVER_CRASHED":
+            raise
+        logger.warning(
+            "fetcher.browser_driver_crash_retry",
+            extra={"detail": str(exc)},
+        )
+        return await op(*args, **kwargs)
+
+
 class RenderModeUsed(str, Enum):
     STATIC = "STATIC"
     BROWSER = "BROWSER"
@@ -532,7 +594,7 @@ def _browser_fetch_sync(
     except Exception as exc:
         if blocked:
             raise blocked[0]
-        raise FetchError(_format_browser_exception(exc), "FETCH_FAILED") from exc
+        raise _browser_exception_to_fetch_error(exc) from exc
 
 
 async def _browser_fetch_async(
@@ -613,7 +675,7 @@ async def _browser_fetch_async(
     except Exception as exc:
         if blocked:
             raise blocked[0]
-        raise FetchError(_format_browser_exception(exc), "FETCH_FAILED") from exc
+        raise _browser_exception_to_fetch_error(exc) from exc
 
     elapsed = int((time.monotonic() - t0) * 1000)
     return _browser_result_from_html(
@@ -628,9 +690,12 @@ async def _browser_fetch(
     url: str,
     cookies: list[dict] | None = None,
 ) -> FetchResult:
-    if _should_use_threaded_browser_fetch():
-        return await asyncio.to_thread(_browser_fetch_sync, url, cookies)
-    return await _browser_fetch_async(url, cookies)
+    async def _op() -> FetchResult:
+        if _should_use_threaded_browser_fetch():
+            return await asyncio.to_thread(_browser_fetch_sync, url, cookies)
+        return await _browser_fetch_async(url, cookies)
+
+    return await _retry_once_on_driver_crash(_op)
 
 
 # ---------------------------------------------------------------------------
@@ -705,7 +770,7 @@ async def _camoufox_fetch_async(
     except Exception as exc:
         if blocked:
             raise blocked[0]
-        raise FetchError(_format_browser_exception(exc), "FETCH_FAILED") from exc
+        raise _browser_exception_to_fetch_error(exc) from exc
 
     elapsed = int((time.monotonic() - t0) * 1000)
     return _browser_result_from_html(
@@ -735,9 +800,12 @@ async def _camoufox_fetch(
     url: str,
     cookies: list[dict] | None = None,
 ) -> FetchResult:
-    if _should_use_threaded_browser_fetch():
-        return await asyncio.to_thread(_camoufox_fetch_in_thread, url, cookies)
-    return await _camoufox_fetch_async(url, cookies)
+    async def _op() -> FetchResult:
+        if _should_use_threaded_browser_fetch():
+            return await asyncio.to_thread(_camoufox_fetch_in_thread, url, cookies)
+        return await _camoufox_fetch_async(url, cookies)
+
+    return await _retry_once_on_driver_crash(_op)
 
 
 # ---------------------------------------------------------------------------
@@ -827,32 +895,9 @@ async def _apply_interactions_camoufox(
     from camoufox.async_api import AsyncCamoufox  # may ImportError -> caller cascades
 
     blocked: list[FetchError] = []
-    async with AsyncCamoufox(headless=True, geoip=True, humanize=True) as browser:
-        context = await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            extra_http_headers=_BROWSER_HEADERS,
-        )
-        if cookies:
-            await context.add_cookies(cookies)
-        try:
-            await context.route("**", _make_route_handler(blocked, is_async=True))
-            return await _capture_recipes_on_context(context, url, recipes, blocked)
-        finally:
-            await context.close()
-
-
-async def _apply_interactions_playwright(
-    url: str, recipes: dict[str, list[dict]], cookies: list[dict] | None
-) -> dict[str, str]:
-    from playwright.async_api import async_playwright  # may ImportError
-
-    blocked: list[FetchError] = []
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        try:
+    try:
+        async with AsyncCamoufox(headless=True, geoip=True, humanize=True) as browser:
             context = await browser.new_context(
-                user_agent=settings.USER_AGENT,
-                java_script_enabled=True,
                 viewport={"width": 1920, "height": 1080},
                 extra_http_headers=_BROWSER_HEADERS,
             )
@@ -863,8 +908,45 @@ async def _apply_interactions_playwright(
                 return await _capture_recipes_on_context(context, url, recipes, blocked)
             finally:
                 await context.close()
-        finally:
-            await browser.close()
+    except FetchError:
+        raise
+    except Exception as exc:
+        if blocked:
+            raise blocked[0]
+        raise _browser_exception_to_fetch_error(exc) from exc
+
+
+async def _apply_interactions_playwright(
+    url: str, recipes: dict[str, list[dict]], cookies: list[dict] | None
+) -> dict[str, str]:
+    from playwright.async_api import async_playwright  # may ImportError
+
+    blocked: list[FetchError] = []
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                context = await browser.new_context(
+                    user_agent=settings.USER_AGENT,
+                    java_script_enabled=True,
+                    viewport={"width": 1920, "height": 1080},
+                    extra_http_headers=_BROWSER_HEADERS,
+                )
+                if cookies:
+                    await context.add_cookies(cookies)
+                try:
+                    await context.route("**", _make_route_handler(blocked, is_async=True))
+                    return await _capture_recipes_on_context(context, url, recipes, blocked)
+                finally:
+                    await context.close()
+            finally:
+                await browser.close()
+    except FetchError:
+        raise
+    except Exception as exc:
+        if blocked:
+            raise blocked[0]
+        raise _browser_exception_to_fetch_error(exc) from exc
 
 
 async def _apply_interactions_async(
@@ -927,11 +1009,15 @@ async def apply_interactions_and_capture(
     """
     if not recipes:
         return {}
-    if _should_use_threaded_browser_fetch():
-        return await asyncio.to_thread(
-            _apply_interactions_in_thread, url, recipes, cookies
-        )
-    return await _apply_interactions_async(url, recipes, cookies)
+
+    async def _op() -> dict[str, str]:
+        if _should_use_threaded_browser_fetch():
+            return await asyncio.to_thread(
+                _apply_interactions_in_thread, url, recipes, cookies
+            )
+        return await _apply_interactions_async(url, recipes, cookies)
+
+    return await _retry_once_on_driver_crash(_op)
 
 
 # ---------------------------------------------------------------------------

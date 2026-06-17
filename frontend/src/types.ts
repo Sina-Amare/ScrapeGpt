@@ -408,7 +408,7 @@ export type PreviewResponse = {
   project_id: number;
   spec_id: number;
   sample_records: Record<string, unknown>[];
-  warnings: unknown[];
+  warnings: string[];
   missing_fields: unknown[];
   quality_summary: Record<string, unknown>;
   created_at: string;

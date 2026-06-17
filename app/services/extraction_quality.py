@@ -27,6 +27,7 @@ WARN_MANY_PAGES_FAILED = "MANY_PAGES_FAILED"
 WARN_SCOPE_NOT_CONFIRMED = "SCOPE_NOT_CONFIRMED"
 WARN_FULL_SITE_SCOPE_WARNING = "FULL_SITE_SCOPE_WARNING"
 WARN_FRONTIER_HAS_MANY_EXCLUSIONS = "FRONTIER_HAS_MANY_EXCLUSIONS"
+WARN_DUPLICATE_COLUMN_VALUES = "DUPLICATE_COLUMN_VALUES"
 
 
 _DEFAULT_FIELD_SUCCESS_THRESHOLD = 0.7
@@ -176,6 +177,62 @@ def compute_preview_quality(
         "missing_field_rates": missing_field_rates,
         "warnings": warnings,
     }
+
+
+def detect_duplicate_column_warnings(
+    selected_fields: list[str] | None,
+    sample_records: Iterable[Any],
+) -> list[dict[str, Any]]:
+    """Warn when two selected fields return IDENTICAL values on every sample row.
+
+    Two distinct columns extracting the exact same value across all rows is a
+    near-certain wrong-selector signal — usually two fields pointing at the same
+    element. This is advisory only: it never changes a value or a selector, it
+    just surfaces the suspicion so the user can re-check the Fields step.
+
+    Pairs that are empty on every row are ignored (the missing-field warnings
+    already cover those). String comparison is whitespace-normalized.
+    """
+    rows = [_record_data(r) for r in (sample_records or [])]
+    fields = [f for f in (selected_fields or []) if f]
+    if len(fields) < 2 or not rows:
+        return []
+
+    warnings: list[dict[str, Any]] = []
+    for i in range(len(fields)):
+        for j in range(i + 1, len(fields)):
+            a, b = fields[i], fields[j]
+            if a == b:
+                continue
+            any_present = False
+            all_equal = True
+            for row in rows:
+                va, vb = row.get(a), row.get(b)
+                if _is_present_value(va) or _is_present_value(vb):
+                    any_present = True
+                if _normalize_cmp(va) != _normalize_cmp(vb):
+                    all_equal = False
+                    break
+            if any_present and all_equal:
+                warnings.append(
+                    {
+                        "code": WARN_DUPLICATE_COLUMN_VALUES,
+                        "fields": [a, b],
+                        "message": (
+                            f"Fields '{a}' and '{b}' returned identical values "
+                            "on every sample row — they may share the same "
+                            "selector."
+                        ),
+                    }
+                )
+    return warnings
+
+
+def _normalize_cmp(value: Any) -> Any:
+    """Normalize a value for equality comparison (whitespace-insensitive strings)."""
+    if isinstance(value, str):
+        return value.strip()
+    return value
 
 
 # Internal helpers

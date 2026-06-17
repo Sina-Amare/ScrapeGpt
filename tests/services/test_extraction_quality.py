@@ -5,11 +5,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.services.extraction_quality import (
+    WARN_DUPLICATE_COLUMN_VALUES,
     WARN_FIELD_LOW_SUCCESS_RATE,
     WARN_NO_RECORDS_EXTRACTED,
     WARN_REQUIRED_FIELD_MISSING,
     compute_extraction_quality,
     compute_preview_quality,
+    detect_duplicate_column_warnings,
 )
 
 
@@ -136,3 +138,43 @@ def test_preview_quality_good_with_full_samples():
     s = compute_preview_quality(selected_fields=["Title", "Price"], sample_records=rs)
     assert s["overall"] == "good"
     assert s["warnings"] == []
+
+
+# ---- #7: duplicate-column warning ----
+
+
+def test_duplicate_column_warning_flags_identical_columns():
+    rows = [
+        {"Calories": "52", "Energy": "52"},
+        {"Calories": "89", "Energy": "89"},
+    ]
+    warns = detect_duplicate_column_warnings(["Calories", "Energy"], rows)
+    assert len(warns) == 1
+    w = warns[0]
+    assert w["code"] == WARN_DUPLICATE_COLUMN_VALUES
+    assert sorted(w["fields"]) == ["Calories", "Energy"]
+
+
+def test_duplicate_column_warning_ignores_differing_columns():
+    rows = [
+        {"Calories": "52", "Protein": "0.3"},
+        {"Calories": "89", "Protein": "1.1"},
+    ]
+    assert detect_duplicate_column_warnings(["Calories", "Protein"], rows) == []
+
+
+def test_duplicate_column_warning_ignores_all_empty_columns():
+    rows = [{"A": "", "B": None}, {"A": "", "B": ""}]
+    # Both empty everywhere -> not a duplicate signal (missing-field warns cover it).
+    assert detect_duplicate_column_warnings(["A", "B"], rows) == []
+
+
+def test_duplicate_column_warning_is_whitespace_insensitive():
+    rows = [{"A": " 52 ", "B": "52"}, {"A": "89", "B": " 89"}]
+    warns = detect_duplicate_column_warnings(["A", "B"], rows)
+    assert len(warns) == 1
+
+
+def test_duplicate_column_warning_needs_two_fields_and_rows():
+    assert detect_duplicate_column_warnings(["A"], [{"A": "x"}]) == []
+    assert detect_duplicate_column_warnings(["A", "B"], []) == []

@@ -1,7 +1,7 @@
 import "../test/setupDom";
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { api, apiRequest, setAccessToken } from "./api";
+import { ApiError, api, apiErrorCode, apiRequest, setAccessToken } from "./api";
 
 type FetchCall = [RequestInfo | URL, RequestInit | undefined];
 
@@ -122,5 +122,17 @@ describe("api client", () => {
     assert.equal(calls[0][0], "/api/v1/providers/7/reveal-key");
     assert.equal(calls[0][1]?.method, "POST");
     assert.equal(String(calls[0][1]?.body), '{"password":"correct-password"}');
+  });
+
+  it("apiErrorCode pulls error_code from a structured detail body", () => {
+    const err = new ApiError(400, {
+      detail: { message: "The browser closed unexpectedly", error_code: "BROWSER_DRIVER_CRASHED" }
+    });
+    assert.equal(apiErrorCode(err), "BROWSER_DRIVER_CRASHED");
+  });
+
+  it("apiErrorCode returns null for a plain string detail or non-ApiError", () => {
+    assert.equal(apiErrorCode(new ApiError(400, { detail: "Preview failed" })), null);
+    assert.equal(apiErrorCode(new Error("nope")), null);
   });
 });

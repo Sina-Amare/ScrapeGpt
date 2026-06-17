@@ -140,6 +140,11 @@ VALID_PROJECT_TRANSITIONS: dict[ProjectState, list[ProjectState]] = {
     ],
     ProjectState.PREVIEWING: [
         ProjectState.PREVIEW_READY,
+        # Revert targets for a *transient* preview-fetch failure (browser-driver
+        # crash, network, anti-bot). The project returns to the ready state it
+        # came from instead of being stranded in FAILED. See create_preview().
+        ProjectState.AWAITING_SETUP,
+        ProjectState.ANALYSIS_READY,
         ProjectState.FAILED,
         ProjectState.CANCELED,
     ],

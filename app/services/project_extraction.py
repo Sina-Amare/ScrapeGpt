@@ -599,6 +599,12 @@ async def _process_one_page(
         page.state = CrawlPageState.FAILED
         page.retry_count += 1
         page.error = str(exc)
+        # Record the stable fetch code (e.g. BROWSER_DRIVER_CRASHED) so the UI
+        # can show friendly copy and a transient browser crash is
+        # distinguishable from a generic fetch failure. The *page* fails; the
+        # run continues — the fetcher already retried a driver crash once
+        # internally, so we do not re-queue here (avoids a crash loop).
+        page.block_reason = getattr(exc, "error_code", None)
         page.lease_expires_at = None
         await db.commit()
         logger.error(
@@ -608,6 +614,7 @@ async def _process_one_page(
                 "page_id": page.id,
                 "url": page.normalized_url,
                 "error_type": type(exc).__name__,
+                "error_code": getattr(exc, "error_code", None),
             },
         )
         return 0

@@ -19,7 +19,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { ProviderSelect } from "../components/ui/ProviderSelect";
 import { Select } from "../components/ui/Select";
 import { Skeleton } from "../components/ui/Skeleton";
-import { ApiError, api } from "../lib/api";
+import { ApiError, api, apiErrorCode } from "../lib/api";
 import { canRetryWithProvider, errorHelp } from "../lib/errorHelp";
 import { ACTIVE_PROJECT_STATES, projectTone, shouldPollProject } from "../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation, scopeModeLabel } from "../lib/scopeCopy";
@@ -968,10 +968,36 @@ export function ProjectDetailPage() {
                 {previewMutation.isPending ? "Preparing..." : "Preview data"}
               </Button>
             </div>
-            {previewMutation.error ? <Alert tone="danger">{previewMutation.error.message}</Alert> : null}
+            {previewMutation.error
+              ? (() => {
+                  const code = apiErrorCode(previewMutation.error);
+                  const help = code ? errorHelp(code) : null;
+                  return (
+                    <Alert tone="danger">
+                      {help ? (
+                        <div>
+                          <p className="font-semibold">{help.title}</p>
+                          <p className="mt-1 text-sm">{help.guidance}</p>
+                        </div>
+                      ) : (
+                        previewMutation.error.message
+                      )}
+                    </Alert>
+                  );
+                })()
+              : null}
             {project.preview ? (
               <div className="grid gap-4">
                 <RecordsTable rows={project.preview.sample_records} />
+                {project.preview.warnings.length ? (
+                  <Alert tone="warning">
+                    <ul className="list-disc space-y-1 pl-4 text-sm">
+                      {project.preview.warnings.map((warning, index) => (
+                        <li key={index}>{String(warning)}</li>
+                      ))}
+                    </ul>
+                  </Alert>
+                ) : null}
                 {project.preview.missing_fields.length ? (
                   <Alert tone="info">{project.preview.missing_fields.length} selected fields had no sample value.</Alert>
                 ) : null}

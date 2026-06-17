@@ -550,7 +550,20 @@ async def preview_project(
         preview = await create_preview(db, project, spec)
     except Exception as exc:
         await db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        # Return a structured body so the UI can map the stable code (e.g.
+        # BROWSER_DRIVER_CRASHED) to friendly copy instead of a raw message.
+        # create_preview() has already persisted the resolved code on the
+        # project; fall back to the exception's own code attributes.
+        code = (
+            project.error_code
+            or getattr(exc, "error_code", None)
+            or getattr(exc, "code", None)
+            or "PREVIEW_FAILED"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(exc), "error_code": code},
+        ) from exc
     await db.commit()
     await db.refresh(preview)
     return _preview_response(preview)  # type: ignore[return-value]

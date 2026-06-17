@@ -618,6 +618,172 @@ def test_decode_response_falls_back_to_utf8_on_unknown_codec():
     assert _decode_response(body, resp) == "plain ascii"
 
 
+# ---------------------------------------------------------------------------
+# Tier 1 #1: browser-driver crash classification + retry-once
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "Connection closed while reading from the driver",
+        "Target page, context or browser has been closed",
+        "Target closed",
+        "Browser has been closed",
+        "Browser closed unexpectedly",
+        "The browser process exited",
+    ],
+)
+def test_driver_crash_signatures_are_classified(msg):
+    from app.services.fetcher import _is_browser_driver_crash
+
+    assert _is_browser_driver_crash(Exception(msg)) is True
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "Timeout 30000ms exceeded",
+        "net::ERR_NAME_NOT_RESOLVED",
+        "Selector did not resolve to any element",
+        "",
+    ],
+)
+def test_non_crash_exceptions_are_not_classified(msg):
+    from app.services.fetcher import _is_browser_driver_crash
+
+    assert _is_browser_driver_crash(Exception(msg)) is False
+
+
+def test_browser_exception_to_fetch_error_assigns_stable_codes():
+    from app.services.fetcher import _browser_exception_to_fetch_error
+
+    crash = _browser_exception_to_fetch_error(
+        Exception("Connection closed while reading from the driver")
+    )
+    assert crash.error_code == "BROWSER_DRIVER_CRASHED"
+    assert "browser closed unexpectedly" in str(crash).lower()
+
+    other = _browser_exception_to_fetch_error(Exception("boom"))
+    assert other.error_code == "FETCH_FAILED"
+    assert str(other) == "Browser fetch failed: boom"
+
+
+@pytest.mark.asyncio
+async def test_retry_once_succeeds_on_second_attempt():
+    from app.services.fetcher import _retry_once_on_driver_crash
+
+    calls = []
+
+    async def op():
+        calls.append(1)
+        if len(calls) == 1:
+            raise FetchError("driver died", "BROWSER_DRIVER_CRASHED")
+        return "ok"
+
+    assert await _retry_once_on_driver_crash(op) == "ok"
+    assert len(calls) == 2  # original + exactly one retry
+
+
+@pytest.mark.asyncio
+async def test_retry_once_gives_up_after_a_single_retry():
+    from app.services.fetcher import _retry_once_on_driver_crash
+
+    calls = []
+
+    async def op():
+        calls.append(1)
+        raise FetchError("driver died again", "BROWSER_DRIVER_CRASHED")
+
+    with pytest.raises(FetchError) as ei:
+        await _retry_once_on_driver_crash(op)
+    assert ei.value.error_code == "BROWSER_DRIVER_CRASHED"
+    assert len(calls) == 2  # never more than one retry
+
+
+@pytest.mark.asyncio
+async def test_retry_once_does_not_retry_other_fetch_errors():
+    from app.services.fetcher import _retry_once_on_driver_crash
+
+    calls = []
+
+    async def op():
+        calls.append(1)
+        raise FetchError("bad selector", "FETCH_FAILED")
+
+    with pytest.raises(FetchError) as ei:
+        await _retry_once_on_driver_crash(op)
+    assert ei.value.error_code == "FETCH_FAILED"
+    assert len(calls) == 1  # non-crash codes are not retried
+
+
+@pytest.mark.asyncio
+async def test_browser_fetch_retries_once_on_driver_crash(monkeypatch):
+    """A transient driver crash on the first attempt is retried once, then
+    succeeds on a brand-new browser — wiring of classification + retry."""
+    try:
+        import playwright.async_api as pw_api
+    except ImportError:
+        pytest.skip("playwright not installed")
+
+    from unittest.mock import AsyncMock, MagicMock
+
+    attempts = {"n": 0}
+
+    def make_pw():
+        idx = attempts["n"]
+        attempts["n"] += 1
+
+        fake_page = MagicMock()
+        fake_page.url = "https://example.com"
+        fake_page.content = AsyncMock(
+            return_value="<html><body>ok content</body></html>"
+        )
+        fake_page.add_init_script = AsyncMock()
+        fake_page.wait_for_load_state = AsyncMock()
+        if idx == 0:
+            fake_page.goto = AsyncMock(
+                side_effect=Exception(
+                    "Connection closed while reading from the driver"
+                )
+            )
+        else:
+            fake_page.goto = AsyncMock(return_value=MagicMock(status=200))
+
+        fake_context = MagicMock()
+        fake_context.route = AsyncMock()
+        fake_context.new_page = AsyncMock(return_value=fake_page)
+        fake_context.close = AsyncMock()
+
+        fake_browser = MagicMock()
+        fake_browser.new_context = AsyncMock(return_value=fake_context)
+        fake_browser.close = AsyncMock()
+
+        fake_chromium = MagicMock()
+        fake_chromium.launch = AsyncMock(return_value=fake_browser)
+
+        fake_pw = MagicMock()
+        fake_pw.chromium = fake_chromium
+        fake_pw.__aenter__ = AsyncMock(return_value=fake_pw)
+        fake_pw.__aexit__ = AsyncMock(return_value=None)
+        return fake_pw
+
+    monkeypatch.setattr(pw_api, "async_playwright", make_pw)
+    monkeypatch.setattr(
+        "app.services.fetcher.settings",
+        type("S", (), {
+            "SCRAPE_TIMEOUT": 30, "USER_AGENT": "Test/1.0",
+            "MAX_FETCH_BYTES": 2 * 1024 * 1024, "ALLOW_PRIVATE_NETWORK_URLS": True,
+        })(),
+    )
+
+    from app.services.fetcher import _browser_fetch
+
+    result = await _browser_fetch("https://example.com")
+    assert "ok content" in result.html
+    assert attempts["n"] == 2  # crashed once, retried once, succeeded
+
+
 @pytest.mark.asyncio
 async def test_auto_falls_back_to_browser_on_binary_static(monkeypatch):
     """Undecodable/garbled static HTML must trigger the stealth cascade in AUTO."""

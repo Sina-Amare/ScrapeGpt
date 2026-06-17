@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import ExtractionSpec, PreviewResult, Project, ProjectState
 from app.services.anti_bot import CHALLENGE_MESSAGES, anti_bot_challenge_reason
+from app.services.extraction_quality import detect_duplicate_column_warnings
 from app.services.fetcher import (
     FetchError,
     apply_interactions_and_capture,
@@ -117,7 +118,12 @@ async def build_selector_preview_payload(
             browser_session_cookies=session_cookies,
         )
     except FetchError as exc:
-        raise RuntimeError(str(exc)) from exc
+        err = RuntimeError(str(exc))
+        # Preserve the stable fetch code (e.g. BROWSER_DRIVER_CRASHED) so the
+        # preview caller can classify the failure and the UI can show friendly
+        # copy instead of a raw driver string.
+        err.error_code = exc.error_code  # type: ignore[attr-defined]
+        raise err from exc
     challenge_reason = await asyncio.to_thread(
         anti_bot_challenge_reason, fetched.html, fetched.final_url
     )
@@ -183,6 +189,16 @@ async def build_selector_preview_payload(
     for item in extracted:
         warnings.extend(item.warnings)
 
+    # Flag fields that returned identical values on every sample row — a
+    # near-certain wrong-selector signal. Advisory only (no value is changed).
+    field_keys = [
+        str(field.get("user_label") or field.get("label") or field.get("name"))
+        for field in selected_fields
+        if (field.get("user_label") or field.get("label") or field.get("name"))
+    ]
+    for dup in detect_duplicate_column_warnings(field_keys, sample_records):
+        warnings.append(dup["message"])
+
     return {
         "sample_records": sample_records,
         "warnings": list(dict.fromkeys(str(warning) for warning in warnings if warning)),
@@ -209,24 +225,72 @@ async def latest_preview(db: AsyncSession, project_id: int) -> PreviewResult | N
     return result.scalar_one_or_none()
 
 
+# Ready states a transient preview failure can fall back to. The preview
+# endpoint only starts a preview from one of these, so prior_state is always a
+# valid revert target; FAILED is the defensive fallback.
+_PREVIEW_REVERT_STATES = frozenset(
+    {
+        ProjectState.AWAITING_SETUP,
+        ProjectState.ANALYSIS_READY,
+        ProjectState.PREVIEW_READY,
+    }
+)
+
+
 async def create_preview(
     db: AsyncSession,
     project: Project,
     spec: ExtractionSpec,
 ) -> PreviewResult:
     logger.debug("preview.started", extra={"project_id": project.id})
+    prior_state = project.state
     project.transition_to(ProjectState.PREVIEWING)
+    # Clear any stale error from a previous attempt; set again only on failure.
+    project.error = None
+    project.error_code = None
     await db.flush()
 
     try:
         payload = await build_selector_preview_payload(project, spec, db)
-    except Exception as exc:
+    except InteractionError as exc:
+        # Genuine spec/config problem (interactive variant needs a browser the
+        # environment lacks, or the variant cap was exceeded). The user must
+        # change the spec, so the project legitimately fails.
         project.transition_to(ProjectState.FAILED)
         project.error = f"Preview failed: {exc}"
-        # Surface the precise variant error code (browser required / variant cap)
-        # instead of the generic PREVIEW_FAILED so the UI can explain it.
         project.error_code = getattr(exc, "code", None) or "PREVIEW_FAILED"
         await db.flush()
+        logger.warning(
+            "preview.failed_spec",
+            extra={"project_id": project.id, "error_code": project.error_code},
+        )
+        raise
+    except Exception as exc:
+        # Transient preview-fetch failure (browser-driver crash, network,
+        # anti-bot). Do NOT strand the project in FAILED — revert to the ready
+        # state it came from so the user can retry in place. The transition goes
+        # through transition_to() to preserve the state-machine invariant.
+        target = (
+            prior_state
+            if prior_state in _PREVIEW_REVERT_STATES
+            else ProjectState.FAILED
+        )
+        project.transition_to(target)
+        project.error = f"Preview failed: {exc}"
+        project.error_code = (
+            getattr(exc, "error_code", None)
+            or getattr(exc, "code", None)
+            or "PREVIEW_FAILED"
+        )
+        await db.flush()
+        logger.warning(
+            "preview.failed_transient",
+            extra={
+                "project_id": project.id,
+                "error_code": project.error_code,
+                "reverted_to": target.value,
+            },
+        )
         raise
 
     # Log selector failures for missing fields
