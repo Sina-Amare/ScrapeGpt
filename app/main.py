@@ -67,20 +67,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         },
     )
 
-    # Recover state left stuck by a previous process death BEFORE scheduling
-    # periodic sweeps, so a restart (by an external supervisor — which
-    # production still requires) immediately fails orphaned runs/projects.
-    try:
-        from app.services.watchdog import run_watchdog_once
-        await run_watchdog_once()
-        logger.info("watchdog.startup_sweep_complete")
-    except Exception:
-        logger.exception("watchdog.startup_sweep_failed")
+    # The watchdog must run in exactly one process. When RUN_SCHEDULER is false
+    # (a non-scheduler worker in a multi-process deployment) skip both the
+    # startup recovery sweep and the periodic scheduler so we don't get duplicate
+    # sweeps or duplicate resume dispatch.
+    if settings.RUN_SCHEDULER:
+        # Recover state left stuck by a previous process death BEFORE scheduling
+        # periodic sweeps, so a restart (by an external supervisor — which
+        # production still requires) immediately recovers orphaned runs/projects.
+        try:
+            from app.services.watchdog import run_watchdog_once
+            await run_watchdog_once()
+            logger.info("watchdog.startup_sweep_complete")
+        except Exception:
+            logger.exception("watchdog.startup_sweep_failed")
 
-    # Start background scheduler
-    from app.core.scheduler import start_scheduler
-    start_scheduler()
-    logger.info("scheduler.started")
+        from app.core.scheduler import start_scheduler
+        start_scheduler()
+        logger.info("scheduler.started")
+    else:
+        logger.info("scheduler.disabled", extra={"reason": "RUN_SCHEDULER=false"})
 
     yield  # Application runs here
 

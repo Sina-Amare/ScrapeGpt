@@ -1028,13 +1028,17 @@ def test_cors_origins_includes_vite_dev_origin():
     assert "http://127.0.0.1:5173" in origins
 
 
-def test_crawl_concurrency_has_description():
-    """CRAWL_CONCURRENCY field has a reserved-for-future description."""
+def test_multiprocess_safety_settings_defaults():
+    """A2: RUN_SCHEDULER + RATE_LIMIT_STORAGE_URI default to safe single-process."""
     from app.core.config import Settings
+    from cryptography.fernet import Fernet
 
-    field_info = Settings.model_fields["CRAWL_CONCURRENCY"]
-    assert field_info.description is not None
-    assert "Reserved for future" in field_info.description
+    settings = Settings(
+        PROVIDER_KEY_ENCRYPTION_SECRET=Fernet.generate_key().decode(),
+        _env_file=None,
+    )
+    assert settings.RUN_SCHEDULER is True
+    assert settings.RATE_LIMIT_STORAGE_URI == "memory://"
 
 
 def test_watchdog_project_timeout_defaults():

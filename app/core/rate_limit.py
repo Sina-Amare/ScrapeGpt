@@ -37,7 +37,9 @@ def get_user_identifier(request: Request) -> str:
 limiter = Limiter(
     key_func=get_user_identifier,
     default_limits=[f"{settings.RATE_LIMIT_PER_MINUTE}/minute"],
-    storage_uri="memory://",  # In-memory for single instance
+    # Default "memory://" is per-process. Point RATE_LIMIT_STORAGE_URI at a
+    # shared store (e.g. redis://) to enforce limits across multiple workers.
+    storage_uri=settings.RATE_LIMIT_STORAGE_URI,
 )
 
 

@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     PORT: int = 8000
     WORKERS: int = 1
+    RUN_SCHEDULER: bool = Field(
+        default=True,
+        description=(
+            "Whether this process starts the in-process APScheduler watchdog. "
+            "The watchdog must run in EXACTLY ONE process. When running multiple "
+            "worker processes, set this true on a single dedicated worker (or a "
+            "standalone scheduler process) and false on the rest to avoid "
+            "duplicate sweeps / duplicate resume dispatch."
+        ),
+    )
     
     # -------------------------------------------------------------------------
     # Database Settings
@@ -253,6 +263,16 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTH_PER_MINUTE: int = Field(
         default=5, ge=1, le=30,
         description="Rate limit for auth endpoints per minute"
+    )
+    RATE_LIMIT_STORAGE_URI: str = Field(
+        default="memory://",
+        description=(
+            "slowapi storage backend. 'memory://' is per-process, so it only "
+            "enforces a global limit when running a single process. For a "
+            "multi-process / multi-instance deployment point this at a shared "
+            "store, e.g. 'redis://localhost:6379', so the limit is enforced "
+            "across workers."
+        ),
     )
 
     # -------------------------------------------------------------------------
