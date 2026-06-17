@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
+from app.models.job import ExtractionMode
 from app.services.interaction_detect import (
     detect_column_variants,
     detect_interaction_groups,
     detect_interaction_profile,
 )
+from app.services.interaction_extraction import extract_records_with_variants
 
 
 def _by_key(groups):
@@ -161,6 +167,71 @@ def test_content_toggles_preserved_alongside_navigation():
     assert keys == {"unit_system", "serving_basis"}
 
 
+# --- #8: in-page section anchors are not data-variant toggles ----------------
+
+
+def test_section_anchor_group_is_dropped():
+    """Generic section words that jump to on-page anchors are in-page nav, not a
+    variant toggle."""
+    html = """
+    <main>
+      <div class="tabs">
+        <a href="#charts" class="active">Charts</a>
+        <a href="#more-information">More information</a>
+      </div>
+    </main>
+    """
+    assert detect_interaction_groups(html) == []
+
+
+def test_section_tab_buttons_are_dropped():
+    """The real calories.info leftover: MUI tab BUTTONS 'Charts' /
+    'More Information' (no href) are in-page section nav, not a data toggle."""
+    html = """
+    <main>
+      <div class="MuiTabs-flexContainer">
+        <button class="active">Charts</button>
+        <button>More Information</button>
+      </div>
+    </main>
+    """
+    assert detect_interaction_groups(html) == []
+
+
+def test_real_button_toggle_survives_alongside_section_tabs():
+    """SURVIVAL GATE: dropping section tabs must NOT drop genuine data toggles
+    (buttons AND fragment-anchor toggles with non-generic labels)."""
+    html = """
+    <main>
+      <div class="tabs">
+        <button class="active">Charts</button><button>More Information</button>
+      </div>
+      <div class="unit-toggle">
+        <button class="active">Metric</button><button>Imperial</button>
+      </div>
+      <div class="basis-toggle">
+        <a href="#per-100g" class="active">Per 100 g</a>
+        <a href="#per-serving">Per serving</a>
+      </div>
+    </main>
+    """
+    keys = {g["metadata_key"] for g in detect_interaction_groups(html)}
+    assert keys == {"unit_system", "serving_basis"}  # section tabs dropped
+
+
+def test_group_with_one_non_section_label_survives():
+    """If even one label is not a generic section word, the group is NOT a pure
+    section-nav and survives (e.g. a Map/List view toggle)."""
+    html = """
+    <main><div class="tabs">
+      <button class="active">Map</button><button>List</button>
+    </div></main>
+    """
+    # "map" is a section word but "list" is not -> not all-section -> kept.
+    groups = detect_interaction_groups(html)
+    assert len(groups) == 1
+
+
 def test_detect_interaction_profile_is_disabled_draft():
     html = '<div><button class="active">Metric</button><button>Imperial</button></div>'
     profile, new_fields = detect_interaction_profile(html)
@@ -219,3 +290,275 @@ def test_detect_interaction_profile_includes_column_group_first():
     profile, new_fields = detect_interaction_profile("", fields)
     assert new_fields is not None
     assert profile["groups"][0]["metadata_key"] == "column_set"
+
+
+# --- #4: generalized deterministic column detection (closed vocabulary) -------
+
+
+def test_detect_column_variants_collapses_ordinal_fields():
+    fields = [
+        _f("Food", "td:nth-child(1) p"),
+        _f("Primary Serving Size", "td:nth-child(2) p"),
+        _f("Secondary Serving Size", "td:nth-child(3) p"),
+        _f("Primary Calories", "td:nth-child(4) p"),
+        _f("Secondary Calories", "td:nth-child(5) p"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is not None
+    assert group["execution"] == "deterministic"
+    assert [o["label"] for o in group["options"]] == ["Primary", "Secondary"]
+    assert [f["label"] for f in new_fields] == ["Food", "Serving Size", "Calories"]
+    v1, v2 = group["options"]
+    assert v1["field_selectors"]["Serving Size"] == "td:nth-child(2) p"
+    assert v2["field_selectors"]["Serving Size"] == "td:nth-child(3) p"
+    # Deterministic: every option has an EMPTY recipe (no browser click).
+    assert all(o["recipe"] == [] for o in group["options"])
+
+
+def test_detect_column_variants_collapses_parenthetical_basis():
+    fields = [
+        _f("Food", "td:nth-child(1) p"),
+        _f("Serving Size (per 100 g)", "td:nth-child(2) p"),
+        _f("Calories (per 100 g)", "td:nth-child(3) p"),
+        _f("Serving Size (per serving)", "td:nth-child(4) p"),
+        _f("Calories (per serving)", "td:nth-child(5) p"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is not None
+    assert group["execution"] == "deterministic"
+    assert [o["label"] for o in group["options"]] == ["per 100 g", "per serving"]
+    assert [f["label"] for f in new_fields] == ["Food", "Serving Size", "Calories"]
+    v1, v2 = group["options"]
+    assert v1["field_selectors"]["Calories"] == "td:nth-child(3) p"
+    assert v2["field_selectors"]["Calories"] == "td:nth-child(5) p"
+    assert all(o["recipe"] == [] for o in group["options"])
+
+
+def test_detect_column_variants_collapses_metric_imperial():
+    fields = [
+        _f("Item", ".n"),
+        _f("Weight (metric)", ".wm"),
+        _f("Weight (imperial)", ".wi"),
+        _f("Height (metric)", ".hm"),
+        _f("Height (imperial)", ".hi"),
+    ]
+    _new_fields, group = detect_column_variants(fields)
+    assert group is not None
+    assert [o["label"] for o in group["options"]] == ["metric", "imperial"]
+
+
+def test_unrecognized_trailing_word_does_not_collapse():
+    """Closed vocabulary: 'USD'/'EUR' are different data, not a parallel column —
+    they must NOT be collapsed (guards against open-ended over-collapse)."""
+    fields = [_f("Price USD", ".usd"), _f("Price EUR", ".eur")]
+    new_fields, group = detect_column_variants(fields)
+    assert group is None
+    assert new_fields == fields
+
+
+def test_mismatched_qualifier_families_do_not_collapse():
+    """Families that expose DIFFERENT variant-key sets are not parallel columns
+    and must not collapse (ordinal family vs parenthetical-basis family)."""
+    fields = [
+        _f("Primary Serving Size", ".a"),
+        _f("Secondary Serving Size", ".b"),
+        _f("Calories (per 100 g)", ".c"),
+        _f("Calories (per serving)", ".d"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is None
+    assert new_fields == fields
+
+
+def test_single_qualified_family_member_does_not_collapse():
+    """A lone qualified field (no sibling with another key) is left alone."""
+    fields = [_f("Food", ".f"), _f("Calories (per serving)", ".c")]
+    new_fields, group = detect_column_variants(fields)
+    assert group is None
+    assert new_fields == fields
+
+
+@pytest.mark.asyncio
+async def test_generalized_variants_extract_without_browser():
+    """The real functional payoff: a static parenthetical-basis table extracts
+    BOTH variants with NO browser callback invoked."""
+    html = (
+        "<table><tbody>"
+        "<tr>"
+        "<td><p>Apple</p></td>"
+        "<td><p>100 g</p></td><td><p>52</p></td>"
+        "<td><p>1 cup</p></td><td><p>65</p></td>"
+        "</tr>"
+        "</tbody></table>"
+    )
+    fields = [
+        _f("Food", "td:nth-child(1) p"),
+        _f("Serving Size (per 100 g)", "td:nth-child(2) p"),
+        _f("Calories (per 100 g)", "td:nth-child(3) p"),
+        _f("Serving Size (per serving)", "td:nth-child(4) p"),
+        _f("Calories (per serving)", "td:nth-child(5) p"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is not None and group["execution"] == "deterministic"
+
+    profile = {"enabled": True, "max_variant_combinations": 12, "groups": [group]}
+    project = SimpleNamespace(analysis={"repeated_item_selector": "tbody tr"})
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED,
+        content_config={},
+        fields=new_fields,
+        interaction_profile=profile,
+    )
+
+    called = {"browser": False}
+
+    async def _no_browser(_recipes):
+        called["browser"] = True
+        raise AssertionError("a browser must not launch for static variants")
+
+    records, _warnings = await extract_records_with_variants(
+        base_html=html,
+        source_url="https://example.com",
+        project=project,
+        spec=spec,
+        max_records=50,
+        fetch_variant_htmls=_no_browser,
+    )
+
+    assert called["browser"] is False
+    by_variant = {
+        str(r.normalized_data.get("column_set")): r.normalized_data.get("Calories")
+        for r in records
+    }
+    assert by_variant.get("per 100 g") == "52"
+    assert by_variant.get("per serving") == "65"
+
+
+# --- #5: bounded reconciliation of redundant interactive groups --------------
+
+
+def test_reconciliation_drops_redundant_interactive_axis():
+    """An interactive toggle whose axis a deterministic column group already
+    covers is dropped; a toggle on a DIFFERENT axis is kept."""
+    html = """
+    <main>
+      <div class="basis">
+        <button class="active">Show per 100 g</button>
+        <button>Show per serving</button>
+      </div>
+      <div class="unit">
+        <button class="active">Metric</button><button>Imperial</button>
+      </div>
+    </main>
+    """
+    fields = [
+        _f("Calories (per 100 g)", ".a"),
+        _f("Calories (per serving)", ".b"),
+        _f("Protein (per 100 g)", ".c"),
+        _f("Protein (per serving)", ".d"),
+    ]
+    profile, _new = detect_interaction_profile(html, fields)
+    keys = [g["metadata_key"] for g in profile["groups"]]
+    assert "column_set" in keys
+    assert "serving_basis" not in keys  # covered by column_set -> dropped
+    assert "unit_system" in keys        # different axis -> kept
+
+
+def test_reconciliation_keeps_interactive_without_column_group():
+    """With no fields there is no deterministic group, so nothing is dropped."""
+    html = """
+    <main><div class="unit">
+      <button class="active">Metric</button><button>Imperial</button>
+    </div></main>
+    """
+    profile, _new = detect_interaction_profile(html)
+    keys = [g["metadata_key"] for g in profile["groups"]]
+    assert keys == ["unit_system"]
+
+
+def test_reconciliation_numbered_columns_do_not_suppress_interactive():
+    """A numbered column group carries no axis tokens, so it must never suppress
+    an interactive toggle (ambiguous -> keep)."""
+    html = """
+    <main><div class="unit">
+      <button class="active">Metric</button><button>Imperial</button>
+    </div></main>
+    """
+    fields = [_f("Calories 1", ".a"), _f("Calories 2", ".b")]
+    profile, _new = detect_interaction_profile(html, fields)
+    keys = [g["metadata_key"] for g in profile["groups"]]
+    assert "column_set" in keys and "unit_system" in keys
+
+
+def test_full_profile_path_keeps_uncolumned_axis_interactive():
+    """Scope guard (finding #3): detect_interaction_profile makes browser-free
+    ONLY the axes the analyzer columned. A toggle axis with no matching column
+    group stays INTERACTIVE — it still needs a browser. This documents that a
+    page is not automatically 'all variants browser-free'; only covered axes are."""
+    html = """
+    <main><div class="unit">
+      <button class="active">Metric</button><button>Imperial</button>
+    </div></main>
+    """
+    # Analyzer columned the BASIS axis only (numbered parallel columns).
+    fields = [_f("Calories 1", ".a"), _f("Calories 2", ".b")]
+    profile, new_fields = detect_interaction_profile(html, fields)
+    groups = {g["metadata_key"]: g for g in profile["groups"]}
+    assert new_fields is not None
+    # The columned axis is deterministic (browser-free)...
+    assert groups["column_set"]["execution"] == "deterministic"
+    # ...but the un-columned unit toggle is still interactive (needs a browser).
+    assert groups["unit_system"]["execution"] == "interactive"
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_makes_single_axis_page_browser_free():
+    """calories.info-style: a basis column group + a redundant basis toggle ->
+    the toggle is dropped and extraction launches ZERO browsers."""
+    html = (
+        "<main>"
+        "<div class='basis'><button class='active'>Show per 100 g</button>"
+        "<button>Show per serving</button></div>"
+        "<table><tbody><tr>"
+        "<td><p>Apple</p></td><td><p>52</p></td><td><p>65</p></td>"
+        "</tr></tbody></table>"
+        "</main>"
+    )
+    fields = [
+        _f("Food", "td:nth-child(1) p"),
+        _f("Calories (per 100 g)", "td:nth-child(2) p"),
+        _f("Calories (per serving)", "td:nth-child(3) p"),
+    ]
+    profile, new_fields = detect_interaction_profile(html, fields)
+    assert [g["metadata_key"] for g in profile["groups"]] == ["column_set"]
+    assert new_fields is not None
+
+    enabled = {**profile, "enabled": True}
+    project = SimpleNamespace(analysis={"repeated_item_selector": "tbody tr"})
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED,
+        content_config={},
+        fields=new_fields,
+        interaction_profile=enabled,
+    )
+    called = {"browser": False}
+
+    async def _no_browser(_recipes):
+        called["browser"] = True
+        raise AssertionError("no browser for a fully reconciled static page")
+
+    records, _w = await extract_records_with_variants(
+        base_html=html,
+        source_url="https://example.com",
+        project=project,
+        spec=spec,
+        max_records=50,
+        fetch_variant_htmls=_no_browser,
+    )
+    assert called["browser"] is False
+    cals = {
+        str(r.normalized_data.get("column_set")): r.normalized_data.get("Calories")
+        for r in records
+    }
+    assert cals.get("per 100 g") == "52"
+    assert cals.get("per serving") == "65"

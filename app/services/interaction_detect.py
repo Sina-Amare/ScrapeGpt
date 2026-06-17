@@ -37,6 +37,18 @@ _MAX_GROUPS = 4
 _MIN_OPTIONS = 2
 _MAX_OPTIONS = 6
 
+# Generic page-section labels. A small group of these that all jump to on-page
+# anchors (href="#…") is in-page section navigation (e.g. "Charts" /
+# "More information"), not a data-variant toggle. Kept tight so real toggles
+# (Metric/Imperial, per-100g/per-serving, …) are never matched.
+_SECTION_WORDS = {
+    "chart", "charts", "more information", "more info", "details", "detail",
+    "overview", "description", "descriptions", "review", "reviews",
+    "specification", "specifications", "specs", "comment", "comments",
+    "related", "about", "info", "information", "summary", "gallery",
+    "photos", "images", "map", "nutrition facts", "ingredients",
+}
+
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
@@ -49,6 +61,11 @@ def _is_unsafe(label: str) -> bool:
     if label.isdigit():  # pagination page numbers
         return True
     return bool(_UNSAFE_TEXT.search(label))
+
+
+def _is_section_word(label: str) -> bool:
+    """True if *label* is a generic page-section word (see ``_SECTION_WORDS``)."""
+    return _clean(label).lower() in _SECTION_WORDS
 
 
 def _css_value(value: str) -> str:
@@ -141,6 +158,16 @@ def _group_from_segmented(container: Tag) -> dict[str, Any] | None:
         href = str(c.get("href") or "")
         if href and (href.startswith("http") or href.startswith("//")):
             return None
+    # In-page section navigation masquerading as a toggle: a small group whose
+    # EVERY label is a generic section word (e.g. "Charts" / "More information").
+    # These switch on-page content sections — often MUI/Bootstrap tabs rendered
+    # as buttons OR anchors jumping to a fragment — not data variants.
+    # Conservative: real data toggles (Metric/Imperial, per-100g/per-serving,
+    # Small/Large, Map/List) are never *all* generic section words, so they are
+    # unaffected (see survival tests). Gated on the curated ``_SECTION_WORDS``
+    # set, never a site-specific selector.
+    if all(_is_section_word(lbl) for lbl in labels):
+        return None
     default_idx = next(
         (i for i, c in enumerate(candidates) if _is_active(c)), 0
     )
@@ -316,15 +343,71 @@ def detect_interaction_groups(html: str) -> list[dict[str, Any]]:
     return groups[:_MAX_GROUPS]
 
 
-_SUFFIX_RE = re.compile(r"^(.*?)[\s_:#-]*(\d+)$")
+# --- Parallel-column qualifier vocabulary (CLOSED on purpose) ---------------
+# A field label carries a "variant qualifier" only when it matches one of a
+# small, fixed set of patterns. This is deliberately NOT an open-ended
+# "any trailing word" rule — that would collapse unrelated fields (e.g. "Price
+# USD" / "Price EUR" are different data, not the same column). Recognized:
+#   * trailing integer:        "Calories 1" / "Calories 2"
+#   * ordinal word:            "Secondary serving size" / "Primary serving size"
+#   * parenthetical qualifier: "Calories (per 100 g)" / "Calories (per serving)",
+#                              "Weight (metric)" / "Weight (imperial)"
+_NUM_SUFFIX_RE = re.compile(r"^(.*?)[\s_:#-]*(\d+)$")
+_PAREN_RE = re.compile(r"^(.*?)\s*[\(\[]\s*(.+?)\s*[\)\]]\s*$")
+_ORDINAL_WORDS = {
+    "primary": "Primary",
+    "secondary": "Secondary",
+    "tertiary": "Tertiary",
+    "quaternary": "Quaternary",
+}
+# Parenthetical inner text accepted as a variant qualifier (basis or unit).
+_QUALIFIER_PAREN_RE = re.compile(r"^(?:per\s+.+|metric|imperial)$", re.I)
 
 
-def _split_suffix(label: str) -> tuple[str, int | None]:
-    """('Calories 1' -> ('Calories', 1)); ('Food' -> ('Food', None))."""
-    m = _SUFFIX_RE.match((label or "").strip())
+def _split_variant_qualifier(
+    label: str,
+) -> tuple[str, str | None, str | None]:
+    """Split a field label into ``(base, variant_key, option_label)``.
+
+    Returns ``variant_key=None`` (a plain field) unless the label matches the
+    CLOSED qualifier vocabulary above. ``variant_key`` is a grouping identity;
+    ``option_label`` is what the variant option is shown as. Examples::
+
+        "Calories 1"            -> ("Calories", "num:1", "Variant 1")
+        "Secondary serving size"-> ("serving size", "secondary", "Secondary")
+        "Calories (per 100 g)"  -> ("Calories", "per 100 g", "per 100 g")
+        "Food"                  -> ("Food", None, None)
+    """
+    text = (label or "").strip()
+    if not text:
+        return "", None, None
+
+    # 1. Parenthetical qualifier suffix: "Calories (per 100 g)".
+    m = _PAREN_RE.match(text)
     if m and m.group(1).strip():
-        return m.group(1).strip(), int(m.group(2))
-    return (label or "").strip(), None
+        inner = _clean(m.group(2))
+        if _QUALIFIER_PAREN_RE.match(inner):
+            return m.group(1).strip(), inner.lower(), inner
+        if inner.lower() in _ORDINAL_WORDS:
+            return m.group(1).strip(), inner.lower(), _ORDINAL_WORDS[inner.lower()]
+
+    # 2. Leading / trailing ordinal word: "Secondary serving size".
+    tokens = text.split()
+    if len(tokens) >= 2:
+        first = tokens[0].lower().strip(":-")
+        last = tokens[-1].lower().strip(":-")
+        if first in _ORDINAL_WORDS:
+            return " ".join(tokens[1:]).strip(), first, _ORDINAL_WORDS[first]
+        if last in _ORDINAL_WORDS:
+            return " ".join(tokens[:-1]).strip(), last, _ORDINAL_WORDS[last]
+
+    # 3. Trailing integer: "Calories 1".
+    m = _NUM_SUFFIX_RE.match(text)
+    if m and m.group(1).strip():
+        n = int(m.group(2))
+        return m.group(1).strip(), f"num:{n}", f"Variant {n}"
+
+    return text, None, None
 
 
 def _field_label(field: dict[str, Any]) -> str:
@@ -334,44 +417,67 @@ def _field_label(field: dict[str, Any]) -> str:
 def detect_column_variants(
     fields: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """Detect parallel in-DOM columns expressed as numbered sibling fields.
+    """Detect parallel in-DOM columns expressed as qualified sibling fields.
 
-    Analyzers model pages like calories.info as flat fields — ``Calories 1`` /
-    ``Calories 2``, ``Serving Size 1`` / ``Serving Size 2`` — one per parallel
-    column. This collapses each numbered family into a single base field
+    Analyzers model pages like calories.info as flat fields with a per-column
+    qualifier — ``Calories 1`` / ``Calories 2``, ``Calories (per 100 g)`` /
+    ``Calories (per serving)``, ``Primary serving size`` / ``Secondary serving
+    size``. This collapses each qualified family into a single base field
     (``Calories``) and returns a **deterministic** variant group whose options
-    override those base fields to each column's selector. Returns
-    ``(new_fields, group)`` or ``(fields, None)`` when there is no such pattern.
-    No browser needed: the alternate values are already in the static DOM.
+    override those base fields to each column's analyzer-provided selector — no
+    browser needed, since the alternate values are already in the static DOM.
+
+    Returns ``(new_fields, group)`` or ``(fields, None)`` when there is no such
+    pattern. Tightly bounded: only the closed qualifier vocabulary is
+    recognized, and every collapsible family must expose the **same** set of
+    variant keys (otherwise the columns are not parallel and nothing collapses).
+    The per-option selectors come straight from the analyzer, never synthesized.
     """
-    families: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    families: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    key_label: dict[str, str] = {}
+    key_order: list[str] = []  # first-appearance order across the field list
     for f in fields:
-        base, idx = _split_suffix(_field_label(f))
-        if idx is not None and base:
-            families.setdefault(base, []).append((idx, f))
-    # Keep only families with >=2 distinct indices.
+        base, key, opt_label = _split_variant_qualifier(_field_label(f))
+        if key is None or not base:
+            continue
+        families.setdefault(base, []).append((key, f))
+        if key not in key_label:
+            key_label[key] = opt_label or key
+            key_order.append(key)
+
+    # Keep only families that carry >=2 distinct variant keys.
     families = {
-        b: sorted(v, key=lambda t: t[0])
-        for b, v in families.items()
-        if len({i for i, _ in v}) >= 2
+        b: members
+        for b, members in families.items()
+        if len({k for k, _ in members}) >= 2
     }
     if not families:
         return fields, None
 
-    indices = sorted({i for v in families.values() for i, _ in v})
+    # Every collapsible family must expose the SAME set of variant keys —
+    # otherwise the columns are not parallel and we must not collapse them.
+    key_sets = {frozenset(k for k, _ in members) for members in families.values()}
+    if len(key_sets) != 1:
+        return fields, None
+    shared_keys = next(iter(key_sets))
+    keys = [k for k in key_order if k in shared_keys]
+    if len(keys) < 2:
+        return fields, None
+
     options: list[dict[str, Any]] = []
-    for i in indices:
+    for key in keys:
         field_selectors: dict[str, str] = {}
         for base, members in families.items():
             sel = next(
-                (fld.get("selector") for (idx, fld) in members if idx == i), None
+                (fld.get("selector") for (k, fld) in members if k == key), None
             )
             if sel:
                 field_selectors[base] = str(sel)
         if field_selectors:
+            label = key_label[key]
             options.append({
-                "id": f"set_{i}",
-                "label": f"Variant {i}",
+                "id": sanitize_metadata_key(label) or f"set_{len(options)}",
+                "label": label,
                 "selected": True,
                 "field_selectors": field_selectors,
                 "recipe": [],
@@ -395,7 +501,7 @@ def detect_column_variants(
         if id(f) not in member_ids:
             new_fields.append(dict(f))
             continue
-        base, _ = _split_suffix(_field_label(f))
+        base, _key, _opt = _split_variant_qualifier(_field_label(f))
         if base in families and base not in done:
             done.add(base)
             collapsed = dict(f)
@@ -411,24 +517,83 @@ def detect_column_variants(
     return new_fields, group
 
 
+# --- #5: bounded reconciliation of redundant interactive groups -------------
+# When the deterministic column group already extracts a variant axis from the
+# static DOM, an interactive toggle for that SAME axis is redundant: it would
+# only re-introduce a (flaky) browser for data we already have. We DROP such a
+# group. This is pure suppression — it never synthesizes a selector and never
+# downgrades a toggle that has no matching column group. Matching is on the same
+# CLOSED vocabulary as #4, by canonical axis token, so it stays conservative:
+# when unsure, the interactive group is kept exactly as-is.
+_AXIS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("metric", re.compile(r"\bmetric\b", re.I)),
+    ("imperial", re.compile(r"\bimperial\b", re.I)),
+    ("per_100g", re.compile(r"per\s*100|\b100\s*g\b", re.I)),
+    ("per_serving", re.compile(r"per\s+serving|per\s+portion|\bserving\b|\bportion\b", re.I)),
+    ("primary", re.compile(r"\bprimary\b", re.I)),
+    ("secondary", re.compile(r"\bsecondary\b", re.I)),
+    ("tertiary", re.compile(r"\btertiary\b", re.I)),
+]
+
+
+def _axis_token(label: str) -> str | None:
+    for token, rx in _AXIS_PATTERNS:
+        if rx.search(label or ""):
+            return token
+    return None
+
+
+def _axis_tokens(labels: list[str]) -> frozenset[str]:
+    return frozenset(t for t in (_axis_token(lbl) for lbl in labels) if t)
+
+
+def _covers_same_axis(col_group: dict[str, Any], inter_group: dict[str, Any]) -> bool:
+    """True if the deterministic *col_group* already covers *inter_group*'s axis.
+
+    Requires the same option count AND identical, non-empty canonical axis
+    token sets. A numbered column group (``Variant 1`` / ``Variant 2``) has no
+    axis tokens, so it never suppresses anything — exactly the conservative
+    behavior we want.
+    """
+    col_opts = col_group.get("options") or []
+    inter_opts = inter_group.get("options") or []
+    if len(col_opts) != len(inter_opts):
+        return False
+    col_tokens = _axis_tokens([str(o.get("label", "")) for o in col_opts])
+    inter_tokens = _axis_tokens([str(o.get("label", "")) for o in inter_opts])
+    return bool(col_tokens) and col_tokens == inter_tokens
+
+
 def detect_interaction_profile(
     html: str, fields: list[dict[str, Any]] | None = None
 ) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
     """Build a draft (disabled) interaction_profile.
 
-    Combines static-HTML control detection (interactive groups) with numbered
-    parallel-column detection over the spec ``fields`` (a deterministic group,
-    listed first). Returns ``(profile, new_fields_or_None)`` — ``new_fields`` is
-    the collapsed field list the caller should persist when a column-variant
-    group was found, else ``None``.
+    Combines static-HTML control detection (interactive groups) with parallel-
+    column detection over the spec ``fields`` (a deterministic group, listed
+    first). When a deterministic column group is found, any interactive toggle
+    whose variant axis it already covers is dropped (#5 reconciliation) so the
+    page stays browser-free for that axis. Returns ``(profile, new_fields_or
+    _None)`` — ``new_fields`` is the collapsed field list the caller should
+    persist when a column-variant group was found, else ``None``.
     """
-    groups = detect_interaction_groups(html)
+    interactive_groups = detect_interaction_groups(html)
     new_fields: list[dict[str, Any]] | None = None
+    col_group: dict[str, Any] | None = None
     if fields:
         collapsed, col_group = detect_column_variants(fields)
         if col_group is not None:
-            groups = [col_group, *groups]
             new_fields = collapsed
+
+    if col_group is not None:
+        kept = [
+            g for g in interactive_groups
+            if not _covers_same_axis(col_group, g)
+        ]
+        groups = [col_group, *kept]
+    else:
+        groups = interactive_groups
+
     return (
         {
             "enabled": False,

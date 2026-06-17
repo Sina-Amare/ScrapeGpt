@@ -22,6 +22,7 @@ from app.services.fetcher import fetch_url
 from app.services.interaction_detect import (
     detect_column_variants,
     detect_interaction_groups,
+    detect_interaction_profile,
 )
 from app.services.interaction_extraction import extract_records_with_variants
 
@@ -128,6 +129,34 @@ async def main() -> int:
         "detected controls on page (informational): %s",
         [g["metadata_key"] for g in detect_interaction_groups(fetched.html)],
     )
+
+    # Full product detection path: detect_interaction_profile over the analyzer
+    # fields + page HTML. This makes the browser-free SCOPE explicit — only the
+    # axes the analyzer columned become deterministic; an un-columned toggle axis
+    # (e.g. metric/imperial here) stays INTERACTIVE and would still need a browser.
+    full_profile, _collapsed = detect_interaction_profile(
+        fetched.html, ANALYZER_FIELDS
+    )
+    deterministic = [
+        g["metadata_key"]
+        for g in full_profile["groups"]
+        if g["execution"] == "deterministic"
+    ]
+    still_interactive = [
+        g["metadata_key"]
+        for g in full_profile["groups"]
+        if g["execution"] == "interactive"
+    ]
+    logger.info(
+        "full detect_interaction_profile -> deterministic(browser-free)=%s "
+        "interactive(needs browser)=%s",
+        deterministic,
+        still_interactive,
+    )
+    if "column_set" not in deterministic:
+        logger.error("full profile path lost the deterministic column_set group")
+        failures += 1
+
     logger.info("verify_interaction_variants done failures=%s", failures)
     return failures
 
