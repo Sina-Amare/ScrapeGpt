@@ -22,7 +22,11 @@ from app.services.provider_service import (
 
 logger = logging.getLogger(__name__)
 
-ANALYZER_VERSION = "1"
+# Part of the AnalysisCache key (alongside content_hash, mode, provider, model).
+# BUMP THIS whenever the DOM summary builder (dom_summary.py) or either analyzer
+# prompt below changes, otherwise the cache will serve analysis computed under an
+# older summary/prompt format for the same page content.
+ANALYZER_VERSION = "2"
 
 _STRUCTURED_PROMPT = """\
 You are a web scraping analyst. Analyze the following page structure and identify \
