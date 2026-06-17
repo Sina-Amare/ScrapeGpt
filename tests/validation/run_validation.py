@@ -317,9 +317,18 @@ async def _setup_all(db_url: str) -> TestData:
     from app.models.user import User
     from app.core.security import hash_password as get_password_hash
     from app.models.job import (
-        ExtractionMode, ExtractionSpec, ExtractedRecord, Project,
+        ExtractionMode, ExtractionSpec, ExtractedRecord, ExtractionRun,
+        ExtractionRunState, Project,
         ProjectState, RenderMode, WorkflowMode, DEFAULT_CRAWL_SCOPE,
     )
+
+    def _mk_run(project_id: int, spec_id: int, total: int) -> ExtractionRun:
+        now = datetime.now(timezone.utc)
+        return ExtractionRun(
+            project_id=project_id, spec_id=spec_id,
+            state=ExtractionRunState.COMPLETED.value,
+            started_at=now, finished_at=now, total_records=total,
+        )
 
     engine = create_async_engine(db_url, echo=False, pool_size=2, max_overflow=0)
     Session = async_sessionmaker(engine, expire_on_commit=False)
@@ -420,11 +429,22 @@ async def _setup_all(db_url: str) -> TestData:
                                  ProjectState.COMPLETED)
             db.add(p_pag)
             await db.flush()
-            db.add(_mk_spec(p_pag.id, completed_scope,
-                            quality_summary=quality, page_limit=500))
+            pag_spec = _mk_spec(p_pag.id, completed_scope,
+                                quality_summary=quality, page_limit=500)
+            db.add(pag_spec)
+            await db.flush()
+            # Run-scoped: records belong to a COMPLETED run that the project
+            # promotes via current_extraction_run_id (reads are run-scoped, so
+            # without this the read endpoints would return zero records).
+            pag_run = _mk_run(p_pag.id, pag_spec.id, 1000)
+            db.add(pag_run)
+            await db.flush()
+            p_pag.current_extraction_run_id = pag_run.id
             for i in range(1, 1001):
                 db.add(ExtractedRecord(
                     project_id=p_pag.id,
+                    extraction_run_id=pag_run.id,
+                    record_ordinal=i - 1,
                     source_url=f"{FIXTURE_BASE}/products",
                     raw_data={"product_name": f"Product {i}",
                               "price": f"${i * 0.99:.2f}",
@@ -435,19 +455,40 @@ async def _setup_all(db_url: str) -> TestData:
                     warnings=[],
                 ))
 
-            # Export: COMPLETED with 3 records
+            # Export: COMPLETED with 3 records. Also seed an OLDER completed run
+            # whose records must stay invisible — proves reads are scoped to
+            # current_extraction_run_id (non-destructive re-extraction).
             p_exp = _mk_project(user_id, f"{FIXTURE_BASE}/products",
                                  ProjectState.COMPLETED)
             db.add(p_exp)
             await db.flush()
-            db.add(_mk_spec(p_exp.id, completed_scope, page_limit=100))
-            for name, price, cat in [
+            exp_spec = _mk_spec(p_exp.id, completed_scope, page_limit=100)
+            db.add(exp_spec)
+            await db.flush()
+            stale_run = _mk_run(p_exp.id, exp_spec.id, 2)
+            db.add(stale_run)
+            await db.flush()
+            for ordinal, name in enumerate(["STALE Widget", "STALE Gadget"]):
+                db.add(ExtractedRecord(
+                    project_id=p_exp.id,
+                    extraction_run_id=stale_run.id, record_ordinal=ordinal,
+                    source_url=f"{FIXTURE_BASE}/products",
+                    raw_data={"product_name": name, "price": "$0.00", "category": "Stale"},
+                    normalized_data={"product_name": name, "price": "$0.00", "category": "Stale"},
+                    warnings=[],
+                ))
+            exp_run = _mk_run(p_exp.id, exp_spec.id, 3)
+            db.add(exp_run)
+            await db.flush()
+            p_exp.current_extraction_run_id = exp_run.id
+            for ordinal, (name, price, cat) in enumerate([
                 ("Alpha Widget", "$9.99", "Electronics"),
                 ("Beta Gadget", "$14.99", "Electronics"),
                 ("Gamma Tool", "$4.99", "Tools"),
-            ]:
+            ]):
                 db.add(ExtractedRecord(
                     project_id=p_exp.id,
+                    extraction_run_id=exp_run.id, record_ordinal=ordinal,
                     source_url=f"{FIXTURE_BASE}/products",
                     raw_data={"product_name": name, "price": price, "category": cat},
                     normalized_data={"product_name": name, "price": price, "category": cat},
@@ -832,6 +873,44 @@ def scenario_failure_states(client: APIClient, td: TestData) -> ScenarioResult:
     return s
 
 
+def scenario_run_scoping(client: APIClient, td: TestData) -> ScenarioResult:
+    """Reads are scoped to current_extraction_run_id: an older completed run's
+    records (seeded as 'STALE *') must never surface (T1, migration 013)."""
+    s = ScenarioResult("RUN-SCOPING: non-destructive run-scoped reads")
+    pid = td.export_project_id
+    try:
+        r = client.get(f"/projects/{pid}")
+        assert r.status_code == 200, f"GET project {r.status_code}: {r.text[:200]}"
+        run_id = r.json().get("current_extraction_run_id")
+        if run_id:
+            s.ok(f"current_extraction_run_id exposed ({run_id})")
+        else:
+            s.fail("current_extraction_run_id missing on a completed project")
+
+        rp = client.get(f"/projects/{pid}/records-page?skip=0&limit=100")
+        assert rp.status_code == 200, f"records-page {rp.status_code}: {rp.text[:200]}"
+        body = rp.json()
+        total = body.get("total")
+        if total == 3:
+            s.ok("records-page total == 3 (current run only; older run hidden)")
+        else:
+            s.fail(f"records-page total == {total}, expected 3 (run-scoping leak)")
+
+        names = {
+            (row.get("normalized_data") or {}).get("product_name")
+            for row in body.get("items", [])
+        }
+        if not any(str(n).startswith("STALE") for n in names):
+            s.ok("older run's records are not surfaced through reads")
+        else:
+            s.fail(f"stale-run records leaked into reads: {sorted(names)}")
+
+        s.passed = len(s.bugs) == 0
+    except Exception as exc:
+        s.bugs.append(f"Exception: {exc}\n{traceback.format_exc()}")
+    return s
+
+
 def scenario_provider(client: APIClient) -> ScenarioResult:
     s = ScenarioResult("PROVIDER: Configuration Check")
 
@@ -913,6 +992,7 @@ def main() -> None:
         ("E2E-4", lambda: scenario_e2e_4(client, td)),
         ("PAGINATION", lambda: scenario_pagination_api(client, td)),
         ("EXPORT", lambda: scenario_export(client, td)),
+        ("RUN-SCOPING", lambda: scenario_run_scoping(client, td)),
         ("FAILURE_STATES", lambda: scenario_failure_states(client, td)),
         ("PROVIDER", lambda: scenario_provider(client)),
     ]
