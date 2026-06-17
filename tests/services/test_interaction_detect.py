@@ -89,6 +89,78 @@ def test_external_nav_links_not_a_variant_group():
     assert detect_interaction_groups(html) == []
 
 
+# --- Global-navigation / chrome regions are not data-variant controls --------
+
+
+def test_internal_nav_menu_is_not_a_variant_group():
+    """A <nav> of internal, short, toggle-like category links is site nav, not a
+    data variant — even though it would otherwise pass the segmented checks."""
+    html = """
+    <nav class="site-nav">
+      <a href="/food/meat" class="active">Meat</a>
+      <a href="/food/fish">Fish</a>
+      <a href="/food/fruit">Fruit</a>
+    </nav>
+    """
+    assert detect_interaction_groups(html) == []
+
+
+def test_header_menu_region_is_excluded():
+    html = """
+    <header>
+      <div class="menu">
+        <a href="/a" class="active">Home</a>
+        <a href="/b">About</a>
+        <a href="/c">Contact</a>
+      </div>
+    </header>
+    """
+    assert detect_interaction_groups(html) == []
+
+
+def test_navbar_class_region_is_excluded():
+    html = """
+    <div class="navbar">
+      <a href="/x" class="active">One</a>
+      <a href="/y">Two</a>
+    </div>
+    """
+    assert detect_interaction_groups(html) == []
+
+
+def test_aria_menubar_region_is_excluded():
+    html = """
+    <div role="menubar">
+      <button class="active">Tab A</button>
+      <button>Tab B</button>
+    </div>
+    """
+    assert detect_interaction_groups(html) == []
+
+
+def test_content_toggles_preserved_alongside_navigation():
+    """The real fix: site nav is ignored, but genuine in-content toggles
+    (serving basis + metric/imperial) are still detected."""
+    html = """
+    <header><nav class="main-nav">
+      <a href="/food/meat" class="active">Meat</a>
+      <a href="/food/fish">Fish</a>
+      <a href="/food/fruit">Fruit</a>
+    </nav></header>
+    <main>
+      <div class="unit-toggle">
+        <button class="active">Metric</button><button>Imperial</button>
+      </div>
+      <div class="basis-toggle">
+        <button class="active">Show per 100 g</button>
+        <button>Show per serving</button>
+      </div>
+    </main>
+    """
+    keys = {g["metadata_key"] for g in detect_interaction_groups(html)}
+    assert keys == {"unit_system", "serving_basis"}
+
+
 def test_detect_interaction_profile_is_disabled_draft():
     html = '<div><button class="active">Metric</button><button>Imperial</button></div>'
     profile, new_fields = detect_interaction_profile(html)

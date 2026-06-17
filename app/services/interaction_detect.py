@@ -226,6 +226,40 @@ def _in_auth_form(el: Tag) -> bool:
     return form.find("input", attrs={"type": "password"}) is not None
 
 
+# --- Global-navigation / chrome exclusion ---------------------------------
+# Toggle-like controls that live in site navigation (category menus, header /
+# footer link bars, breadcrumbs) are NOT data-variant controls. Any candidate
+# that is, or is nested within, such a region is skipped. Detection is by
+# semantic landmark tag, ARIA role, or a tight nav class/id token set — never a
+# site-specific selector — so real in-content toggles (serving basis,
+# metric/imperial, …) are preserved.
+_NAV_LANDMARK_TAGS = {"nav", "header", "footer"}
+_NAV_ROLES = {"navigation", "menubar", "menu", "banner", "contentinfo"}
+_NAV_IDENT_TOKENS = {
+    "nav", "navbar", "navigation", "topnav", "mainnav", "sitenav",
+    "globalnav", "navmenu", "megamenu", "breadcrumb", "breadcrumbs",
+}
+
+
+def _ident_tokens(el: Tag) -> list[str]:
+    raw = " ".join(el.get("class") or []) + " " + str(el.get("id") or "")
+    return [t for t in re.split(r"[-_\s]+", raw.lower()) if t]
+
+
+def _in_navigation_region(el: Tag) -> bool:
+    """True if *el* is, or is nested within, a global-navigation/chrome region."""
+    node: Tag | None = el
+    while node is not None and isinstance(node, Tag):
+        if (node.name or "").lower() in _NAV_LANDMARK_TAGS:
+            return True
+        if str(node.get("role") or "").lower() in _NAV_ROLES:
+            return True
+        if any(tok in _NAV_IDENT_TOKENS for tok in _ident_tokens(node)):
+            return True
+        node = node.parent
+    return False
+
+
 def detect_interaction_groups(html: str) -> list[dict[str, Any]]:
     """Return a list of proposed interactive variant groups (possibly empty)."""
     if not html:
@@ -247,22 +281,33 @@ def detect_interaction_groups(html: str) -> list[dict[str, Any]]:
 
     # 1. Native <select> dropdowns.
     for select in soup.find_all("select"):
-        if isinstance(select, Tag) and not _in_auth_form(select):
+        if (
+            isinstance(select, Tag)
+            and not _in_auth_form(select)
+            and not _in_navigation_region(select)
+        ):
             _add(_group_from_select(select))
 
     # 2. Radio-button groups (by shared name).
     radios_by_name: dict[str, list[Tag]] = {}
     for r in soup.find_all("input", attrs={"type": "radio"}):
-        if isinstance(r, Tag) and r.get("name") and not _in_auth_form(r):
+        if (
+            isinstance(r, Tag)
+            and r.get("name")
+            and not _in_auth_form(r)
+            and not _in_navigation_region(r)
+        ):
             radios_by_name.setdefault(str(r.get("name")), []).append(r)
     for radios in radios_by_name.values():
         _add(_group_from_radios(radios))
 
     # 3. Segmented button / tab toggles: containers of 2-4 button/anchor toggles.
-    for container in soup.find_all(["div", "ul", "ol", "nav", "span", "fieldset"]):
+    # ``nav`` is intentionally NOT scanned, and any candidate inside a
+    # navigation/header/footer region is skipped — site menus are not variants.
+    for container in soup.find_all(["div", "ul", "ol", "span", "fieldset"]):
         if not isinstance(container, Tag):
             continue
-        if _in_auth_form(container):
+        if _in_auth_form(container) or _in_navigation_region(container):
             continue
         _add(_group_from_segmented(container))
         if len(groups) >= _MAX_GROUPS:
