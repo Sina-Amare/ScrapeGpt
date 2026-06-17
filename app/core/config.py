@@ -131,10 +131,11 @@ class Settings(BaseSettings):
     CRAWL_CONCURRENCY: int = Field(
         default=3, ge=1, le=50,
         description=(
-            "Reserved for future use. Currently the extraction "
-            "loop processes pages sequentially with MIN_CRAWL_DELAY_MS "
-            "between fetches. This setting does not affect concurrency "
-            "until a parallel crawl executor is implemented."
+            "Number of concurrent page workers per extraction run. Each worker "
+            "drains the same page queue with its own DB session; page leasing "
+            "(FOR UPDATE SKIP LOCKED + fencing token) and idempotent record "
+            "inserts keep them from colliding. 1 = the previous sequential "
+            "behavior. Effective concurrency is capped by the run's page limit."
         ),
     )
     MIN_CRAWL_DELAY_MS: int = Field(default=500, ge=0, le=60000)

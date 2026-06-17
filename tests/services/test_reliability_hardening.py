@@ -642,6 +642,9 @@ class FakeExtractionDB:
     async def flush(self):
         pass
 
+    async def refresh(self, obj, *args, **kwargs):
+        pass
+
     async def execute(self, statement):
         return FakeListResult([])
 
@@ -1073,3 +1076,49 @@ def test_watchdog_project_timeout_field_info():
     assert discovering_field.description is not None
     assert extracting_field.description is not None
     assert exporting_field.description is not None
+
+
+@pytest.mark.asyncio
+async def test_extraction_spawns_crawl_concurrency_workers(monkeypatch):
+    """A3: execute_project_extraction starts CRAWL_CONCURRENCY page workers,
+    each opening its own session (1 setup/finalize session + N workers)."""
+    from app.services import project_extraction
+
+    project = _extraction_project(state=ProjectState.EXTRACTING)
+    spec = ExtractionSpec(
+        id=10, project_id=1, mode=ExtractionMode.STRUCTURED, fields=[],
+        content_config={}, url_patterns=[], page_limit=5, export_format="csv",
+        crawl_scope=None,
+    )
+    db = FakeExtractionDB(project, spec, pages_extracted=0)
+    calls = {"sessions": 0}
+
+    def _factory():
+        calls["sessions"] += 1
+        return db
+
+    monkeypatch.setattr(project_extraction, "async_session_factory", _factory)
+    monkeypatch.setattr(
+        project_extraction, "settings",
+        SimpleNamespace(MAX_PAGES_PER_JOB=500, MAX_RECORDS_PER_PAGE=1000,
+                        MIN_CRAWL_DELAY_MS=0, CRAWL_CONCURRENCY=3),
+    )
+    monkeypatch.setattr(project_extraction, "validate_url", lambda url: url)
+
+    async def _no_pages(db, run_id):
+        return None  # every worker finds the queue empty and exits
+
+    async def _not_canceled(db, project_id):
+        return False
+
+    async def _noop_event(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(project_extraction, "_claim_pending_page", _no_pages)
+    monkeypatch.setattr(project_extraction, "_project_was_canceled", _not_canceled)
+    monkeypatch.setattr(project_extraction, "record_project_event", _noop_event)
+
+    await project_extraction.execute_project_extraction(project.id, spec.id, db.run.id)
+
+    # 1 setup/finalization session + CRAWL_CONCURRENCY (3) worker sessions.
+    assert calls["sessions"] == 4

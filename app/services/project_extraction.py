@@ -8,6 +8,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import func, select
@@ -350,6 +351,268 @@ async def _mark_project_failed(
     )
 
 
+class _ExtractState:
+    """Lock-guarded counters shared across concurrent page workers."""
+
+    def __init__(self, page_limit: int) -> None:
+        self.page_limit = page_limit
+        self.processed = 0
+        self.records = 0
+        self.canceled = False
+        self.lock = asyncio.Lock()
+
+
+async def _process_one_page(
+    db: AsyncSession, ctx: Any, page: CrawlPage, lease_token: str
+) -> int:
+    """Fetch, discover from, and extract one claimed page using ``db``.
+
+    Returns the number of records extracted (0 for a blocked / decode-failed /
+    lease-lost / zero-match / fetch-error page). Raises ``InteractionError`` to
+    signal the whole run must abort. Each concurrent worker calls this with its
+    OWN session and shares no mutable Python state — page leasing
+    (FOR UPDATE SKIP LOCKED + fencing token) and idempotent record inserts are
+    the only coordination, exactly as the single-worker path relied on.
+    """
+    try:
+        validated_url = validate_url(page.normalized_url)
+
+        effective_render_mode = ctx.project.render_mode.value
+        if (
+            effective_render_mode == "AUTO"
+            and isinstance(ctx.project.fetch_metadata, dict)
+            and ctx.project.fetch_metadata.get("render_mode_used") == "BROWSER"
+        ):
+            effective_render_mode = "BROWSER"
+        fetched = await fetch_url(
+            validated_url,
+            effective_render_mode,
+            browser_session_cookies=ctx.session_cookies,
+        )
+        challenge_reason = await asyncio.to_thread(
+            anti_bot_challenge_reason, fetched.html, fetched.final_url
+        )
+        if challenge_reason:
+            page.state = CrawlPageState.BLOCKED
+            page.block_reason = "ANTI_BOT_CHALLENGE"
+            page.error = CHALLENGE_MESSAGES.get(
+                challenge_reason,
+                f"Anti-bot challenge detected: {challenge_reason}",
+            )
+            page.lease_expires_at = None
+            await db.commit()
+            logger.warning(
+                "extraction.page_anti_bot_blocked",
+                extra={
+                    "project_id": ctx.project_id,
+                    "page_id": page.id,
+                    "url": fetched.final_url,
+                    "reason": challenge_reason,
+                },
+            )
+            return 0
+
+        # Undecodable/garbled body — fail this page with a precise cause
+        # instead of "extracting" 0 records from garbage.
+        quality = await asyncio.to_thread(assess_html_quality, fetched.html)
+        if quality.is_binary:
+            page.state = CrawlPageState.FAILED
+            page.block_reason = "PAGE_DECODE_FAILED"
+            page.error = (
+                "Page could not be decoded "
+                "(unsupported compression or encoding)."
+            )
+            page.lease_expires_at = None
+            await db.commit()
+            logger.warning(
+                "extraction.page_decode_failed",
+                extra={
+                    "project_id": ctx.project_id,
+                    "page_id": page.id,
+                    "url": fetched.final_url,
+                },
+            )
+            return 0
+
+        page.url = fetched.final_url
+        page.normalized_url = normalize_url(fetched.final_url)
+
+        current_count = await _crawl_page_count(db, ctx.run_id)
+        remaining = max(0, ctx.page_limit - current_count)
+        # Link classification parses HTML too — offload it.
+        if isinstance(ctx.scope, dict) and ctx.scope_mode:
+            links = await asyncio.to_thread(
+                select_links_to_enqueue,
+                html=fetched.html,
+                page_url=fetched.final_url,
+                root_url=ctx.validated_seed,
+                scope=ctx.scope,
+                legacy_patterns=ctx.spec.url_patterns or [],
+                analysis=ctx.project.analysis if isinstance(ctx.project.analysis, dict) else None,
+                remaining_slots=remaining,
+                source_depth=page.depth,
+            )
+        else:
+            # Legacy: no scope, fall back to same-site BFS.
+            links = await asyncio.to_thread(
+                discover_same_site_links,
+                fetched.html,
+                page_url=fetched.final_url,
+                root_url=ctx.validated_seed,
+                patterns=ctx.spec.url_patterns or [],
+                limit=remaining,
+            )
+
+        await _insert_discovered_pages(
+            db,
+            project_id=ctx.project_id,
+            run_id=ctx.run_id,
+            urls=links,
+            depth=page.depth + 1,
+            remaining_slots=remaining,
+        )
+
+        async def _fetch_variant_htmls(
+            recipes: dict[str, list[dict[str, Any]]],
+            _url: str = fetched.final_url,
+        ) -> dict[str, str]:
+            try:
+                return await apply_interactions_and_capture(
+                    _url, recipes, cookies=ctx.session_cookies
+                )
+            except FetchError as exc:
+                if exc.error_code == "BROWSER_UNAVAILABLE":
+                    raise InteractionError(
+                        "A browser backend is required to extract the "
+                        "selected interactive variant(s).",
+                        code="INTERACTION_BROWSER_REQUIRED",
+                    ) from exc
+                raise
+
+        async def _fetch_variant_url_htmls(
+            urls: dict[str, str],
+            _render: str = effective_render_mode,
+        ) -> dict[str, str]:
+            out: dict[str, str] = {}
+            for vid, vurl in urls.items():
+                v = validate_url(vurl)
+                vf = await fetch_url(
+                    v, _render, browser_session_cookies=ctx.session_cookies
+                )
+                out[vid] = vf.html
+            return out
+
+        extracted, variant_warnings = await extract_records_with_variants(
+            base_html=fetched.html,
+            source_url=fetched.final_url,
+            project=ctx.project,
+            spec=ctx.spec,
+            max_records=settings.MAX_RECORDS_PER_PAGE,
+            fetch_variant_htmls=_fetch_variant_htmls,
+            fetch_variant_url_htmls=_fetch_variant_url_htmls,
+        )
+        for w in variant_warnings:
+            logger.info(
+                "extraction.variant_warning",
+                extra={"project_id": ctx.project_id, "page_id": page.id, "warning": w},
+            )
+
+        # Fencing: only write/finalize if we still own the lease. If the
+        # watchdog (or another worker) reclaimed this slow page, skip silently
+        # so we don't double-insert under another owner.
+        if not await _still_owns_lease(db, page.id, lease_token):
+            logger.warning(
+                "extraction.page_lease_lost",
+                extra={"project_id": ctx.project_id, "page_id": page.id, "run_id": ctx.run_id},
+            )
+            await db.rollback()
+            return 0
+
+        if extracted:
+            record_rows = [
+                {
+                    "project_id": ctx.project.id,
+                    "extraction_run_id": ctx.run_id,
+                    "page_id": page.id,
+                    "record_ordinal": idx,
+                    "source_url": fetched.final_url,
+                    "raw_data": item.raw_data,
+                    "normalized_data": item.normalized_data,
+                    "warnings": item.warnings,
+                }
+                for idx, item in enumerate(extracted)
+            ]
+            # ON CONFLICT DO NOTHING on (run, page, ordinal) makes
+            # re-processing the same page idempotent.
+            await db.execute(
+                insert(ExtractedRecord)
+                .values(record_rows)
+                .on_conflict_do_nothing(
+                    constraint="uq_extracted_records_run_page_ordinal"
+                )
+            )
+        logger.debug(
+            "extraction.records_extracted",
+            extra={
+                "project_id": ctx.project_id,
+                "page_id": page.id,
+                "record_count": len(extracted),
+                "warnings_count": sum(len(item.warnings or []) for item in extracted),
+            },
+        )
+        page.lease_expires_at = None
+        if extracted:
+            page.state = CrawlPageState.EXTRACTED
+            page.error = None
+            page.block_reason = None
+            metrics.record_page_outcome("extracted")
+        else:
+            # Fetched fine, but selectors matched nothing. Mark it non-success
+            # (FAILED + reason) so progress and the UI don't show a misleading
+            # "extracted" page. The project still ends as NO_RECORDS_EXTRACTED
+            # (not ALL_PAGES_FAILED) because the post-loop counts these as
+            # fetched-OK pages.
+            page.state = CrawlPageState.FAILED
+            page.block_reason = "SELECTOR_ZERO_MATCH"
+            page.error = "Selectors matched no elements on this page."
+            metrics.record_page_outcome("zero_match")
+        await db.commit()
+        return len(extracted)
+
+    except InteractionError as exc:
+        # Spec-level variant config problem (browser missing / too many
+        # combinations). Every page would fail identically, so abort the whole
+        # run with the precise code. Re-raised so the worker pool stops.
+        page.state = CrawlPageState.FAILED
+        page.error = str(exc)
+        page.block_reason = exc.code
+        page.lease_expires_at = None
+        await db.commit()
+        await _mark_project_failed(db, ctx.project, str(exc), exc.code, run_id=ctx.run_id)
+        logger.warning(
+            "extraction.interaction_failed",
+            extra={"project_id": ctx.project_id, "error_code": exc.code},
+        )
+        raise
+
+    except (FetchError, URLValidationError) as exc:
+        page.state = CrawlPageState.FAILED
+        page.retry_count += 1
+        page.error = str(exc)
+        page.lease_expires_at = None
+        await db.commit()
+        logger.error(
+            "extraction.page_failed",
+            extra={
+                "project_id": ctx.project_id,
+                "page_id": page.id,
+                "url": page.normalized_url,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return 0
+
+
 async def execute_project_extraction(
     project_id: int, spec_id: int, run_id: int | None = None
 ) -> None:
@@ -453,264 +716,66 @@ async def execute_project_extraction(
                     owner_user_id=project.user_id,
                 )
 
-            while processed_pages < page_limit:
-                if await _project_was_canceled(db, project_id):
-                    logger.info("project_extraction.canceled", extra={"project_id": project_id})
-                    return
+            ctx = SimpleNamespace(
+                project=project,
+                project_id=project_id,
+                spec=spec,
+                run_id=run_id,
+                scope=scope,
+                scope_mode=scope_mode,
+                validated_seed=validated_seed,
+                session_cookies=session_cookies,
+                page_limit=page_limit,
+            )
+            shared = _ExtractState(page_limit)
 
-                claimed = await _claim_pending_page(db, run_id)
-                if claimed is None:
-                    break
-                page, lease_token = claimed
-                set_page_context(page_id=page.id)
-
-                try:
-                    validated_url = validate_url(page.normalized_url)
-
-                    effective_render_mode = project.render_mode.value
-                    if (
-                        effective_render_mode == "AUTO"
-                        and isinstance(project.fetch_metadata, dict)
-                        and project.fetch_metadata.get("render_mode_used") == "BROWSER"
-                    ):
-                        effective_render_mode = "BROWSER"
-                    fetched = await fetch_url(
-                        validated_url,
-                        effective_render_mode,
-                        browser_session_cookies=session_cookies,
-                    )
-                    challenge_reason = await asyncio.to_thread(
-                        anti_bot_challenge_reason, fetched.html, fetched.final_url
-                    )
-                    if challenge_reason:
-                        page.state = CrawlPageState.BLOCKED
-                        page.block_reason = "ANTI_BOT_CHALLENGE"
-                        page.error = CHALLENGE_MESSAGES.get(
-                            challenge_reason,
-                            f"Anti-bot challenge detected: {challenge_reason}",
-                        )
-                        page.lease_expires_at = None
-                        await db.commit()
-                        logger.warning(
-                            "extraction.page_anti_bot_blocked",
-                            extra={
-                                "project_id": project_id,
-                                "page_id": page.id,
-                                "url": fetched.final_url,
-                                "reason": challenge_reason,
-                            },
-                        )
-                        processed_pages += 1
-                        continue
-
-                    # Undecodable/garbled body — fail this page with a precise
-                    # cause instead of "extracting" 0 records from garbage.
-                    quality = await asyncio.to_thread(
-                        assess_html_quality, fetched.html
-                    )
-                    if quality.is_binary:
-                        page.state = CrawlPageState.FAILED
-                        page.block_reason = "PAGE_DECODE_FAILED"
-                        page.error = (
-                            "Page could not be decoded "
-                            "(unsupported compression or encoding)."
-                        )
-                        page.lease_expires_at = None
-                        await db.commit()
-                        logger.warning(
-                            "extraction.page_decode_failed",
-                            extra={
-                                "project_id": project_id,
-                                "page_id": page.id,
-                                "url": fetched.final_url,
-                            },
-                        )
-                        processed_pages += 1
-                        continue
-
-                    page.url = fetched.final_url
-                    page.normalized_url = normalize_url(fetched.final_url)
-
-                    current_count = await _crawl_page_count(db, run_id)
-                    remaining = max(0, page_limit - current_count)
-                    # Link classification parses HTML too — offload it.
-                    if isinstance(scope, dict) and scope_mode:
-                        links = await asyncio.to_thread(
-                            select_links_to_enqueue,
-                            html=fetched.html,
-                            page_url=fetched.final_url,
-                            root_url=validated_seed,
-                            scope=scope,
-                            legacy_patterns=spec.url_patterns or [],
-                            analysis=project.analysis if isinstance(project.analysis, dict) else None,
-                            remaining_slots=remaining,
-                            source_depth=page.depth,
-                        )
-                    else:
-                        # Legacy: no scope, fall back to same-site BFS.
-                        links = await asyncio.to_thread(
-                            discover_same_site_links,
-                            fetched.html,
-                            page_url=fetched.final_url,
-                            root_url=validated_seed,
-                            patterns=spec.url_patterns or [],
-                            limit=remaining,
-                        )
-
-                    await _insert_discovered_pages(
-                        db,
-                        project_id=project_id,
-                        run_id=run_id,
-                        urls=links,
-                        depth=page.depth + 1,
-                        remaining_slots=remaining,
-                    )
-
-                    async def _fetch_variant_htmls(
-                        recipes: dict[str, list[dict[str, Any]]],
-                        _url: str = fetched.final_url,
-                    ) -> dict[str, str]:
+            async def _worker() -> None:
+                async with async_session_factory() as wdb:
+                    while True:
+                        async with shared.lock:
+                            if shared.canceled or shared.processed >= page_limit:
+                                return
+                        if await _project_was_canceled(wdb, project_id):
+                            async with shared.lock:
+                                shared.canceled = True
+                            logger.info(
+                                "project_extraction.canceled",
+                                extra={"project_id": project_id},
+                            )
+                            return
+                        claimed = await _claim_pending_page(wdb, run_id)
+                        if claimed is None:
+                            return
+                        page, lease_token = claimed
+                        set_page_context(page_id=page.id)
                         try:
-                            return await apply_interactions_and_capture(
-                                _url, recipes, cookies=session_cookies
-                            )
-                        except FetchError as exc:
-                            if exc.error_code == "BROWSER_UNAVAILABLE":
-                                raise InteractionError(
-                                    "A browser backend is required to extract the "
-                                    "selected interactive variant(s).",
-                                    code="INTERACTION_BROWSER_REQUIRED",
-                                ) from exc
-                            raise
+                            n = await _process_one_page(wdb, ctx, page, lease_token)
+                        except InteractionError:
+                            # Run already marked FAILED by _process_one_page;
+                            # stop every worker.
+                            async with shared.lock:
+                                shared.canceled = True
+                                shared.processed += 1
+                            return
+                        async with shared.lock:
+                            shared.processed += 1
+                            shared.records += n
+                        if settings.MIN_CRAWL_DELAY_MS:
+                            await asyncio.sleep(settings.MIN_CRAWL_DELAY_MS / 1000)
 
-                    async def _fetch_variant_url_htmls(
-                        urls: dict[str, str],
-                        _render: str = effective_render_mode,
-                    ) -> dict[str, str]:
-                        out: dict[str, str] = {}
-                        for vid, vurl in urls.items():
-                            v = validate_url(vurl)
-                            vf = await fetch_url(
-                                v, _render, browser_session_cookies=session_cookies
-                            )
-                            out[vid] = vf.html
-                        return out
-
-                    extracted, variant_warnings = await extract_records_with_variants(
-                        base_html=fetched.html,
-                        source_url=fetched.final_url,
-                        project=project,
-                        spec=spec,
-                        max_records=settings.MAX_RECORDS_PER_PAGE,
-                        fetch_variant_htmls=_fetch_variant_htmls,
-                        fetch_variant_url_htmls=_fetch_variant_url_htmls,
-                    )
-                    for w in variant_warnings:
-                        logger.info(
-                            "extraction.variant_warning",
-                            extra={"project_id": project_id, "page_id": page.id, "warning": w},
-                        )
-
-                    # Fencing: only write/finalize if we still own the lease.
-                    # If the watchdog reclaimed this slow page, skip silently so we
-                    # don't double-insert under another owner.
-                    if not await _still_owns_lease(db, page.id, lease_token):
-                        logger.warning(
-                            "extraction.page_lease_lost",
-                            extra={"project_id": project_id, "page_id": page.id, "run_id": run_id},
-                        )
-                        await db.rollback()
-                        processed_pages += 1
-                        continue
-
-                    if extracted:
-                        record_rows = [
-                            {
-                                "project_id": project.id,
-                                "extraction_run_id": run_id,
-                                "page_id": page.id,
-                                "record_ordinal": idx,
-                                "source_url": fetched.final_url,
-                                "raw_data": item.raw_data,
-                                "normalized_data": item.normalized_data,
-                                "warnings": item.warnings,
-                            }
-                            for idx, item in enumerate(extracted)
-                        ]
-                        # ON CONFLICT DO NOTHING on (run, page, ordinal) makes
-                        # re-processing the same page idempotent.
-                        await db.execute(
-                            insert(ExtractedRecord)
-                            .values(record_rows)
-                            .on_conflict_do_nothing(
-                                constraint="uq_extracted_records_run_page_ordinal"
-                            )
-                        )
-                    total_records += len(extracted)
-                    logger.debug(
-                        "extraction.records_extracted",
-                        extra={
-                            "project_id": project_id,
-                            "page_id": page.id,
-                            "record_count": len(extracted),
-                            "warnings_count": sum(
-                                len(item.warnings or []) for item in extracted
-                            ),
-                        },
-                    )
-                    page.lease_expires_at = None
-                    if extracted:
-                        page.state = CrawlPageState.EXTRACTED
-                        page.error = None
-                        page.block_reason = None
-                        metrics.record_page_outcome("extracted")
-                    else:
-                        # Fetched fine, but selectors matched nothing. Mark it
-                        # non-success (FAILED + reason) so progress and the UI
-                        # don't show a misleading "extracted" page. The project
-                        # still ends as NO_RECORDS_EXTRACTED (not ALL_PAGES_FAILED)
-                        # because the post-loop counts these as fetched-OK pages.
-                        page.state = CrawlPageState.FAILED
-                        page.block_reason = "SELECTOR_ZERO_MATCH"
-                        page.error = "Selectors matched no elements on this page."
-                        metrics.record_page_outcome("zero_match")
-                    await db.commit()
-
-                except InteractionError as exc:
-                    # Spec-level variant config problem (browser missing / too many
-                    # combinations). Every page would fail identically, so abort the
-                    # whole run with the precise code rather than failing page-by-page.
-                    page.state = CrawlPageState.FAILED
-                    page.error = str(exc)
-                    page.block_reason = exc.code
-                    page.lease_expires_at = None
-                    await db.commit()
-                    await _mark_project_failed(db, project, str(exc), exc.code, run_id=run_id)
-                    logger.warning(
-                        "extraction.interaction_failed",
-                        extra={"project_id": project_id, "error_code": exc.code},
-                    )
-                    return
-
-                except (FetchError, URLValidationError) as exc:
-                    page.state = CrawlPageState.FAILED
-                    page.retry_count += 1
-                    page.error = str(exc)
-                    page.lease_expires_at = None
-                    await db.commit()
-                    logger.error(
-                        "extraction.page_failed",
-                        extra={
-                            "project_id": project_id,
-                            "page_id": page.id,
-                            "url": page.normalized_url,
-                            "error_type": type(exc).__name__,
-                        },
-                    )
-
-                processed_pages += 1
-                if settings.MIN_CRAWL_DELAY_MS:
-                    await asyncio.sleep(settings.MIN_CRAWL_DELAY_MS / 1000)
+            # Bounded concurrency: each worker drains the shared page queue with
+            # its OWN session. Leasing (FOR UPDATE SKIP LOCKED + fencing token)
+            # and idempotent record inserts make overlap safe. Defaults to 1
+            # worker (sequential) when CRAWL_CONCURRENCY is unset/absent.
+            concurrency = max(
+                1, min(getattr(settings, "CRAWL_CONCURRENCY", 1), max(1, page_limit))
+            )
+            await asyncio.gather(*(_worker() for _ in range(concurrency)))
+            # Workers committed on their own sessions; refresh so the
+            # finalization below (this session) reads the latest project state.
+            await db.refresh(project)
+            processed_pages = shared.processed
+            total_records = shared.records
 
             # Post-loop completion check: if no pages were successfully
             # extracted, the project should fail rather than complete
