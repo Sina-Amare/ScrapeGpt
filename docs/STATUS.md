@@ -1,148 +1,153 @@
 # ScrapeGPT Status
 
-Last verified: June 11, 2026 (Phase 2.5+ hardening: export cap, cache TTL, state machine fix, timeout reduction).
+Last verified: June 17, 2026. Regenerated from HEAD against code (not prior docs).
+For the testing approach and exact, current command output see
+[`docs/testing_guide.md`](testing_guide.md), which is the authoritative
+current-state reference; `docs/product/strategic_redesign.md` is historical
+roadmap context only.
 
 ## Implemented
 
 - **Phase 0 — Security fixes:**
-  - Rate-limit keying verifies JWT signatures.
-  - Refresh-token endpoint is rate limited.
+  - Rate-limit keying verifies JWT signatures; refresh-token endpoint is rate limited.
   - Watchdog transitions guard expected states.
-  - Ownership mismatches do not mutate another user's task.
+  - Ownership mismatches do not mutate another user's resource (404 on mismatch).
 
 - **Phase 0.5 — BYOK provider foundation:**
-  - Old credit columns and `system_state` were removed.
+  - Old credit columns and `system_state` were removed (no credit system).
   - BYOK provider configs are stored per user with Fernet-encrypted API keys.
-  - Normal provider responses never return keys; reveal requires password confirmation.
+  - Normal provider responses never return keys; reveal requires password
+    confirmation and emits a `security.key_revealed` audit log.
 
-- **Frontend v0:**
-  - React/Vite app with auth, protected routes, provider management, health, legacy scrape, dashboard, jobs, and project screens.
-  - Access tokens are in memory; refresh tokens are stored locally.
-  - Provider key reveal is password-confirmed and not cached client-side.
+- **Frontend:**
+  - React/Vite app with auth, protected routes, provider management, browser
+    sessions, health, dashboard, the project workspace, and a demoted legacy
+    scrape page. Access tokens in memory; refresh tokens stored locally.
 
-- **Phase 1 — Analysis jobs:**
-  - Project-based workflow with `projects` as the primary entity. `/jobs` is a thin compat API.
-  - SSRF-safe URL validation with per-redirect checking.
-  - `robots.txt` checks with TTL cache and configurable failure policy.
-  - Static fetcher (httpx) + optional Playwright browser rendering, including Windows Uvicorn selector-loop handling.
-  - DOM summary builder (10,000-character cap with repeated container samples, table samples, `data-*` attributes).
-  - Cached LLM analysis for structured datasets and content/RAG extraction.
-  - Job admission with provider preflight, active-job limit, and per-user advisory lock.
-  - Project API: analyze, list, detail, spec patch, preview, extract, records, export, cancel, delete.
-  - Project workflow tables: `extraction_specs`, `preview_results`, `crawl_pages`, `extracted_records`, `exports`.
+- **Phase 1 — Analysis engine:**
+  - Project-based workflow with `projects` as the primary entity; `/jobs` and
+    `/scrape` are thin legacy/compat surfaces.
+  - SSRF-safe URL validation with per-redirect checking (`validate_url`).
+  - Static fetcher (httpx) + optional browser rendering (Camoufox / Playwright /
+    FlareSolverr), including Windows Uvicorn selector-loop handling.
+  - DOM summary builder; cached LLM analysis (structured + content modes) keyed
+    by content hash, mode, provider, model, and `ANALYZER_VERSION`.
+  - LLM selectors are re-validated against fresh HTML after analysis
+    (`validate_selectors_against_html`), self-healing over-specified selectors.
+  - Job admission with provider preflight, active-job limit, per-user advisory lock.
+
+  > NOTE: robots.txt is **not** enforced. The orphaned `robots_service` module
+  > (defined-but-never-called) and its `ROBOTS_FAILURE_POLICY` setting were
+  > removed on 2026-06-17. The fetch pipelines do not consult robots.txt.
 
 - **Phase 2 — Real extraction engine:**
-  - Preview executes saved CSS selectors against the seed page (real HTTP, not AI sample values).
-  - Same-site BFS crawl with per-page state persistence and bounded retries.
-  - Deterministic CSS extraction groups records by `repeated_item_selector` with index-based fallback.
-  - Content extraction stores selected primary content text plus selected metadata fields.
-  - Results exported as CSV, JSON, or XLSX.
-  - Page-state progress counts visible in project workspace.
+  - Preview executes saved CSS selectors against the seed page (real HTTP).
+  - Same-site/scope-aware crawl with per-page state persistence and bounded retries.
+  - Deterministic CSS extraction (repeated containers → field-index → table
+    fallback) with type coercion; content mode stores primary content + metadata.
+  - Results exported as CSV, JSON, or XLSX (no record cap).
 
-- **Phase 2.5 — Crawl scope, frontier preview, and extraction trust:**
-  - **Crawl scope** (`CrawlScope` JSONB on `ExtractionSpec`) — four modes: `CURRENT_PAGE`, `PAGINATION`, `DATASET`, `FULL_SITE`.
-  - **Scope confirmation gate** — non-`CURRENT_PAGE` scopes require `status = USER_CONFIRMED` before extraction; HTTP 409 `SCOPE_NOT_CONFIRMED` otherwise.
-  - **Frontier preview** — `POST /projects/{id}/frontier-preview` classifies seed-page links by scope mode; shows included/excluded URLs with reason codes; preview and extraction share the same classifier.
-  - **Extraction quality** — per-field success/missing rates, warning codes, and overall quality label (`good`/`needs_review`/`risky`) persisted as `quality_summary` on the spec.
-  - **Server-side paginated results** — `GET /projects/{id}/records-page` with `total`, `has_more`, `next_skip`, `columns`; max 500 records/page.
-  - **Frontend UX layer**: `ScopeSelector`, `FrontierPreviewPanel`, `TrustSummaryPanel`, `PaginatedResultsTable`; scope confirmation flow; 409 error handling; safety limit rename; export format moved to Results.
-  - All 8 E2E validation scenarios passing (see `docs/reviews/03_phase25_validation.md`).
+- **Phase 2.5 — Crawl scope, frontier preview, extraction trust:**
+  - **Five** crawl-scope modes: `CURRENT_PAGE`, `PAGINATION`, `COLLECTION`,
+    `DATASET`, `FULL_SITE`. COLLECTION is segment-aware and bounded to a positive
+    `max_depth` at scope construction (defense-in-depth).
+  - Scope confirmation gate — non-`CURRENT_PAGE` scopes require
+    `status = USER_CONFIRMED` (HTTP 409 otherwise), enforced in both the sync
+    start path and the background executor.
+  - Frontier preview shares the same scope classifier as extraction; evidence-based
+    scope recommendation with one-click broaden.
+  - Extraction quality scoring; server-side paginated results (`/records-page`).
+  - Frontend: `ScopeSelector`, `FrontierPreviewPanel`, `TrustSummaryPanel`,
+    `PaginatedResultsTable`, `InteractionsPanel`.
 
-- **Logging and observability:**
-  - Structured logging with stdlib `logging` + JSON formatter + `contextvars` correlation.
-  - `app/core/logging_config.py` — `configure_logging()`, `DevFormatter`, `JsonFormatter`, `ContextInjectingFilter`, `SecretRedactingFilter` (with URL sanitization and exception traceback redaction).
-  - `app/core/log_context.py` — `request_id`, `user_id`, `project_id`, `page_id` context vars; binding helpers for HTTP middleware and background tasks.
-  - Auth event logging (`auth.register_*`, `auth.login_*`, `auth.token_refresh_*`).
-  - Provider key reveal audit trail (`security.key_revealed`, `security.key_reveal_failed`).
-  - Extraction pipeline events: scope classification, frontier preview, per-page, quality, export.
-  - Watchdog and scheduler job timing events.
-  - `LOG_FORMAT=text` (dev) / `LOG_FORMAT=json` (Docker/prod); `LOG_LEVEL` gates all output.
-  - See `docs/learning/11_logging_observability.md` for architecture, invariants, and full event catalog.
+- **Run-scoped, non-destructive extraction (migration 013):**
+  - Each crawl page, record, and export belongs to an `ExtractionRun`.
+  - A retry writes to a NEW run and only promotes it to
+    `projects.current_extraction_run_id` on success, so a failed retry never
+    destroys prior results.
+  - Page fencing (`lease_token`), record idempotency
+    (`uq_extracted_records_run_page_ordinal`), and a partial unique index
+    enforcing at most one active run per project.
 
-- **Reliability hardening (Phase 2.5 closeout):**
-  - Legacy `/scrape` pipeline now has SSRF-safe URL validation at the endpoint (immediate 400 feedback), executor (defense-in-depth), and redirect-hop levels, plus `robots.txt` checks mirroring the project pipeline.
-  - CrawlPage lease reaper: `cleanup_expired_crawl_page_leases()` resets FETCHING pages with expired leases back to PENDING, only within active projects. Runs every 60 seconds via the watchdog scheduler.
-  - Stuck-project watchdog: `cleanup_stuck_projects()` fails projects stuck in DISCOVERING/EXTRACTING/EXPORTING beyond configurable timeouts. Uses atomic UPDATE with WHERE-clause state guards for concurrency safety.
-  - Extraction completion semantics: projects where all pages fail or are blocked now transition to FAILED with `error_code = "ALL_PAGES_FAILED"` instead of COMPLETED with zero records. Partial success (some pages extracted) still completes normally with quality assessment.
-  - Anti-bot challenge pages (Cloudflare/captcha markers) are classified as blocked extraction input, not extracted content.
-  - Structured extraction with fetched pages but zero extracted rows now fails with `error_code = "NO_RECORDS_EXTRACTED"` instead of producing a misleading "Results ready" empty export.
-  - CORS default now includes `http://127.0.0.1:5173` (Vite dev server origin).
-  - `CRAWL_CONCURRENCY` setting description clarified as "Reserved for future use" since the executor is sequential.
-  - See `docs/learning/12_reliability_hardening.md` for decision log.
+- **Page-variant / interaction extraction (migration 012):**
+  - `interaction_profile` on the spec; deterministic in-DOM and interactive
+    (browser-click) variants, cross-variant row merge, URL-parameter variants.
+  - Detection from static HTML; disabled by default. Owner-checked endpoints.
 
-- **Phase 2.5+ hardening (June 11, 2026):**
-  - **Export cap removed:** The export endpoint previously had a silent 5000-record hard cap (`list_records(db, project_id, 0, 5000)`). Now loads all records in 1000-record chunks with no truncation. Large exports (>10,000 records) log a warning for operator visibility. The `export.completed` log event now includes both `record_count` (exported) and `total_records` (DB count) to make any discrepancy observable.
-  - **Per-page extraction limit made configurable:** `MAX_RECORDS_PER_PAGE` env var (default 1000, range 1–10000) controls the maximum records extracted from a single page. Previously hardcoded at 1000 with no documentation. Now passed explicitly from `settings.MAX_RECORDS_PER_PAGE` in the extraction loop. Operator-only setting, not surfaced to users.
-  - **State machine bypass fixed:** `PAUSED → FAILED` transition added to `VALID_PROJECT_TRANSITIONS`. `_mark_project_failed()` now uses `transition_to()` when possible, with a logged fallback for impossible transitions (should not occur with current transition table). The direct-assignment bypass that previously violated the state-machine invariant is now defensive-only with an explicit error log.
-  - **Analysis cache TTL:** `expires_at` column added to `analysis_cache` table (Alembic migration 009). `ANALYSIS_CACHE_TTL_DAYS` env var (default 30, range 0–365; 0 = no expiry). Cache lookups filter out expired entries when TTL > 0. Cache writes set `expires_at` when TTL > 0. Watchdog purges expired entries on each 60-second sweep via `cleanup_expired_analysis_cache()`.
-  - **Crash recovery timeout reduction:** `WATCHDOG_PROJECT_EXTRACTING_TIMEOUT_MINUTES` default reduced from 60 to 10 minutes. Since in-process BackgroundTasks cannot survive a server restart, a shorter timeout surfaces crashed extractions faster. The project is still hard-failed (no resume), but the failure is detected sooner.
+- **Authenticated browser sessions (migration dcbda4fc8a19):**
+  - Fernet-encrypted, domain-scoped cookies per user; consumed by the fetcher for
+    authenticated scraping and bot-protection bypass via saved cookies.
 
-## Current Primary Workflow
+- **Reliability:**
+  - CrawlPage lease reaper (every 60s) resets expired `FETCHING` pages to PENDING.
+  - **Watchdog crash-recovery resume (A1, 2026-06-17):** a stalled DISCOVERING/
+    EXTRACTING run (in-process worker died, e.g. server restart) is **re-dispatched**
+    up to `WATCHDOG_MAX_RESUME_ATTEMPTS` (default 3) times, then hard-failed with
+    `EXTRACTION_RESUME_EXHAUSTED`. Liveness is judged by per-run page activity (not
+    `Project.updated_at`), and a re-dispatched run is held in an in-process guard so
+    a later sweep cannot start a second worker. EXPORTING is still hard-failed.
+    `resume_count` added in migration 014.
+  - Stuck-job/task watchdogs; all-pages-failed → `FAILED` with
+    `ALL_PAGES_FAILED`; structured zero-records → `NO_RECORDS_EXTRACTED`;
+    anti-bot challenge pages classified as `BLOCKED`.
+  - Startup watchdog sweep recovers orphans left by a prior process death.
 
-1. Start backend and frontend.
-2. Register or log in.
-3. Add a provider in Providers.
-4. Submit a URL from New Extraction. Choose "Rows in a table" or "Content for knowledge base".
-5. Watch the project move through analysis.
-6. Open the project workspace when it is ready.
-7. Choose crawl scope ("This page only", "This list across pages", "This dataset", "The whole site").
-8. Generate a frontier preview to see which URLs will be crawled.
-9. Confirm scope for any non-current-page mode.
-10. Select fields and run Preview to inspect real selector output from the seed page.
-11. Run Extract to crawl approved pages, execute saved selectors, and persist records.
-12. Inspect Results and download CSV, JSON, or XLSX.
+- **Observability:**
+  - Structured stdlib logging + JSON formatter + `contextvars` correlation;
+    `SecretRedactingFilter` with URL sanitization.
+  - Prometheus `/metrics`: extraction run/page counters, run-duration histogram,
+    provider 429-retry counter. Provider 429 backoff; CPU offload of parsing.
 
-The older Legacy Scrape page still exists for the `/scrape` pipeline, but it is no longer the primary product flow.
+- **Password reset (migration 010)** and **project events / activity log
+  (migration 011)** with code-confirmed, enumeration-safe flows.
+
+## Migrations
+
+Schema is at head **014**: 001–007 (users → project workflow), 008 (phase 2.5
+foundation), 009 (analysis cache TTL), `dcbda4fc8a19` (browser sessions), 010
+(password reset), 011 (project events), 012 (interaction profile), 013
+(extraction runs), 014 (extraction-run `resume_count`).
 
 ## Not Implemented Yet
 
 - Visual field selection (click-to-extract, iframe seed page, CSS path generator).
 - SSE live progress stream (`/projects/{id}/stream`).
-- Concurrent crawler workers (lease-based crash recovery now implemented for single-instance).
-- Template routing, DOM fingerprinting, and selector repair.
-- File-backed export storage beyond streamed CSV/JSON/XLSX responses.
-- Authenticated-content browser sessions.
-- Per-page retry endpoint (`POST /projects/{id}/pages/{page_id}/retry`).
-- Rich DOM summary (microdata, full JSON-LD, multi-sample containers) — `ANALYZER_VERSION` still `"1"`.
-- Docker/docker-compose one-command setup.
-- Selector validation at spec save (smoke-test selectors against seed page HTML).
-- Preview-before-extract soft gate (warn if no preview since last spec save).
-- CAPTCHA solving, interactive Turnstile/CAPTCHA bypass, proxy evasion (permanent non-goals).
-  - Cloudflare JS challenges (`cf-chl-*`, `/cdn-cgi/challenge-platform/`) are now automatically retried with the Playwright browser, which executes the JS challenge. Turnstile (interactive) and hCaptcha/reCAPTCHA are detected and failed cleanly — they require human interaction and are not retried.
+- Concurrent crawler workers (`CRAWL_CONCURRENCY` is reserved/unused; the crawl
+  loop is sequential, though the lease model would support parallel workers).
+- Multi-process deployment: in-memory rate limiting and a per-process scheduler
+  mean exactly one process must run. No Redis-backed rate limiting.
+- Durable job queue. Extraction runs as in-process `BackgroundTasks`; A1 resume
+  recovers a stalled run on the next sweep, but there is no external queue.
+- `normalized_data` population (column exists, always null; export falls back to
+  `raw_data`).
+- Selector smoke-test at spec save / preview-before-extract soft gate.
+- Retiring the legacy `/scrape` + `/jobs` surfaces and duplicate admission
+  services.
+- SSRF DNS-rebinding mitigation beyond DNS-time validation (TOCTOU; documented).
+- Docker / docker-compose one-command setup.
+- CAPTCHA solving, Turnstile/hCaptcha bypass, proxy evasion (permanent non-goals).
+  Cloudflare JS challenges are retried with the browser backend.
 
 ## Known Issues
 
-- **DNS rebinding is a known limitation of URL validation.** `validate_url()` blocks private/loopback/metadata IPs at the DNS resolution stage, but a malicious server could rebind DNS after validation passes. This is a known limitation acknowledged in the URL validator comments, not a new fix item.
-- **In-process BackgroundTasks cannot survive a server restart.** Analysis and extraction run as FastAPI `BackgroundTasks` in the web process. If the server restarts during extraction, the project is stuck until the watchdog detects it (now 10 minutes for EXTRACTING) and hard-fails it. There is no resume-from-last-page mechanism. The CrawlPage lease reaper recovers individual pages, but nothing automatically re-queues the project. This will be addressed in a future watchdog re-queue mechanism (Option A).
-- **AI selectors are unvalidated until preview.** The LLM proposes CSS selectors from a compressed DOM summary; nothing verifies they match real elements before they're saved in the spec. A user can skip preview and go straight to Extract with zero-match selectors. A selector smoke-test and preview-before-extract soft gate are planned (P2.1).
-- **`normalized_data` column is never populated.** The raw+normalized dual-layer design exists in the schema, but no normalization logic runs. `normalized_data` is always null. Export uses `normalized_data or raw_data`, so there is no user-visible bug, but the column name implies more than it delivers.
+- **DNS rebinding** is a known limitation of `validate_url()` (validates at DNS
+  resolution; the HTTP client re-resolves at connect time).
+- **In-process BackgroundTasks do not survive a restart.** A1 re-dispatch now
+  resumes a stalled run (bounded) instead of always hard-failing, but recovery
+  still waits for the watchdog sweep; there is no live failover.
+- **AI selectors are unvalidated until preview.** Nothing blocks Extract with
+  zero-match selectors (surfaced afterward as `NO_RECORDS_EXTRACTED`).
+- **`normalized_data` is never populated.**
 
 ## Verification Snapshot
 
-Commands last run successfully:
-
 ```powershell
-# Backend
 venv\Scripts\python.exe -m pytest -q
-
-# Frontend
-cd frontend
-npm.cmd test
-npm.cmd run typecheck
-npm.cmd run lint
-npm.cmd run build
 ```
 
-Results:
-
-- Backend: **379 passed**, 1 skipped, 47 warnings.
-- Frontend tests: **70 passed**.
-- Frontend typecheck, lint, and production build: passed (last verified June 10).
-
-E2E validation:
-
-```powershell
-venv\Scripts\python.exe tests\validation\run_validation.py
-```
-
-Result: **8/8 scenarios PASSED** (see `docs/reviews/03_phase25_validation.md`).
+Backend: **559 passed, 10 skipped** (verified 2026-06-17). Frontend test/
+typecheck/lint and the Phase 2.5 E2E harness
+(`tests\validation\run_validation.py`) are run separately; real-DB behavior for
+the run model and watchdog resume is covered by
+`tests\manual\verify_extraction_runs.py` and
+`tests\manual\verify_watchdog_resume.py` (require Postgres at head).
