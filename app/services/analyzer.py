@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # BUMP THIS whenever the DOM summary builder (dom_summary.py) or either analyzer
 # prompt below changes, otherwise the cache will serve analysis computed under an
 # older summary/prompt format for the same page content.
-ANALYZER_VERSION = "2"
+ANALYZER_VERSION = "3"
 
 _STRUCTURED_PROMPT = """\
 You are a web scraping analyst. Analyze the following page structure and identify \
@@ -56,8 +56,12 @@ Return a JSON object with this exact schema (no extra keys):
   "confidence": 0.0-1.0
 }}
 If the page shows the same metric in several parallel columns (e.g. "per 100 g" \
-and "per serving", or metric vs imperial), add each as its own candidate field \
-with a clear, distinct label instead of inventing generic "Secondary" names.
+and "per serving", or metric vs imperial), emit ONE candidate field per column \
+and put the distinguishing qualifier in the label IN PARENTHESES — e.g. \
+"Calories (per 100 g)" and "Calories (per serving)", or "Weight (metric)" and \
+"Weight (imperial)". Give each its own precise selector for its column. Do NOT \
+invent generic "Primary"/"Secondary" names and never point two fields at the \
+same selector.
 Confidence 1.0 = very certain. Provide at least 1 candidate field."""
 
 _CONTENT_PROMPT = """\
