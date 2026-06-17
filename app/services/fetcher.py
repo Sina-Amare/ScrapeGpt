@@ -34,6 +34,7 @@ from app.services.anti_bot import AUTO_SOLVABLE_CHALLENGES, anti_bot_challenge_r
 from app.services.dom_summary import assess_html_quality
 from app.services.url_validator import (
     URLValidationError,
+    check_ip,
     validate_redirect_target,
     validate_url,
 )
@@ -307,6 +308,24 @@ async def _static_fetch(url: str) -> FetchResult:
                 ) from exc
             except httpx.RequestError as exc:
                 raise FetchError(f"Network error: {exc}", "FETCH_FAILED") from exc
+
+            # DNS-rebinding defense: validate the IP we ACTUALLY connected to,
+            # not just the one resolved during pre-fetch validation. This closes
+            # the TOCTOU window for the static path even if the hostname rebinds
+            # to an internal address at connect time. Browser backends are not
+            # pinned this way and still rely on egress controls (documented).
+            stream = (getattr(resp, "extensions", None) or {}).get(
+                "network_stream"
+            )
+            if stream is not None:
+                server_addr = stream.get_extra_info("server_addr")
+                if server_addr:
+                    try:
+                        check_ip(str(server_addr[0]))
+                    except URLValidationError as exc:
+                        raise FetchError(
+                            f"Connection blocked ({exc})", "URL_BLOCKED"
+                        ) from exc
 
             if resp.is_redirect:
                 if hops >= settings.MAX_REDIRECTS:

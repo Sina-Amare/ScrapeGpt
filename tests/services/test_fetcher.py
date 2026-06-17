@@ -79,6 +79,52 @@ async def test_static_fetch_success(monkeypatch):
     assert len(result.content_hash) == 64
 
 
+class _PeerStream:
+    def __init__(self, ip: str):
+        self._ip = ip
+
+    def get_extra_info(self, key):
+        return (self._ip, 80) if key == "server_addr" else None
+
+
+@pytest.mark.asyncio
+async def test_static_fetch_blocks_rebound_private_peer_ip(monkeypatch):
+    """A4: if the connection actually lands on a private IP (DNS rebinding),
+    the static path rejects it via the connected-peer-IP check."""
+    resp = _FakeResponse()
+    resp.extensions = {"network_stream": _PeerStream("10.0.0.5")}
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient(resp))
+    monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+    monkeypatch.setattr(
+        "app.services.url_validator.settings",
+        type("S", (), {"ALLOW_PRIVATE_NETWORK_URLS": False})(),
+    )
+
+    with pytest.raises(FetchError) as exc_info:
+        await fetch_url("http://example.com/", render_mode="STATIC")
+    assert exc_info.value.error_code == "URL_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_static_fetch_allows_public_peer_ip(monkeypatch):
+    """A4: a public connected peer IP passes the rebinding check."""
+    resp = _FakeResponse()
+    resp.extensions = {"network_stream": _PeerStream("93.184.216.34")}
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient(resp))
+    monkeypatch.setattr("app.services.fetcher.settings", _FAKE_SETTINGS)
+    monkeypatch.setattr(
+        "app.services.url_validator.settings",
+        type("S", (), {"ALLOW_PRIVATE_NETWORK_URLS": False})(),
+    )
+
+    result = await fetch_url("http://example.com/", render_mode="STATIC")
+    assert result.status_code == 200
+
+
 @pytest.mark.asyncio
 async def test_rejects_non_html_content_type(monkeypatch):
     resp = _FakeResponse(content_type="application/pdf")

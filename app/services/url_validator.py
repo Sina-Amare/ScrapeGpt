@@ -86,6 +86,15 @@ def _check_ip(ip_str: str) -> None:
         )
 
 
+def check_ip(ip_str: str) -> None:
+    """Raise URLValidationError if ``ip_str`` is a blocked address.
+
+    Public entry point for validating an IP the client is actually connecting to
+    (DNS-rebinding defense), reusing the exact block rules as ``validate_url``.
+    """
+    _check_ip(ip_str)
+
+
 def validate_url(url: str) -> str:
     """
     Validate a URL for safe fetching.
@@ -131,14 +140,16 @@ def validate_url(url: str) -> str:
 
     # Resolve all A/AAAA records.
     #
-    # TOCTOU / DNS-rebinding limitation: we resolve here in Python, but httpx
-    # (and Playwright) re-resolve at the time the TCP connection is established.
-    # An attacker-controlled domain can return a public IP during this check and
-    # a private IP when the actual connection is made. This race is not fixable
-    # at the application layer. Full mitigation requires an egress firewall that
-    # blocks RFC-1918/loopback ranges, or an IP-pinned transport that binds the
-    # resolved address and prevents re-resolution. We document the limitation
-    # here rather than silently claiming SSRF is fully prevented.
+    # TOCTOU / DNS-rebinding: we resolve here in Python, but httpx (and the
+    # browser backends) re-resolve when the TCP connection is established, so an
+    # attacker-controlled domain could return a public IP here and a private one
+    # at connect time. The static httpx path now closes this window by
+    # re-validating the ACTUAL connected peer IP after the request (see
+    # fetcher._static_fetch, which calls check_ip on network_stream's
+    # server_addr). The browser backends (Playwright/Camoufox/FlareSolverr) are
+    # NOT pinned and still rely on an egress firewall blocking RFC-1918/loopback
+    # ranges — we document that residual gap rather than claim SSRF is fully
+    # prevented.
     try:
         addr_infos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
