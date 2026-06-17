@@ -1,4 +1,11 @@
-"""Admission service for scrape task creation."""
+"""Admission service for scrape task creation.
+
+SUPPORTED-LEGACY: this admits the one-shot ``/scrape`` pipeline (``ScrapeTask``).
+The project-based workflow uses ``job_admission.py`` instead. The two are kept
+separate by design because they admit different entities (tasks vs projects)
+with different preflight rules; consolidating them only makes sense if/when the
+legacy ``/scrape`` surface is retired (a product decision).
+"""
 
 import logging
 from dataclasses import dataclass

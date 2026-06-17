@@ -112,23 +112,32 @@ foundation), 009 (analysis cache TTL), `dcbda4fc8a19` (browser sessions), 010
 
 - Visual field selection (click-to-extract, iframe seed page, CSS path generator).
 - SSE live progress stream (`/projects/{id}/stream`).
-- Concurrent crawler workers (`CRAWL_CONCURRENCY` is reserved/unused; the crawl
-  loop is sequential, though the lease model would support parallel workers).
-- Multi-process deployment: in-memory rate limiting and a per-process scheduler
-  mean exactly one process must run. No Redis-backed rate limiting.
 - Durable job queue. Extraction runs as in-process `BackgroundTasks`; A1 resume
   recovers a stalled run on the next sweep, but there is no external queue.
-- Retiring the legacy `/scrape` + `/jobs` surfaces and duplicate admission
-  services.
-- SSRF DNS-rebinding mitigation beyond DNS-time validation (TOCTOU; documented).
 - Docker / docker-compose one-command setup.
 - CAPTCHA solving, Turnstile/hCaptcha bypass, proxy evasion (permanent non-goals).
   Cloudflare JS challenges are retried with the browser backend.
 
+## Concurrency, multi-process & legacy surfaces
+
+- **Concurrent crawl workers (A3):** `CRAWL_CONCURRENCY` (default 3) is honored —
+  each extraction run drains its page queue with that many workers, each on its
+  own session; leasing + idempotent inserts keep them safe. Capped by the run's
+  page limit; 1 = the previous sequential behavior.
+- **Multi-process (A2):** `RATE_LIMIT_STORAGE_URI` (point at redis:// for a shared
+  limit) and `RUN_SCHEDULER` (run the watchdog in exactly one process) make a
+  multi-process deployment safe. Defaults remain single-process.
+- **Legacy `/scrape` + `/jobs` (A5):** decision is **keep + support**, not remove.
+  Both are documented as SUPPORTED-LEGACY; `admission.py` (scrape) and
+  `job_admission.py` (projects) stay separate by design. Retiring them is a
+  future product decision.
+
 ## Known Issues
 
-- **DNS rebinding** is a known limitation of `validate_url()` (validates at DNS
-  resolution; the HTTP client re-resolves at connect time).
+- **DNS rebinding (A4 partially mitigated).** The static httpx fetch path now
+  re-validates the actual connected peer IP, closing the TOCTOU window there.
+  The browser backends (Playwright/Camoufox/FlareSolverr) are not pinned and
+  still rely on an egress firewall blocking private ranges.
 - **In-process BackgroundTasks do not survive a restart.** A1 re-dispatch now
   resumes a stalled run (bounded) instead of always hard-failing, but recovery
   still waits for the watchdog sweep; there is no live failover.
@@ -146,9 +155,9 @@ foundation), 009 (analysis cache TTL), `dcbda4fc8a19` (browser sessions), 010
 venv\Scripts\python.exe -m pytest -q
 ```
 
-Backend: **559 passed, 10 skipped** (verified 2026-06-17). Frontend test/
-typecheck/lint and the Phase 2.5 E2E harness
-(`tests\validation\run_validation.py`) are run separately; real-DB behavior for
-the run model and watchdog resume is covered by
+Backend: **562 passed, 10 skipped** (verified 2026-06-17). Frontend: **83 passed**
+plus typecheck/lint clean. The Phase 2.5 E2E harness
+(`tests\validation\run_validation.py`, now run-scoped) is run separately; real-DB
+behavior for the run model, concurrent workers, and watchdog resume is covered by
 `tests\manual\verify_extraction_runs.py` and
 `tests\manual\verify_watchdog_resume.py` (require Postgres at head).

@@ -1,6 +1,13 @@
 """
 Analysis job endpoints.
 
+SUPPORTED-LEGACY compatibility surface. ``Job`` is an alias of ``Project``
+(see ``app/models/job.py``), so these endpoints are a thin compat layer over the
+``projects`` table for the Phase-1 ``/jobs`` API. The primary product surface is
+``endpoints/projects.py``; the frontend redirects ``/jobs/:id`` to
+``/projects/:id``. Kept for backward compatibility — retiring it is a product
+decision.
+
 POST   /jobs           - Create analysis job (202)
 GET    /jobs           - List user's jobs (paginated)
 GET    /jobs/{id}      - Get job detail

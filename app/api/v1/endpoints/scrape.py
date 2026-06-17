@@ -1,6 +1,13 @@
 """
 Scraping endpoints with async pipeline.
 
+SUPPORTED-LEGACY surface. This is the original one-shot scrape pipeline
+(``ScrapeTask`` + ``admission.py`` + ``task_executor.py``). It is intentionally
+kept and still maintained (SSRF-hardened), but it is NOT the primary product
+flow — that is the project-based workflow under ``/projects`` (see
+``endpoints/projects.py``). Prefer adding capabilities there. Removing this
+surface is a product decision, not a drive-by cleanup.
+
 POST /start          - Create task and queue for background processing
 GET  /tasks          - List user tasks (paginated)
 GET  /tasks/current  - Get user's current active task
