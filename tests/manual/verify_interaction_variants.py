@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 from app.core.logging_config import configure_logging
 from app.models.job import ExtractionMode
-from app.services.fetcher import fetch_url
+from app.services.fetcher import apply_interactions_and_capture, fetch_url
 from app.services.interaction_detect import (
     detect_column_variants,
     detect_interaction_groups,
@@ -202,6 +202,65 @@ async def main() -> int:
     if serv_after != _sel(serv_dup, "Serving Size 1"):
         logger.error("repair changed a serving column whose value is not static")
         failures += 1
+
+    # --- MERGE + browser E2E on REAL HTML --------------------------------
+    # With the labels the analyzer now emits ("(first reported serving)"), the
+    # static per-100g/per-serving calorie columns and the interactive serving
+    # toggle MERGE into one 'mixed' axis. The per-serving SERVING SIZE
+    # ("1 portion (...)") is not in the static DOM, so it comes from the browser
+    # toggle (camoufox crashes here -> cascades to Chromium).
+    def _of(label, sel, t="string"):
+        return {"name": label, "label": label, "user_label": label,
+                "selector": sel, "type": t, "selected": True}
+
+    ord_fields = [
+        _of("Food", "td:nth-child(1) p"),
+        _of("Serving size (first reported serving)", "td:nth-child(2) p"),
+        _of("Calories (first reported serving)", "td:nth-child(3)", "number"),
+        _of("Serving size (second reported serving)", "td:nth-child(4) p"),
+        _of("Calories (second reported serving)", "td:nth-child(5)", "number"),
+    ]
+    mprof, mfields = detect_interaction_profile(
+        fetched.html, ord_fields, repeated_item_selector=ROW
+    )
+    mkeys = [(g["metadata_key"], g["execution"]) for g in mprof["groups"]]
+    logger.info(
+        "merge detection: groups=%s fields=%s", mkeys,
+        [f["label"] for f in (mfields or ord_fields)],
+    )
+    if not any(k == "serving_basis" and e == "mixed" for k, e in mkeys):
+        logger.error("merge did not produce a mixed serving_basis group")
+        failures += 1
+    else:
+        async def _cb(recipes):
+            return await apply_interactions_and_capture(fetched.final_url, recipes)
+
+        mspec = SimpleNamespace(
+            mode=ExtractionMode.STRUCTURED, content_config={}, fields=mfields,
+            interaction_profile={**mprof, "enabled": True},
+        )
+        mrecs, _mw = await extract_records_with_variants(
+            base_html=fetched.html, source_url=fetched.final_url,
+            project=SimpleNamespace(analysis={"repeated_item_selector": ROW}),
+            spec=mspec, max_records=1000, fetch_variant_htmls=_cb,
+        )
+        got = {
+            (d.get("Food"), str(d.get("serving_basis")), str(d.get("unit_system"))):
+            (d.get("Serving size"), d.get("Calories"))
+            for d in (r.normalized_data for r in mrecs)
+        }
+        for combo in [
+            ("Beef", "Show per 100 g", "Metric"),
+            ("Beef", "Show per serving", "Metric"),
+            ("Beef", "Show per serving", "Imperial"),
+        ]:
+            logger.info("merge E2E %s -> serving=%r cal=%r", combo, *got.get(combo, (None, None)))
+        real = got.get(("Beef", "Show per serving", "Metric"), (None, None))[0]
+        if not (real and "portion" in str(real).lower()):
+            logger.error("merge E2E did not yield the real per-serving serving size")
+            failures += 1
+        else:
+            logger.info("OK merge E2E: real per-serving serving size via browser = %r", real)
 
     logger.info("verify_interaction_variants done failures=%s", failures)
     return failures

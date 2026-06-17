@@ -714,32 +714,69 @@ def test_reported_serving_basis_toggle_is_reconciled_away():
     assert "unit_system" in keys        # unrelated toggle kept interactive
 
 
-def test_serving_basis_kept_when_static_serving_values_identical():
+@pytest.mark.asyncio
+async def test_serving_basis_merged_when_static_serving_values_identical():
     """calories.info reality: the per-serving serving size is NOT in the static
-    DOM (both columns read '100 g'); only calories differ. The serving_basis
-    toggle must stay interactive so the real value is still reachable."""
-    html = (
+    DOM (both columns read '100 g'); only calories differ. The column set
+    (static calories) and the serving_basis toggle (browser serving size) are
+    MERGED into one 'mixed' axis: static calories per option + a browser recipe
+    for the toggle-only serving size."""
+    base_html = (
         "<main>"
-        "<div class='basis'><button class='active'>Per 100 g</button>"
-        "<button>Per serving</button></div>"
+        "<div class='basis'><button class='active'>Show per 100 g</button>"
+        "<button>Show per serving</button></div>"
         "<table><tbody>"
-        # both serving columns are '100 g'; only calories (156/265) differ
-        "<tr><td>Beef</td><td>100 g</td><td>156</td><td>100 g</td><td>265</td></tr>"
+        "<tr><td>Beef</td><td><p>100 g</p></td><td>156</td>"
+        "<td><p>100 g</p></td><td>265</td></tr>"
         "</tbody></table></main>"
     )
+    # Clicking "Show per serving" makes BOTH serving columns render the real size.
+    perserving_html = base_html.replace("<p>100 g</p>", "<p>1 portion (170 g)</p>")
     fields = [
         _f("Food", "td:nth-child(1)"),
-        _f("Serving size (first reported serving)", "td:nth-child(2)"),
+        _f("Serving size (first reported serving)", "td:nth-child(2) p"),
         _f("Calories (first reported serving)", "td:nth-child(3)"),
-        _f("Serving size (second reported serving)", "td:nth-child(4)"),
+        _f("Serving size (second reported serving)", "td:nth-child(4) p"),
         _f("Calories (second reported serving)", "td:nth-child(5)"),
     ]
-    profile, _new = detect_interaction_profile(
-        html, fields, repeated_item_selector="tbody tr"
+    profile, new_fields = detect_interaction_profile(
+        base_html, fields, repeated_item_selector="tbody tr"
     )
-    keys = [g["metadata_key"] for g in profile["groups"]]
-    assert "column_set" in keys
-    assert "serving_basis" in keys  # NOT dropped: static serving values identical
+    assert [g["metadata_key"] for g in profile["groups"]] == ["serving_basis"]
+    merged = profile["groups"][0]
+    assert merged["execution"] == "mixed"  # static selectors + browser recipe
+    assert [o["label"] for o in merged["options"]] == [
+        "Show per 100 g",
+        "Show per serving",
+    ]
+    assert [f["label"] for f in new_fields] == ["Food", "Serving size", "Calories"]
+
+    async def browser(recipes):
+        out = {}
+        for rid, recipe in recipes.items():
+            clicked = any(s.get("value") == "Show per serving" for s in recipe)
+            out[rid] = perserving_html if clicked else base_html
+        return out
+
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED, content_config={},
+        fields=new_fields, interaction_profile={**profile, "enabled": True},
+    )
+    records, _w = await extract_records_with_variants(
+        base_html=base_html, source_url="https://x",
+        project=SimpleNamespace(analysis={"repeated_item_selector": "tbody tr"}),
+        spec=spec, max_records=50, fetch_variant_htmls=browser,
+    )
+    by_basis = {
+        str(r.normalized_data.get("serving_basis")): r.normalized_data
+        for r in records
+    }
+    # per-100g: static serving + static per-100g calories (no browser needed)
+    assert by_basis["Show per 100 g"]["Serving size"] == "100 g"
+    assert by_basis["Show per 100 g"]["Calories"] == "156"
+    # per-serving: browser-rendered serving + static per-serving calories
+    assert by_basis["Show per serving"]["Serving size"] == "1 portion (170 g)"
+    assert by_basis["Show per serving"]["Calories"] == "265"
 
 
 @pytest.mark.asyncio

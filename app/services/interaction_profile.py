@@ -34,6 +34,12 @@ HARD_MAX_VARIANT_COMBINATIONS = 12
 EXECUTION_DETERMINISTIC = "deterministic"
 EXECUTION_INTERACTIVE = "interactive"
 EXECUTION_URL_PARAM = "url_param"
+# A merged axis: a browser recipe reaches the variant AND per-option field
+# selectors say which columns to read from the rendered HTML. Used when a page
+# exposes the same axis as static columns (some fields) AND a browser toggle
+# (the rest) — e.g. static per-100g/per-serving calories + a "Show per serving"
+# toggle that's the only source of the per-serving serving size.
+EXECUTION_MIXED = "mixed"
 
 # Reserved metadata column names every variant row carries.
 META_VARIANT_ID = "interaction_variant_id"
@@ -191,6 +197,15 @@ def selected_combinations(profile: dict[str, Any] | None) -> list[VariantCombina
             execution = group.get("execution") or EXECUTION_DETERMINISTIC
             if execution == EXECUTION_INTERACTIVE:
                 recipe.extend(_option_recipe(option))
+            elif execution == EXECUTION_MIXED:
+                # Browser recipe AND per-option selector overrides applied to the
+                # rendered HTML.
+                recipe.extend(_option_recipe(option))
+                overrides = option.get("field_selectors") or {}
+                if isinstance(overrides, dict):
+                    for fk, sel in overrides.items():
+                        if sel:
+                            field_selectors[str(fk)] = str(sel)
             elif execution == EXECUTION_URL_PARAM:
                 query = option.get("query") or {}
                 if isinstance(query, dict):

@@ -125,3 +125,50 @@ def test_tag_record_metadata():
     assert tagged[META_VARIANT_ID] == combo.id
     assert tagged[META_VARIANT_LABEL] == combo.label
     assert tagged["serving_basis"] == combo.metadata["serving_basis"]
+
+
+def test_mixed_group_carries_both_recipe_and_field_selectors():
+    """A 'mixed' group option contributes a browser recipe AND per-field selector
+    overrides to its combination (static columns + browser render)."""
+    from app.services.interaction_profile import EXECUTION_MIXED
+
+    profile = {
+        "enabled": True,
+        "max_variant_combinations": 12,
+        "groups": [
+            {
+                "metadata_key": "serving_basis",
+                "execution": EXECUTION_MIXED,
+                "options": [
+                    {
+                        "id": "p100",
+                        "label": "Show per 100 g",
+                        "selected": True,
+                        "recipe": [],
+                        "field_selectors": {"Calories": "td:nth-child(3)"},
+                    },
+                    {
+                        "id": "pserv",
+                        "label": "Show per serving",
+                        "selected": True,
+                        "recipe": [
+                            {"action": "click", "by": "text", "value": "Show per serving"}
+                        ],
+                        "field_selectors": {"Calories": "td:nth-child(5)"},
+                    },
+                ],
+            }
+        ],
+    }
+    combos = selected_combinations(profile)
+    assert len(combos) == 2
+    by_label = {c.metadata["serving_basis"]: c for c in combos}
+
+    a = by_label["Show per 100 g"]
+    assert a.requires_browser is False
+    assert a.field_selectors == {"Calories": "td:nth-child(3)"}
+
+    b = by_label["Show per serving"]
+    assert b.requires_browser is True  # has a recipe
+    assert b.field_selectors == {"Calories": "td:nth-child(5)"}
+    assert b.recipe[0]["value"] == "Show per serving"

@@ -24,6 +24,7 @@ from app.services.extractor import sample_selector_values
 from app.services.interaction_profile import (
     EXECUTION_DETERMINISTIC,
     EXECUTION_INTERACTIVE,
+    EXECUTION_MIXED,
     sanitize_metadata_key,
 )
 
@@ -634,24 +635,100 @@ def _serving_axis_values_distinct(
     }
     if not bases:
         return False
-    for base in bases:
-        per_opt = [
-            sample_selector_values(
-                html,
-                repeated_item_selector=repeated_item_selector,
-                selector=str((o.get("field_selectors") or {}).get(base) or ""),
-            )
-            for o in opts
-        ]
-        n = max((len(v) for v in per_opt), default=0)
-        for i in range(n):
-            present = [
-                v[i] for v in per_opt
-                if i < len(v) and v[i] not in (None, "")
-            ]
-            if len(present) >= 2 and len(set(present)) >= 2:
-                return True
+    return any(
+        _base_values_distinct(opts, base, html, repeated_item_selector)
+        for base in bases
+    )
+
+
+def _base_values_distinct(
+    options: list[dict[str, Any]],
+    base: str,
+    html: str,
+    repeated_item_selector: str | None,
+) -> bool:
+    """True if *base*'s per-option selectors yield different values on some row."""
+    per_opt = [
+        sample_selector_values(
+            html,
+            repeated_item_selector=repeated_item_selector,
+            selector=str((o.get("field_selectors") or {}).get(base) or ""),
+        )
+        for o in options
+    ]
+    n = max((len(v) for v in per_opt), default=0)
+    for i in range(n):
+        present = [v[i] for v in per_opt if i < len(v) and v[i] not in (None, "")]
+        if len(present) >= 2 and len(set(present)) >= 2:
+            return True
     return False
+
+
+def _merge_column_set_with_toggle(
+    col_group: dict[str, Any],
+    toggle_group: dict[str, Any],
+    html: str,
+    repeated_item_selector: str | None,
+) -> dict[str, Any] | None:
+    """Merge a deterministic column set with the interactive toggle on the SAME
+    axis into one ``mixed`` group.
+
+    The page exposes the per-100g/per-serving axis twice: as static columns
+    (correct for some fields, e.g. calories) AND as a browser toggle (the only
+    source of the rest, e.g. the per-serving serving size). Each merged option
+    carries the toggle's browser **recipe** plus per-field **selectors**:
+      * a field whose static columns genuinely differ -> its per-option column
+        (read statically / from the rendered HTML);
+      * a field whose static columns are identical (toggle-dependent) -> a single
+        column, read from the browser-rendered HTML after the recipe runs.
+
+    Options are paired by order (default/first column ↔ default/first toggle
+    option). Returns None when the shapes don't line up (then the caller keeps
+    its conservative behavior).
+    """
+    col_opts = col_group.get("options") or []
+    tog_opts = toggle_group.get("options") or []
+    if len(col_opts) < 2 or len(col_opts) != len(tog_opts):
+        return None
+
+    bases: set[str] = set()
+    for o in col_opts:
+        bases.update((o.get("field_selectors") or {}).keys())
+    if not bases:
+        return None
+
+    distinct = {
+        base: _base_values_distinct(col_opts, base, html, repeated_item_selector)
+        for base in bases
+    }
+    # Nothing to merge if every field is already statically distinct (the plain
+    # deterministic column set is correct on its own).
+    if all(distinct.values()):
+        return None
+
+    merged_options: list[dict[str, Any]] = []
+    for col_o, tog_o in zip(col_opts, tog_opts):
+        field_selectors: dict[str, str] = {}
+        for base in bases:
+            source = col_o if distinct[base] else col_opts[0]
+            sel = (source.get("field_selectors") or {}).get(base)
+            if sel:
+                field_selectors[str(base)] = str(sel)
+        label = str(tog_o.get("label") or col_o.get("label") or "Option")
+        merged_options.append({
+            "id": tog_o.get("id") or sanitize_metadata_key(label),
+            "label": label,
+            "selected": True,
+            "field_selectors": field_selectors,
+            "recipe": tog_o.get("recipe") or [],
+        })
+
+    return {
+        "label": toggle_group.get("label") or col_group.get("label") or "Variant",
+        "metadata_key": toggle_group.get("metadata_key") or "serving_basis",
+        "execution": EXECUTION_MIXED,
+        "options": merged_options,
+    }
 
 
 # --- Strict, verified repair of duplicate parallel-column selectors ----------
@@ -899,22 +976,52 @@ def detect_interaction_profile(
             new_fields = collapsed
 
     if col_group is not None:
-        kept: list[dict[str, Any]] = []
-        for g in interactive_groups:
-            if _covers_same_axis(col_group, g):
-                continue  # strict token match (metric/imperial, per-100g/serving)
-            if (
-                g.get("metadata_key") == "serving_basis"
-                and _is_serving_ordinal_column_set(col_group)
-                and len(g.get("options") or []) == len(col_group.get("options") or [])
-                and _serving_axis_values_distinct(
-                    col_group, html, repeated_item_selector
-                )
-            ):
-                continue  # ordinal serving column set already covers this axis
-                # (only when the static columns genuinely differ)
-            kept.append(g)
-        groups = [col_group, *kept]
+        # A serving_basis toggle on the SAME axis as a serving column set.
+        toggle = None
+        if _is_serving_ordinal_column_set(col_group):
+            n_opts = len(col_group.get("options") or [])
+            toggle = next(
+                (
+                    g for g in interactive_groups
+                    if g.get("metadata_key") == "serving_basis"
+                    and len(g.get("options") or []) == n_opts
+                ),
+                None,
+            )
+
+        merged = None
+        if toggle is not None and not _serving_axis_values_distinct(
+            col_group, html, repeated_item_selector
+        ):
+            # The static serving columns are identical (per-serving size lives
+            # only behind the browser toggle): MERGE static calories + browser
+            # serving into one axis instead of leaving both representations.
+            merged = _merge_column_set_with_toggle(
+                col_group, toggle, html, repeated_item_selector
+            )
+
+        if merged is not None:
+            others = [
+                g for g in interactive_groups
+                if g is not toggle and not _covers_same_axis(merged, g)
+            ]
+            groups = [merged, *others]
+        else:
+            kept: list[dict[str, Any]] = []
+            for g in interactive_groups:
+                if _covers_same_axis(col_group, g):
+                    continue  # strict token match (metric/imperial, per-100g/serving)
+                if (
+                    g.get("metadata_key") == "serving_basis"
+                    and _is_serving_ordinal_column_set(col_group)
+                    and len(g.get("options") or []) == len(col_group.get("options") or [])
+                    and _serving_axis_values_distinct(
+                        col_group, html, repeated_item_selector
+                    )
+                ):
+                    continue  # ordinal serving column set already covers this axis
+                kept.append(g)
+            groups = [col_group, *kept]
     else:
         groups = interactive_groups
 
