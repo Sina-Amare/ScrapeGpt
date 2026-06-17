@@ -132,30 +132,18 @@ async def main() -> int:
     )
 
     # Full product detection path: detect_interaction_profile over the analyzer
-    # fields + page HTML. This makes the browser-free SCOPE explicit — only the
-    # axes the analyzer columned become deterministic; an un-columned toggle axis
-    # (e.g. metric/imperial here) stays INTERACTIVE and would still need a browser.
+    # fields + page HTML. The serving size is toggle-only on this page, so the
+    # serving column set + serving_basis toggle MERGE into one 'mixed' axis
+    # (static calories + browser serving); metric/imperial stays interactive.
     full_profile, _collapsed = detect_interaction_profile(
-        fetched.html, ANALYZER_FIELDS
+        fetched.html, ANALYZER_FIELDS, repeated_item_selector=ROW
     )
-    deterministic = [
-        g["metadata_key"]
-        for g in full_profile["groups"]
-        if g["execution"] == "deterministic"
-    ]
-    still_interactive = [
-        g["metadata_key"]
-        for g in full_profile["groups"]
-        if g["execution"] == "interactive"
-    ]
-    logger.info(
-        "full detect_interaction_profile -> deterministic(browser-free)=%s "
-        "interactive(needs browser)=%s",
-        deterministic,
-        still_interactive,
-    )
-    if "column_set" not in deterministic:
-        logger.error("full profile path lost the deterministic column_set group")
+    execs = {g["metadata_key"]: g["execution"] for g in full_profile["groups"]}
+    logger.info("full detect_interaction_profile -> %s", execs)
+    if execs.get("serving_basis") != "mixed":
+        logger.error(
+            "full profile path did not merge into a mixed serving_basis group"
+        )
         failures += 1
 
     # Selector-repair on REAL HTML — two honest cases:
@@ -213,12 +201,15 @@ async def main() -> int:
         return {"name": label, "label": label, "user_label": label,
                 "selector": sel, "type": t, "selected": True}
 
+    # Use the INCONSISTENT labels the analyzer actually produced on this page
+    # ("(per 100 g)" + "(alternate column)") to exercise the structural,
+    # label-independent path — the real failure mode, not a tidy hand-pick.
     ord_fields = [
         _of("Food", "td:nth-child(1) p"),
-        _of("Serving size (first reported serving)", "td:nth-child(2) p"),
-        _of("Calories (first reported serving)", "td:nth-child(3)", "number"),
-        _of("Serving size (second reported serving)", "td:nth-child(4) p"),
-        _of("Calories (second reported serving)", "td:nth-child(5)", "number"),
+        _of("Serving Size (per 100 g)", "td:nth-child(2) p"),
+        _of("Calories (per 100 g)", "td:nth-child(3)", "number"),
+        _of("Serving Size (alternate column)", "td:nth-child(4) p"),
+        _of("Calories (alternate column)", "td:nth-child(5)", "number"),
     ]
     mprof, mfields = detect_interaction_profile(
         fetched.html, ord_fields, repeated_item_selector=ROW
@@ -244,9 +235,16 @@ async def main() -> int:
             project=SimpleNamespace(analysis={"repeated_item_selector": ROW}),
             spec=mspec, max_records=1000, fetch_variant_htmls=_cb,
         )
+        # The collapsed serving field name follows the analyzer's label casing.
+        skey = next(
+            (f.get("user_label") or f.get("label") or f.get("name")
+             for f in (mfields or [])
+             if "serving" in str(f.get("label", "")).lower()),
+            "Serving Size",
+        )
         got = {
             (d.get("Food"), str(d.get("serving_basis")), str(d.get("unit_system"))):
-            (d.get("Serving size"), d.get("Calories"))
+            (d.get(skey), d.get("Calories"))
             for d in (r.normalized_data for r in mrecs)
         }
         for combo in [

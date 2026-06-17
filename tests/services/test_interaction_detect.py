@@ -821,3 +821,105 @@ async def test_repaired_columns_extract_distinct_values_browser_free():
     assert serving[("Beef", "First reported serving")] == "100 g"
     assert serving[("Beef", "Second reported serving")] == "1 portion (170 g)"
     assert serving[("Veal", "Second reported serving")] == "1 cutlet (50 g)"
+
+
+# --- inconsistent analyzer labels: structural (label-independent) handling ----
+
+
+def test_inconsistent_parenthetical_labels_collapse_with_two_families():
+    """The analyzer can't always name the 2nd column (per-serving label isn't in
+    the static DOM), so it falls back to '(alternate column)'. Two base families
+    sharing the qualifier set still collapse structurally."""
+    fields = [
+        _f("Food", "td:nth-child(1)"),
+        _f("Serving Size (per 100 g)", "td:nth-child(2)"),
+        _f("Calories (per 100 g)", "td:nth-child(3)"),
+        _f("Serving Size (alternate column)", "td:nth-child(4)"),
+        _f("Calories (alternate column)", "td:nth-child(5)"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is not None
+    assert [f["label"] for f in new_fields] == ["Food", "Serving Size", "Calories"]
+    assert [o["label"] for o in group["options"]] == ["per 100 g", "alternate column"]
+
+
+def test_single_family_weak_parenthetical_does_not_collapse():
+    """A lone family with arbitrary parenthetical keys has no structural backup
+    (only one base) -> no collapse (guards against over-collapse)."""
+    fields = [_f("Price (USD)", ".usd"), _f("Price (EUR)", ".eur")]
+    new_fields, group = detect_column_variants(fields)
+    assert group is None
+    assert new_fields == fields
+
+
+def test_two_families_weak_parenthetical_collapse():
+    """Two families sharing weak (arbitrary) keys DO collapse — the shared
+    qualifier set across bases is the structural signal."""
+    fields = [
+        _f("Revenue (2024)", ".r24"), _f("Revenue (2023)", ".r23"),
+        _f("Profit (2024)", ".p24"), _f("Profit (2023)", ".p23"),
+    ]
+    _new, group = detect_column_variants(fields)
+    assert group is not None
+    assert [o["label"] for o in group["options"]] == ["2024", "2023"]
+
+
+@pytest.mark.asyncio
+async def test_merge_triggers_with_inconsistent_alternate_column_labels():
+    """Structural merge: '(per 100 g)' / '(alternate column)' labels + a
+    serving_basis toggle + identical static serving values -> merged 'mixed'
+    group using the meaningful TOGGLE labels, with the real per-serving size
+    coming from the browser."""
+    base_html = (
+        "<main>"
+        "<div class='basis'><button class='active'>Show per 100 g</button>"
+        "<button>Show per serving</button></div>"
+        "<table><tbody>"
+        "<tr><td>Beef</td><td><p>100 g</p></td><td>156</td>"
+        "<td><p>100 g</p></td><td>265</td></tr>"
+        "</tbody></table></main>"
+    )
+    perserving = base_html.replace("<p>100 g</p>", "<p>1 portion (170 g)</p>")
+    fields = [
+        _f("Food", "td:nth-child(1)"),
+        _f("Serving Size (per 100 g)", "td:nth-child(2) p"),
+        _f("Calories (per 100 g)", "td:nth-child(3)"),
+        _f("Serving Size (alternate column)", "td:nth-child(4) p"),
+        _f("Calories (alternate column)", "td:nth-child(5)"),
+    ]
+    profile, new_fields = detect_interaction_profile(
+        base_html, fields, repeated_item_selector="tbody tr"
+    )
+    assert [g["metadata_key"] for g in profile["groups"]] == ["serving_basis"]
+    merged = profile["groups"][0]
+    assert merged["execution"] == "mixed"
+    assert [o["label"] for o in merged["options"]] == [
+        "Show per 100 g",
+        "Show per serving",
+    ]
+
+    async def browser(recipes):
+        return {
+            rid: (
+                perserving
+                if any(s.get("value") == "Show per serving" for s in recipe)
+                else base_html
+            )
+            for rid, recipe in recipes.items()
+        }
+
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED, content_config={},
+        fields=new_fields, interaction_profile={**profile, "enabled": True},
+    )
+    records, _w = await extract_records_with_variants(
+        base_html=base_html, source_url="https://x",
+        project=SimpleNamespace(analysis={"repeated_item_selector": "tbody tr"}),
+        spec=spec, max_records=50, fetch_variant_htmls=browser,
+    )
+    by = {str(r.normalized_data.get("serving_basis")): r.normalized_data
+          for r in records}
+    assert by["Show per 100 g"]["Serving Size"] == "100 g"
+    assert by["Show per 100 g"]["Calories"] == "156"
+    assert by["Show per serving"]["Serving Size"] == "1 portion (170 g)"
+    assert by["Show per serving"]["Calories"] == "265"

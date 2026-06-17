@@ -388,36 +388,42 @@ def _sentence_case(text: str) -> str:
 
 def _split_variant_qualifier(
     label: str,
-) -> tuple[str, str | None, str | None]:
-    """Split a field label into ``(base, variant_key, option_label)``.
+) -> tuple[str, str | None, str | None, bool]:
+    """Split a field label into ``(base, variant_key, option_label, strong)``.
 
-    Returns ``variant_key=None`` (a plain field) unless the label matches the
-    CLOSED qualifier vocabulary above. ``variant_key`` is a grouping identity;
-    ``option_label`` is what the variant option is shown as. Examples::
+    ``variant_key`` is None for a plain field. ``strong`` marks a key from the
+    CLOSED, semantically-meaningful vocabulary (per/metric/imperial, ordinals,
+    numbers) vs a WEAK key — an arbitrary parenthetical like "(alternate
+    column)". A strong key can form a column set on its own; a weak key only
+    collapses with structural backup (>=2 base families sharing it), because the
+    analyzer can't always name the second column (the per-serving label isn't in
+    the static DOM), so it falls back to "(alternate column)" etc. Examples::
 
-        "Calories 1"            -> ("Calories", "num:1", "Variant 1")
-        "Secondary serving size"-> ("serving size", "secondary", "Secondary")
-        "Calories (per 100 g)"  -> ("Calories", "per 100 g", "per 100 g")
-        "Food"                  -> ("Food", None, None)
+        "Calories 1"                  -> ("Calories", "num:1", "Variant 1", True)
+        "Calories (per 100 g)"        -> ("Calories", "per 100 g", "per 100 g", True)
+        "Serving Size (alternate column)" -> ("Serving Size", "q:alternate column",
+                                              "alternate column", False)
+        "Food"                        -> ("Food", None, None, False)
     """
     text = (label or "").strip()
     if not text:
-        return "", None, None
+        return "", None, None, False
 
-    # 1. Parenthetical qualifier suffix: "Calories (per 100 g)" or an ordinal
-    #    phrase like "Serving size (first reported serving)".
+    # 1. Parenthetical suffix: "Calories (per 100 g)", an ordinal phrase, or any
+    #    other distinguishing parenthetical (weak).
     m = _PAREN_RE.match(text)
     if m and m.group(1).strip():
+        base = m.group(1).strip()
         inner = _clean(m.group(2))
         if _QUALIFIER_PAREN_RE.match(inner):
-            return m.group(1).strip(), inner.lower(), inner
+            return base, inner.lower(), inner, True
         if inner.lower() in _ORDINAL_WORDS:
-            return m.group(1).strip(), inner.lower(), _ORDINAL_WORDS[inner.lower()]
+            return base, inner.lower(), _ORDINAL_WORDS[inner.lower()], True
         ord_word = _find_ordinal(inner)
         if ord_word is not None:
-            # Key on the ordinal so "(first reported serving)" across fields
-            # collapses; show the full phrase as the option label.
-            return m.group(1).strip(), ord_word, _sentence_case(inner)
+            return base, ord_word, _sentence_case(inner), True
+        if 0 < len(inner) <= 30:
+            return base, "q:" + inner.lower(), inner, False
 
     # 2. Leading / trailing ordinal word: "Secondary serving size".
     tokens = text.split()
@@ -425,17 +431,17 @@ def _split_variant_qualifier(
         first = tokens[0].lower().strip(":-")
         last = tokens[-1].lower().strip(":-")
         if first in _ORDINAL_WORDS:
-            return " ".join(tokens[1:]).strip(), first, _ORDINAL_WORDS[first]
+            return " ".join(tokens[1:]).strip(), first, _ORDINAL_WORDS[first], True
         if last in _ORDINAL_WORDS:
-            return " ".join(tokens[:-1]).strip(), last, _ORDINAL_WORDS[last]
+            return " ".join(tokens[:-1]).strip(), last, _ORDINAL_WORDS[last], True
 
     # 3. Trailing integer: "Calories 1".
     m = _NUM_SUFFIX_RE.match(text)
     if m and m.group(1).strip():
         n = int(m.group(2))
-        return m.group(1).strip(), f"num:{n}", f"Variant {n}"
+        return m.group(1).strip(), f"num:{n}", f"Variant {n}", True
 
-    return text, None, None
+    return text, None, None, False
 
 
 def _field_label(field: dict[str, Any]) -> str:
@@ -464,14 +470,16 @@ def detect_column_variants(
     families: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     key_label: dict[str, str] = {}
     key_order: list[str] = []  # first-appearance order across the field list
+    key_strong: dict[str, bool] = {}
     for f in fields:
-        base, key, opt_label = _split_variant_qualifier(_field_label(f))
+        base, key, opt_label, strong = _split_variant_qualifier(_field_label(f))
         if key is None or not base:
             continue
         families.setdefault(base, []).append((key, f))
         if key not in key_label:
             key_label[key] = opt_label or key
             key_order.append(key)
+        key_strong[key] = key_strong.get(key, False) or strong
 
     # Keep only families that carry >=2 distinct variant keys.
     families = {
@@ -490,6 +498,12 @@ def detect_column_variants(
     shared_keys = next(iter(key_sets))
     keys = [k for k in key_order if k in shared_keys]
     if len(keys) < 2:
+        return fields, None
+
+    # A WEAK (arbitrary-parenthetical) key set needs structural backup: >=2 base
+    # families sharing it. A fully-strong key set (per/metric/ordinal/numbered)
+    # is semantically clear enough to collapse a single family.
+    if not all(key_strong.get(k, False) for k in keys) and len(families) < 2:
         return fields, None
 
     options: list[dict[str, Any]] = []
@@ -529,7 +543,7 @@ def detect_column_variants(
         if id(f) not in member_ids:
             new_fields.append(dict(f))
             continue
-        base, _key, _opt = _split_variant_qualifier(_field_label(f))
+        base, _key, _opt, _strong = _split_variant_qualifier(_field_label(f))
         if base in families and base not in done:
             done.add(base)
             collapsed = dict(f)
@@ -608,6 +622,31 @@ def _is_serving_ordinal_column_set(col_group: dict[str, Any]) -> bool:
         return False
     labels = [str(o.get("label", "")) for o in opts]
     return all(_SERVING_RE.search(lbl) for lbl in labels)
+
+
+def _column_set_has_toggle_dependent_serving(
+    col_group: dict[str, Any],
+    html: str,
+    repeated_item_selector: str | None,
+) -> bool:
+    """True if the column set has a serving-named base field whose static columns
+    read IDENTICAL values — meaning the real per-variant value lives only behind
+    the browser toggle. This is the structural (label-independent) signal that a
+    serving_basis toggle should be MERGED in, regardless of how the analyzer
+    named the columns (``per serving`` / ``alternate column`` / …)."""
+    opts = col_group.get("options") or []
+    if len(opts) < 2:
+        return False
+    serving_bases = {
+        base
+        for o in opts
+        for base in (o.get("field_selectors") or {})
+        if _SERVING_RE.search(str(base))
+    }
+    return any(
+        not _base_values_distinct(opts, base, html, repeated_item_selector)
+        for base in serving_bases
+    )
 
 
 def _serving_axis_values_distinct(
@@ -780,7 +819,7 @@ def _ordered_variant_keys(
     families: dict[str, dict[str, dict[str, Any]]] = {}
     key_order: list[str] = []
     for f in fields:
-        base, key, _label = _split_variant_qualifier(_field_label(f))
+        base, key, _label, _strong = _split_variant_qualifier(_field_label(f))
         if key is None or not base:
             continue
         families.setdefault(base, {}).setdefault(key, f)
@@ -976,26 +1015,25 @@ def detect_interaction_profile(
             new_fields = collapsed
 
     if col_group is not None:
-        # A serving_basis toggle on the SAME axis as a serving column set.
-        toggle = None
-        if _is_serving_ordinal_column_set(col_group):
-            n_opts = len(col_group.get("options") or [])
-            toggle = next(
-                (
-                    g for g in interactive_groups
-                    if g.get("metadata_key") == "serving_basis"
-                    and len(g.get("options") or []) == n_opts
-                ),
-                None,
-            )
+        # A serving_basis toggle with the same option count as the column set.
+        n_opts = len(col_group.get("options") or [])
+        toggle = next(
+            (
+                g for g in interactive_groups
+                if g.get("metadata_key") == "serving_basis"
+                and len(g.get("options") or []) == n_opts
+            ),
+            None,
+        )
 
         merged = None
-        if toggle is not None and not _serving_axis_values_distinct(
+        if toggle is not None and _column_set_has_toggle_dependent_serving(
             col_group, html, repeated_item_selector
         ):
-            # The static serving columns are identical (per-serving size lives
-            # only behind the browser toggle): MERGE static calories + browser
+            # A serving column reads identical static values (the real per-serving
+            # size lives only behind the toggle): MERGE static calories + browser
             # serving into one axis instead of leaving both representations.
+            # Label-independent, so it works however the analyzer named columns.
             merged = _merge_column_set_with_toggle(
                 col_group, toggle, html, repeated_item_selector
             )
