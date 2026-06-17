@@ -20,6 +20,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup, Tag
 
+from app.services.extractor import sample_selector_values
 from app.services.interaction_profile import (
     EXECUTION_DETERMINISTIC,
     EXECUTION_INTERACTIVE,
@@ -359,9 +360,29 @@ _ORDINAL_WORDS = {
     "secondary": "Secondary",
     "tertiary": "Tertiary",
     "quaternary": "Quaternary",
+    "first": "First",
+    "second": "Second",
+    "third": "Third",
+    "fourth": "Fourth",
+    "fifth": "Fifth",
 }
+# Ordinal word embedded anywhere in a phrase, e.g. "(first reported serving)".
+_ORDINAL_RE = re.compile(
+    r"\b(" + "|".join(_ORDINAL_WORDS) + r")\b", re.I
+)
 # Parenthetical inner text accepted as a variant qualifier (basis or unit).
 _QUALIFIER_PAREN_RE = re.compile(r"^(?:per\s+.+|metric|imperial)$", re.I)
+
+
+def _find_ordinal(text: str) -> str | None:
+    """Return the first recognized ordinal word (lowercased) in *text*, or None."""
+    m = _ORDINAL_RE.search(text or "")
+    return m.group(1).lower() if m else None
+
+
+def _sentence_case(text: str) -> str:
+    text = (text or "").strip()
+    return text[:1].upper() + text[1:] if text else text
 
 
 def _split_variant_qualifier(
@@ -382,7 +403,8 @@ def _split_variant_qualifier(
     if not text:
         return "", None, None
 
-    # 1. Parenthetical qualifier suffix: "Calories (per 100 g)".
+    # 1. Parenthetical qualifier suffix: "Calories (per 100 g)" or an ordinal
+    #    phrase like "Serving size (first reported serving)".
     m = _PAREN_RE.match(text)
     if m and m.group(1).strip():
         inner = _clean(m.group(2))
@@ -390,6 +412,11 @@ def _split_variant_qualifier(
             return m.group(1).strip(), inner.lower(), inner
         if inner.lower() in _ORDINAL_WORDS:
             return m.group(1).strip(), inner.lower(), _ORDINAL_WORDS[inner.lower()]
+        ord_word = _find_ordinal(inner)
+        if ord_word is not None:
+            # Key on the ordinal so "(first reported serving)" across fields
+            # collapses; show the full phrase as the option label.
+            return m.group(1).strip(), ord_word, _sentence_case(inner)
 
     # 2. Leading / trailing ordinal word: "Secondary serving size".
     tokens = text.split()
@@ -564,8 +591,288 @@ def _covers_same_axis(col_group: dict[str, Any], inter_group: dict[str, Any]) ->
     return bool(col_tokens) and col_tokens == inter_tokens
 
 
+_SERVING_RE = re.compile(r"\b(serving|portion)\b", re.I)
+
+
+def _is_serving_ordinal_column_set(col_group: dict[str, Any]) -> bool:
+    """A deterministic column set whose every option is serving/portion-related
+    (e.g. ``First reported serving`` / ``Second reported serving``).
+
+    These cover the same axis as a ``serving_basis`` interactive toggle, but the
+    ordinal option labels don't share the toggle's per-100g/per-serving tokens,
+    so ``_covers_same_axis`` can't see it — this catches that case by category.
+    """
+    opts = col_group.get("options") or []
+    if len(opts) < 2:
+        return False
+    labels = [str(o.get("label", "")) for o in opts]
+    return all(_SERVING_RE.search(lbl) for lbl in labels)
+
+
+def _serving_axis_values_distinct(
+    col_group: dict[str, Any],
+    html: str,
+    repeated_item_selector: str | None,
+) -> bool:
+    """True only if the column set's serving-related base field yields DIFFERENT
+    values across options on the actual page.
+
+    Guards the serving-basis reconciliation: on pages where the per-serving
+    serving size is NOT in the static DOM (it only appears after the browser
+    toggle, e.g. calories.info), both static serving columns read the same
+    value. Suppressing the toggle there would hide the only path to the real
+    data — so we keep it unless the static columns genuinely differ.
+    """
+    opts = col_group.get("options") or []
+    if len(opts) < 2 or not html:
+        return False
+    bases = {
+        base
+        for o in opts
+        for base in (o.get("field_selectors") or {})
+        if _SERVING_RE.search(str(base))
+    }
+    if not bases:
+        return False
+    for base in bases:
+        per_opt = [
+            sample_selector_values(
+                html,
+                repeated_item_selector=repeated_item_selector,
+                selector=str((o.get("field_selectors") or {}).get(base) or ""),
+            )
+            for o in opts
+        ]
+        n = max((len(v) for v in per_opt), default=0)
+        for i in range(n):
+            present = [
+                v[i] for v in per_opt
+                if i < len(v) and v[i] not in (None, "")
+            ]
+            if len(present) >= 2 and len(set(present)) >= 2:
+                return True
+    return False
+
+
+# --- Strict, verified repair of duplicate parallel-column selectors ----------
+# The analyzer sometimes gives two columns of a parallel table the SAME selector
+# (e.g. both serving-size columns -> "td:nth-child(2)"), so the two variants
+# extract identical values. When OTHER field families in the same variant set DO
+# have distinct, evenly-spaced ``td:nth-child(n)`` selectors, we infer the
+# missing column index by preserving that spacing, then VERIFY it against the
+# fetched HTML before accepting. Anything ambiguous or unverifiable -> change
+# nothing (the duplicate-column warning still fires). No site-specific logic;
+# only simple table-cell selectors with corroborating cross-family evidence are
+# ever touched.
+_TABLE_CELL_RE = re.compile(
+    r"^(?P<prefix>.*?)\btd:nth-(?P<func>child|of-type)\(\s*(?P<idx>\d+)\s*\)"
+    r"(?P<suffix>.*)$"
+)
+_TABLE_CELL_TOKEN_RE = re.compile(r"td:nth-(?:child|of-type)\(")
+
+
+def _parse_table_cell_selector(
+    selector: str,
+) -> tuple[str, str, int, str] | None:
+    """Parse ``td:nth-child(N) p`` into ``(prefix, func, index, suffix)``.
+
+    Returns None unless the selector contains exactly ONE simple table-cell
+    token (zero or several are both rejected as too complex to repair safely).
+    """
+    s = (selector or "").strip()
+    if not s or len(_TABLE_CELL_TOKEN_RE.findall(s)) != 1:
+        return None
+    m = _TABLE_CELL_RE.match(s)
+    if not m:
+        return None
+    return m.group("prefix"), m.group("func"), int(m.group("idx")), m.group("suffix")
+
+
+def _build_table_cell_selector(
+    prefix: str, func: str, index: int, suffix: str
+) -> str:
+    return f"{prefix}td:nth-{func}({index}){suffix}"
+
+
+def _ordered_variant_keys(
+    fields: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, dict[str, Any]]] | None, list[str] | None]:
+    """Group fields into families ``{base: {variant_key: field}}`` with a shared
+    ordered key set, mirroring ``detect_column_variants`` gating. Returns
+    ``(None, None)`` when there is no clean parallel-column structure."""
+    families: dict[str, dict[str, dict[str, Any]]] = {}
+    key_order: list[str] = []
+    for f in fields:
+        base, key, _label = _split_variant_qualifier(_field_label(f))
+        if key is None or not base:
+            continue
+        families.setdefault(base, {}).setdefault(key, f)
+        if key not in key_order:
+            key_order.append(key)
+    families = {b: m for b, m in families.items() if len(m) >= 2}
+    if not families:
+        return None, None
+    key_sets = {frozenset(m) for m in families.values()}
+    if len(key_sets) != 1:
+        return None, None
+    shared = next(iter(key_sets))
+    keys = [k for k in key_order if k in shared]
+    if len(keys) < 2:
+        return None, None
+    return families, keys
+
+
+def _repair_values_ok(values_for: dict[str, list[str | None]], keys: list[str]) -> bool:
+    """Verification gate: every key extracts a present value on >=1 row, AND on
+    at least one row two keys yield DIFFERENT non-empty values (so the repair
+    actually breaks the duplication rather than re-pointing at the same data)."""
+    for k in keys:
+        if not any(v not in (None, "") for v in values_for.get(k, [])):
+            return False
+    n = max((len(values_for.get(k, [])) for k in keys), default=0)
+    for i in range(n):
+        present = []
+        for k in keys:
+            vs = values_for.get(k, [])
+            v = vs[i] if i < len(vs) else None
+            if v not in (None, ""):
+                present.append(v)
+        if len(present) >= 2 and len(set(present)) >= 2:
+            return True
+    return False
+
+
+def repair_parallel_column_selectors(
+    fields: list[dict[str, Any]],
+    html: str,
+    *,
+    repeated_item_selector: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return *fields* with duplicate parallel-column selectors repaired where a
+    clear, VERIFIED table-column pattern exists; otherwise return *fields*
+    unchanged. See the module note above for the strict rules.
+    """
+    if not fields or not html:
+        return fields
+    families, keys = _ordered_variant_keys(fields)
+    if not families or not keys:
+        return fields
+
+    # Parse every member into a simple table-cell shape. A family is usable only
+    # if ALL its members share one prefix/func/suffix shape.
+    shaped: dict[str, dict[str, int]] = {}
+    shape_of: dict[str, tuple[str, str, str]] = {}
+    for base, members in families.items():
+        idx_by_key: dict[str, int] = {}
+        shapes: set[tuple[str, str, str]] = set()
+        ok = True
+        for key in keys:
+            fld = members.get(key)
+            parsed = (
+                _parse_table_cell_selector(str(fld.get("selector") or ""))
+                if fld else None
+            )
+            if parsed is None:
+                ok = False
+                break
+            prefix, func, idx, suffix = parsed
+            idx_by_key[key] = idx
+            shapes.add((prefix, func, suffix))
+        if ok and len(shapes) == 1:
+            shaped[base] = idx_by_key
+            shape_of[base] = next(iter(shapes))
+    if len(shaped) < 2:
+        return fields  # need >=1 donor + >=1 repair target
+
+    # Donors: indices strictly increasing in key order. All donors must AGREE on
+    # the consecutive deltas (consensus spacing) or we abort.
+    delta_seqs: set[tuple[int, ...]] = set()
+    for idx_by_key in shaped.values():
+        idxs = [idx_by_key[k] for k in keys]
+        if len(set(idxs)) == len(idxs) and all(
+            idxs[i] < idxs[i + 1] for i in range(len(idxs) - 1)
+        ):
+            delta_seqs.add(tuple(idxs[i + 1] - idxs[i] for i in range(len(idxs) - 1)))
+    if len(delta_seqs) != 1:
+        return fields
+    deltas = next(iter(delta_seqs))
+    prefix_sum = [0]
+    for d in deltas:
+        prefix_sum.append(prefix_sum[-1] + d)
+    pos = {k: prefix_sum[i] for i, k in enumerate(keys)}
+
+    # Columns occupied by ANY simple-table-cell field (including non-variant
+    # fields like "Food" at column 1). An inferred column must never land on one
+    # of these — that's what stops a wrong anchor "verifying" against an
+    # unrelated column (e.g. the food-name column reading as "distinct").
+    occupied: set[int] = set()
+    for f in fields:
+        parsed = _parse_table_cell_selector(str(f.get("selector") or ""))
+        if parsed is not None:
+            occupied.add(parsed[2])
+
+    repaired = [dict(f) for f in fields]
+    repaired_by_id = {id(orig): cp for orig, cp in zip(fields, repaired)}
+    changed = False
+
+    for base, idx_by_key in shaped.items():
+        idxs = [idx_by_key[k] for k in keys]
+        if len(set(idxs)) == len(idxs):
+            continue  # not broken (no duplicate column)
+        prefix, func, suffix = shape_of[base]
+        # Other fields' columns (everything occupied except this family's own).
+        other_indices = occupied - set(idx_by_key.values())
+
+        accepted: dict[str, int] | None = None
+        for anchor in keys:
+            inferred = {k: idx_by_key[anchor] + (pos[k] - pos[anchor]) for k in keys}
+            ivals = [inferred[k] for k in keys]
+            if any(v <= 0 for v in ivals):
+                continue
+            if any(ivals[i] >= ivals[i + 1] for i in range(len(ivals) - 1)):
+                continue  # parallel columns are strictly increasing L->R
+            if len(set(ivals)) != len(ivals):
+                continue
+            if set(ivals) & other_indices:
+                continue  # would collide with another field's column
+            values_for = {
+                k: sample_selector_values(
+                    html,
+                    repeated_item_selector=repeated_item_selector,
+                    selector=_build_table_cell_selector(
+                        prefix, func, inferred[k], suffix
+                    ),
+                    field_type=str(
+                        (families[base].get(k) or {}).get("type") or "string"
+                    ),
+                )
+                for k in keys
+            }
+            if not _repair_values_ok(values_for, keys):
+                continue
+            if accepted is not None and accepted != inferred:
+                accepted = None  # two different anchors verify -> ambiguous
+                break
+            accepted = inferred
+
+        if accepted is not None:
+            for k in keys:
+                fld = families[base].get(k)
+                cp = repaired_by_id.get(id(fld)) if fld is not None else None
+                if cp is not None:
+                    cp["selector"] = _build_table_cell_selector(
+                        prefix, func, accepted[k], suffix
+                    )
+            changed = True
+
+    return repaired if changed else fields
+
+
 def detect_interaction_profile(
-    html: str, fields: list[dict[str, Any]] | None = None
+    html: str,
+    fields: list[dict[str, Any]] | None = None,
+    *,
+    repeated_item_selector: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
     """Build a draft (disabled) interaction_profile.
 
@@ -581,15 +888,32 @@ def detect_interaction_profile(
     new_fields: list[dict[str, Any]] | None = None
     col_group: dict[str, Any] | None = None
     if fields:
-        collapsed, col_group = detect_column_variants(fields)
+        # Repair duplicate parallel-column selectors (verified against the page)
+        # BEFORE collapsing, so the column set carries correct per-variant
+        # selectors instead of two columns pointing at the same cell.
+        repaired = repair_parallel_column_selectors(
+            fields, html, repeated_item_selector=repeated_item_selector
+        )
+        collapsed, col_group = detect_column_variants(repaired)
         if col_group is not None:
             new_fields = collapsed
 
     if col_group is not None:
-        kept = [
-            g for g in interactive_groups
-            if not _covers_same_axis(col_group, g)
-        ]
+        kept: list[dict[str, Any]] = []
+        for g in interactive_groups:
+            if _covers_same_axis(col_group, g):
+                continue  # strict token match (metric/imperial, per-100g/serving)
+            if (
+                g.get("metadata_key") == "serving_basis"
+                and _is_serving_ordinal_column_set(col_group)
+                and len(g.get("options") or []) == len(col_group.get("options") or [])
+                and _serving_axis_values_distinct(
+                    col_group, html, repeated_item_selector
+                )
+            ):
+                continue  # ordinal serving column set already covers this axis
+                # (only when the static columns genuinely differ)
+            kept.append(g)
         groups = [col_group, *kept]
     else:
         groups = interactive_groups

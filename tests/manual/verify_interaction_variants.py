@@ -23,6 +23,7 @@ from app.services.interaction_detect import (
     detect_column_variants,
     detect_interaction_groups,
     detect_interaction_profile,
+    repair_parallel_column_selectors,
 )
 from app.services.interaction_extraction import extract_records_with_variants
 
@@ -155,6 +156,51 @@ async def main() -> int:
     )
     if "column_set" not in deterministic:
         logger.error("full profile path lost the deterministic column_set group")
+        failures += 1
+
+    # Selector-repair on REAL HTML — two honest cases:
+    #
+    # (a) RESTORES a recoverable column. Calories per-100g (156) and per-serving
+    #     (265) are BOTH in the static DOM (distinct columns), so when we
+    #     simulate the analyzer duplicating "Calories 2" onto "Calories 1"'s
+    #     column, repair infers the right column from the sibling spacing and
+    #     verifies it against the page.
+    def _sel(fields, label):
+        return next(f["selector"] for f in fields if f["label"] == label)
+
+    cal_dup = [dict(f) for f in ANALYZER_FIELDS]
+    for f in cal_dup:
+        if f["label"] == "Calories 2":
+            f["selector"] = _sel(cal_dup, "Calories 1")  # break it
+    cal_fixed = _sel(
+        repair_parallel_column_selectors(cal_dup, fetched.html, repeated_item_selector=ROW),
+        "Calories 2",
+    )
+    cal_expected = _sel(ANALYZER_FIELDS, "Calories 2")
+    logger.info("repair RESTORES Calories 2 -> %s (expected %s)", cal_fixed, cal_expected)
+    if cal_fixed != cal_expected:
+        logger.error("repair failed to restore the distinct Calories column")
+        failures += 1
+
+    # (b) DECLINES when the value is not in the static DOM. The per-serving
+    #     SERVING SIZE ("1 portion (...)") only appears after the browser toggle;
+    #     statically both serving columns read "100 g". Repair must NOT fabricate
+    #     a value — it leaves the duplicate in place (the duplicate-column warning
+    #     then tells the user, and the serving_basis toggle stays available).
+    serv_dup = [dict(f) for f in ANALYZER_FIELDS]
+    for f in serv_dup:
+        if f["label"] == "Serving Size 2":
+            f["selector"] = _sel(serv_dup, "Serving Size 1")  # break it
+    serv_after = _sel(
+        repair_parallel_column_selectors(serv_dup, fetched.html, repeated_item_selector=ROW),
+        "Serving Size 2",
+    )
+    logger.info(
+        "repair DECLINES Serving Size 2 (value not in static DOM) -> stays %s",
+        serv_after,
+    )
+    if serv_after != _sel(serv_dup, "Serving Size 1"):
+        logger.error("repair changed a serving column whose value is not static")
         failures += 1
 
     logger.info("verify_interaction_variants done failures=%s", failures)

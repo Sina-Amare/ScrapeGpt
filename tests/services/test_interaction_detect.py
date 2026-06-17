@@ -11,6 +11,7 @@ from app.services.interaction_detect import (
     detect_column_variants,
     detect_interaction_groups,
     detect_interaction_profile,
+    repair_parallel_column_selectors,
 )
 from app.services.interaction_extraction import extract_records_with_variants
 
@@ -562,3 +563,224 @@ async def test_reconciliation_makes_single_axis_page_browser_free():
     }
     assert cals.get("per 100 g") == "52"
     assert cals.get("per serving") == "65"
+
+
+# --- "first/second reported serving" label parsing ---------------------------
+
+
+def test_reported_serving_phrases_share_ordinal_key():
+    fields = [
+        _f("Food", "td:nth-child(1)"),
+        _f("Serving size (first reported serving)", "td:nth-child(2)"),
+        _f("Calories (first reported serving)", "td:nth-child(3)"),
+        _f("Serving size (second reported serving)", "td:nth-child(4)"),
+        _f("Calories (second reported serving)", "td:nth-child(5)"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is not None
+    assert [o["label"] for o in group["options"]] == [
+        "First reported serving",
+        "Second reported serving",
+    ]
+    assert [f["label"] for f in new_fields] == ["Food", "Serving size", "Calories"]
+
+
+def test_bare_first_second_ordinals_collapse():
+    fields = [
+        _f("First serving size", ".a"),
+        _f("Second serving size", ".b"),
+        _f("First calories", ".c"),
+        _f("Second calories", ".d"),
+    ]
+    _new, group = detect_column_variants(fields)
+    assert group is not None
+    assert [o["label"] for o in group["options"]] == ["First", "Second"]
+
+
+# --- #2: strict, verified parallel-column selector repair --------------------
+
+
+_REPAIR_HTML = (
+    "<table><tbody>"
+    "<tr><td>Beef</td><td>100 g</td><td>156</td>"
+    "<td>1 portion (170 g)</td><td>265</td></tr>"
+    "<tr><td>Veal</td><td>100 g</td><td>140</td>"
+    "<td>1 cutlet (50 g)</td><td>70</td></tr>"
+    "</tbody></table>"
+)
+
+
+def _broken_serving_fields():
+    return [
+        _f("Food", "td:nth-child(1)"),
+        _f("Serving size (first reported serving)", "td:nth-child(2)"),
+        _f("Calories (first reported serving)", "td:nth-child(3)"),
+        _f("Serving size (second reported serving)", "td:nth-child(2)"),  # dup
+        _f("Calories (second reported serving)", "td:nth-child(5)"),
+    ]
+
+
+def _sel_for(fields, label):
+    return next(f["selector"] for f in fields if f["label"] == label)
+
+
+def test_repair_infers_missing_column_from_sibling_spacing():
+    """serving second wrongly = col 2; calories spacing (3->5, +2) implies
+    serving second = col 4, verified against the HTML."""
+    fields = _broken_serving_fields()
+    repaired = repair_parallel_column_selectors(
+        fields, _REPAIR_HTML, repeated_item_selector="tbody tr"
+    )
+    assert _sel_for(repaired, "Serving size (second reported serving)") == "td:nth-child(4)"
+    # untouched columns stay put
+    assert _sel_for(repaired, "Serving size (first reported serving)") == "td:nth-child(2)"
+    assert _sel_for(repaired, "Calories (second reported serving)") == "td:nth-child(5)"
+
+
+def test_repair_noop_without_donor_family():
+    """Only the broken family present -> no spacing evidence -> no repair."""
+    fields = [
+        _f("Food", "td:nth-child(1)"),
+        _f("Serving size (first reported serving)", "td:nth-child(2)"),
+        _f("Serving size (second reported serving)", "td:nth-child(2)"),
+    ]
+    repaired = repair_parallel_column_selectors(
+        fields, _REPAIR_HTML, repeated_item_selector="tbody tr"
+    )
+    assert repaired is fields  # unchanged
+
+
+def test_repair_noop_when_selector_shape_differs():
+    """Non-table-cell selectors are never repaired (shape mismatch)."""
+    fields = [
+        _f("Serving size (first reported serving)", ".serv"),
+        _f("Serving size (second reported serving)", ".serv"),  # dup, but class
+        _f("Calories (first reported serving)", "td:nth-child(3)"),
+        _f("Calories (second reported serving)", "td:nth-child(5)"),
+    ]
+    repaired = repair_parallel_column_selectors(
+        fields, _REPAIR_HTML, repeated_item_selector="tbody tr"
+    )
+    assert repaired is fields
+
+
+def test_repair_noop_when_candidate_matches_no_values():
+    """If the inferred column doesn't exist in the HTML, keep current behavior."""
+    three_col = (
+        "<table><tbody>"
+        "<tr><td>Beef</td><td>100 g</td><td>156</td></tr>"
+        "</tbody></table>"
+    )
+    fields = _broken_serving_fields()
+    repaired = repair_parallel_column_selectors(
+        fields, three_col, repeated_item_selector="tbody tr"
+    )
+    # col 4 has no value -> verification fails -> duplicate left in place
+    assert _sel_for(repaired, "Serving size (second reported serving)") == "td:nth-child(2)"
+
+
+def test_repair_noop_when_inferred_values_not_distinct():
+    """If the inferred column repeats the duplicate's value, don't accept it."""
+    same_col = (
+        "<table><tbody>"
+        "<tr><td>Beef</td><td>100 g</td><td>156</td><td>100 g</td><td>265</td></tr>"
+        "</tbody></table>"
+    )
+    fields = _broken_serving_fields()
+    repaired = repair_parallel_column_selectors(
+        fields, same_col, repeated_item_selector="tbody tr"
+    )
+    assert _sel_for(repaired, "Serving size (second reported serving)") == "td:nth-child(2)"
+
+
+# --- #3 + acceptance: full detect + reconcile + correct distinct extraction --
+
+
+def test_reported_serving_basis_toggle_is_reconciled_away():
+    html = (
+        "<main>"
+        "<div class='basis'><button class='active'>Per 100 g</button>"
+        "<button>Per serving</button></div>"
+        + _REPAIR_HTML
+        + "<div class='unit'><button class='active'>Metric</button>"
+        "<button>Imperial</button></div></main>"
+    )
+    profile, _new = detect_interaction_profile(
+        html, _broken_serving_fields(), repeated_item_selector="tbody tr"
+    )
+    keys = [g["metadata_key"] for g in profile["groups"]]
+    assert "column_set" in keys
+    assert "serving_basis" not in keys  # ordinal serving set covers this axis
+    assert "unit_system" in keys        # unrelated toggle kept interactive
+
+
+def test_serving_basis_kept_when_static_serving_values_identical():
+    """calories.info reality: the per-serving serving size is NOT in the static
+    DOM (both columns read '100 g'); only calories differ. The serving_basis
+    toggle must stay interactive so the real value is still reachable."""
+    html = (
+        "<main>"
+        "<div class='basis'><button class='active'>Per 100 g</button>"
+        "<button>Per serving</button></div>"
+        "<table><tbody>"
+        # both serving columns are '100 g'; only calories (156/265) differ
+        "<tr><td>Beef</td><td>100 g</td><td>156</td><td>100 g</td><td>265</td></tr>"
+        "</tbody></table></main>"
+    )
+    fields = [
+        _f("Food", "td:nth-child(1)"),
+        _f("Serving size (first reported serving)", "td:nth-child(2)"),
+        _f("Calories (first reported serving)", "td:nth-child(3)"),
+        _f("Serving size (second reported serving)", "td:nth-child(4)"),
+        _f("Calories (second reported serving)", "td:nth-child(5)"),
+    ]
+    profile, _new = detect_interaction_profile(
+        html, fields, repeated_item_selector="tbody tr"
+    )
+    keys = [g["metadata_key"] for g in profile["groups"]]
+    assert "column_set" in keys
+    assert "serving_basis" in keys  # NOT dropped: static serving values identical
+
+
+@pytest.mark.asyncio
+async def test_repaired_columns_extract_distinct_values_browser_free():
+    """The headline fix: after repair the two serving columns extract DIFFERENT
+    values (not both '100 g'), with no browser launched."""
+    profile, new_fields = detect_interaction_profile(
+        _REPAIR_HTML, _broken_serving_fields(), repeated_item_selector="tbody tr"
+    )
+    assert [g["metadata_key"] for g in profile["groups"]] == ["column_set"]
+
+    enabled = {**profile, "enabled": True}
+    project = SimpleNamespace(analysis={"repeated_item_selector": "tbody tr"})
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED,
+        content_config={},
+        fields=new_fields,
+        interaction_profile=enabled,
+    )
+    called = {"browser": False}
+
+    async def _no_browser(_recipes):
+        called["browser"] = True
+        raise AssertionError("no browser for a repaired static column set")
+
+    records, _w = await extract_records_with_variants(
+        base_html=_REPAIR_HTML,
+        source_url="https://example.com",
+        project=project,
+        spec=spec,
+        max_records=50,
+        fetch_variant_htmls=_no_browser,
+    )
+    assert called["browser"] is False
+    # Key by (food, variant) — _REPAIR_HTML has two rows, so a variant-only dict
+    # would collapse them. The point is first != second for the SAME food.
+    serving = {
+        (r.normalized_data.get("Food"), str(r.normalized_data.get("column_set"))):
+        r.normalized_data.get("Serving size")
+        for r in records
+    }
+    assert serving[("Beef", "First reported serving")] == "100 g"
+    assert serving[("Beef", "Second reported serving")] == "1 portion (170 g)"
+    assert serving[("Veal", "Second reported serving")] == "1 cutlet (50 g)"

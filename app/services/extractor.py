@@ -133,6 +133,46 @@ def _select_values(scope: BeautifulSoup | Tag, field: dict[str, Any], source_url
     return [_element_value(element, field_type, source_url) for element in elements], []
 
 
+def sample_selector_values(
+    html: str,
+    *,
+    repeated_item_selector: str | None,
+    selector: str,
+    field_type: str = "string",
+    max_rows: int = 25,
+) -> list[str | None]:
+    """Return the per-row value a CSS selector extracts, exactly as extraction
+    reads it (row-relative scoping + relaxed selectors).
+
+    Used to VERIFY a candidate/repaired selector against fetched HTML before
+    trusting it. Returns ``[]`` when the HTML can't be parsed or the row/selector
+    doesn't apply — the caller treats an empty result as "unverifiable".
+    """
+    if not selector:
+        return []
+    try:
+        soup = BeautifulSoup(html or "", "lxml")
+    except Exception:
+        return []
+    field = {"selector": str(selector), "type": field_type}
+    if repeated_item_selector:
+        try:
+            rows = soup.select(str(repeated_item_selector))[:max_rows]
+        except Exception:
+            return []
+        scoped = dict(field)
+        scoped["selector"] = _relative_selector(
+            str(selector), str(repeated_item_selector)
+        )
+        out: list[str | None] = []
+        for row in rows:
+            values, _warnings = _select_values(row, scoped, "")
+            out.append(next((v for v in values if v not in (None, "")), None))
+        return out
+    values, _warnings = _select_values(soup, field, "")
+    return values[:max_rows]
+
+
 def _extract_from_repeated_containers(
     soup: BeautifulSoup,
     *,

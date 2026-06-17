@@ -508,7 +508,12 @@ async def detect_interactions(
     except FetchError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    profile, new_fields = detect_interaction_profile(fetched.html, spec.fields or [])
+    analysis = project.analysis if isinstance(project.analysis, dict) else {}
+    profile, new_fields = detect_interaction_profile(
+        fetched.html,
+        spec.fields or [],
+        repeated_item_selector=analysis.get("repeated_item_selector"),
+    )
     spec.interaction_profile = profile
     if new_fields is not None:
         # Numbered parallel columns (e.g. "Calories 1/2") were collapsed into
