@@ -68,7 +68,7 @@ cd frontend
 npm.cmd run dev
 ```
 
-Open the frontend at [http://127.0.0.1:5173](http://127.0.0.1:5173).
+Open the frontend at [http://127.0.0.1:5050](http://127.0.0.1:5050).
 
 If `DEBUG=true`, API docs are available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 

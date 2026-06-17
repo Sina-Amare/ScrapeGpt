@@ -28,7 +28,7 @@ alembic upgrade head
 cd frontend; npm install; cd ..
 
 # Run both servers in the background for manual UI testing
-.\dev-start.ps1     # backend 127.0.0.1:8000, frontend 127.0.0.1:5173
+.\dev-start.ps1     # backend 127.0.0.1:8000, frontend 127.0.0.1:5050
 ```
 
 Prerequisites for end‑to‑end (E2E) tests:

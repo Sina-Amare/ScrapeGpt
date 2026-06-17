@@ -1,5 +1,5 @@
 # Kill backend and frontend dev servers started by dev-start.ps1.
-# Also clears anything left on ports 8000 and 5173 as a fallback.
+# Also clears anything left on ports 8000 and 5050 as a fallback.
 
 $root = $PSScriptRoot
 $pidFile = "$root\.dev-pids"
@@ -17,7 +17,7 @@ if (Test-Path $pidFile) {
 }
 
 # Fallback: clear any remaining processes on the dev ports
-Get-NetTCPConnection -LocalPort 8000,5173 -ErrorAction SilentlyContinue |
+Get-NetTCPConnection -LocalPort 8000,5050 -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty OwningProcess -Unique |
     ForEach-Object {
         if ($_ -ne 0) {

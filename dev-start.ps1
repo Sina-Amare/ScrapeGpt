@@ -28,7 +28,7 @@ $frontend = Start-Process `
 "$($backend.Id)`n$($frontend.Id)" | Set-Content "$root\.dev-pids"
 
 Write-Host "Backend  started (PID $($backend.Id))  -> http://127.0.0.1:8000"
-Write-Host "Frontend started (PID $($frontend.Id)) -> http://127.0.0.1:5173"
+Write-Host "Frontend started (PID $($frontend.Id)) -> http://127.0.0.1:5050"
 Write-Host ""
 Write-Host "Backend logs:  .dev-backend.log  (app logs, incl. dev reset codes)"
 Write-Host "Frontend logs: .dev-frontend.log"

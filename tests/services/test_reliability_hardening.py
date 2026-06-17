@@ -1017,7 +1017,8 @@ async def test_execute_project_extraction_does_not_complete_failed_project(
 
 
 def test_cors_origins_includes_vite_dev_origin():
-    """CORS_ORIGINS default includes http://127.0.0.1:5173."""
+    """CORS_ORIGINS default includes the Vite dev origin (5050, and 5173 kept
+    for back-compat)."""
     from app.core.config import Settings
     from cryptography.fernet import Fernet
 
@@ -1026,8 +1027,8 @@ def test_cors_origins_includes_vite_dev_origin():
         _env_file=None,
     )
 
-    assert "http://127.0.0.1:5173" in settings.CORS_ORIGINS
     origins = settings.cors_origins_list
+    assert "http://127.0.0.1:5050" in origins
     assert "http://127.0.0.1:5173" in origins
 
 
