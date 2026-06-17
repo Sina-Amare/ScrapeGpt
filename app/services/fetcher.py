@@ -966,8 +966,16 @@ async def _apply_interactions_async(
     except ImportError:
         pass
     except FetchError as exc:
-        if exc.error_code != "BROWSER_UNAVAILABLE":
+        # Fall through to Playwright Chromium when camoufox is missing OR its
+        # driver crashed. Camoufox's Firefox driver crashes on some pages (e.g.
+        # an uncaught page-level JS error), and Chromium handles those fine — so
+        # a camoufox driver crash must not abandon the whole interaction.
+        if exc.error_code not in ("BROWSER_UNAVAILABLE", "BROWSER_DRIVER_CRASHED"):
             raise
+        logger.info(
+            "fetcher.camoufox_interaction_fallback_playwright",
+            extra={"error_code": exc.error_code},
+        )
     try:
         return await _apply_interactions_playwright(url, recipes, cookies)
     except ImportError as exc:
@@ -1108,9 +1116,15 @@ async def _stealth_browser_fetch(
         logger.info("fetcher.camoufox_success", extra={"url": url})
         return result
     except FetchError as exc:
-        if exc.error_code != "BROWSER_UNAVAILABLE":
+        # Fall through to Chromium when camoufox is missing OR its driver
+        # crashed (its Firefox driver crashes on some pages that Chromium
+        # renders fine). Any other error is a real failure and propagates.
+        if exc.error_code not in ("BROWSER_UNAVAILABLE", "BROWSER_DRIVER_CRASHED"):
             raise
-        logger.info("fetcher.camoufox_unavailable_fallback_playwright", extra={"url": url})
+        logger.info(
+            "fetcher.camoufox_fallback_playwright",
+            extra={"url": url, "error_code": exc.error_code},
+        )
 
     # Fall back to stealth Playwright Chromium
     return await _browser_fetch(url, cookies)

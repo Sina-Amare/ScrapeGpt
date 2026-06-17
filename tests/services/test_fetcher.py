@@ -784,6 +784,74 @@ async def test_browser_fetch_retries_once_on_driver_crash(monkeypatch):
     assert attempts["n"] == 2  # crashed once, retried once, succeeded
 
 
+# ---------------------------------------------------------------------------
+# Camoufox driver crash -> fall through to Playwright Chromium
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_cascade_falls_through_on_camoufox_crash(monkeypatch):
+    """A camoufox DRIVER CRASH must cascade to Chromium (its Firefox driver
+    crashes on some pages Chromium renders fine)."""
+    from unittest.mock import AsyncMock
+    import app.services.fetcher as fx
+
+    chromium_result = FetchResult(
+        html="<html>chromium</html>", content_hash="0" * 64,
+        final_url="https://x", render_mode_used=RenderModeUsed.BROWSER,
+        status_code=200, elapsed_ms=1, fetch_metadata={},
+    )
+    monkeypatch.setattr(
+        fx, "_camoufox_fetch",
+        AsyncMock(side_effect=FetchError("driver died", "BROWSER_DRIVER_CRASHED")),
+    )
+    monkeypatch.setattr(fx, "_browser_fetch", AsyncMock(return_value=chromium_result))
+
+    result = await fx._stealth_browser_fetch("https://x")
+    assert result is chromium_result
+
+
+@pytest.mark.asyncio
+async def test_fetch_cascade_propagates_non_crash_camoufox_error(monkeypatch):
+    """A non-crash camoufox error (e.g. blocked URL) must NOT fall through."""
+    from unittest.mock import AsyncMock
+    import app.services.fetcher as fx
+
+    monkeypatch.setattr(
+        fx, "_camoufox_fetch",
+        AsyncMock(side_effect=FetchError("blocked", "BROWSER_URL_BLOCKED")),
+    )
+    chromium = AsyncMock()
+    monkeypatch.setattr(fx, "_browser_fetch", chromium)
+
+    with pytest.raises(FetchError) as ei:
+        await fx._stealth_browser_fetch("https://x")
+    assert ei.value.error_code == "BROWSER_URL_BLOCKED"
+    chromium.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_interaction_cascade_falls_through_on_camoufox_crash(monkeypatch):
+    """The interaction capture path must also cascade camoufox crash -> Chromium."""
+    from unittest.mock import AsyncMock
+    import app.services.fetcher as fx
+
+    monkeypatch.setattr(
+        fx, "_apply_interactions_camoufox",
+        AsyncMock(side_effect=FetchError("driver died", "BROWSER_DRIVER_CRASHED")),
+    )
+    monkeypatch.setattr(
+        fx, "_apply_interactions_playwright",
+        AsyncMock(return_value={"v": "<html>ok</html>"}),
+    )
+    monkeypatch.setattr(fx, "_should_use_threaded_browser_fetch", lambda: False)
+
+    out = await fx.apply_interactions_and_capture(
+        "https://x", {"v": [{"action": "click", "by": "text", "value": "X"}]}
+    )
+    assert out == {"v": "<html>ok</html>"}
+
+
 @pytest.mark.asyncio
 async def test_auto_falls_back_to_browser_on_binary_static(monkeypatch):
     """Undecodable/garbled static HTML must trigger the stealth cascade in AUTO."""
