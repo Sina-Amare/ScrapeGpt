@@ -105,18 +105,18 @@ All are public **scraping sandboxes** or scrape‑tolerant references. The
 `Accept-Encoding: gzip, deflate, br, zstd`; CDNs can vary it, so verify with the
 script in Tier 2 if a decode case behaves differently.
 
-| # | URL | Shape | Encoding | Good for |
-|---|-----|-------|----------|----------|
-| A | `https://www.calories.info/food/beef-veal` | Single big table | **zstd** | Structured, table fallback, decode |
-| B | `https://books.toscrape.com/` | Listing + pagination + detail | **br** | PAGINATION, DATASET, decode |
-| C | `https://quotes.toscrape.com/` | Listing + pagination + author detail | **br** | PAGINATION, DATASET |
-| D | `https://quotes.toscrape.com/js/` | JS‑rendered listing | br | BROWSER render / sparse fallback |
-| E | `https://www.scrapethissite.com/pages/simple/` | Country cards | **zstd** | Structured, CURRENT_PAGE |
-| F | `https://www.scrapethissite.com/pages/forms/` | Paginated hockey table | zstd | PAGINATION + table |
-| G | `https://webscraper.io/test-sites/e-commerce/allinone` | Product grid | gzip | Structured, DATASET |
-| H | `https://en.wikipedia.org/wiki/List_of_countries_and_dependencies_by_population` | Large reference table | gzip | Structured table, large export |
-| I | `https://news.ycombinator.com/` | Repeated rows, no obvious table | gzip | Repeated‑container vs table |
-| J | `https://en.wikipedia.org/wiki/Web_scraping` | Prose/article | gzip | CONTENT mode |
+| #   | URL                                                                              | Shape                                | Encoding | Good for                           |
+| --- | -------------------------------------------------------------------------------- | ------------------------------------ | -------- | ---------------------------------- |
+| A   | `https://www.calories.info/food/beef-veal`                                       | Single big table                     | **zstd** | Structured, table fallback, decode |
+| B   | `https://books.toscrape.com/`                                                    | Listing + pagination + detail        | **br**   | PAGINATION, DATASET, decode        |
+| C   | `https://quotes.toscrape.com/`                                                   | Listing + pagination + author detail | **br**   | PAGINATION, DATASET                |
+| D   | `https://quotes.toscrape.com/js/`                                                | JS‑rendered listing                  | br       | BROWSER render / sparse fallback   |
+| E   | `https://www.scrapethissite.com/pages/simple/`                                   | Country cards                        | **zstd** | Structured, CURRENT_PAGE           |
+| F   | `https://www.scrapethissite.com/pages/forms/`                                    | Paginated hockey table               | zstd     | PAGINATION + table                 |
+| G   | `https://webscraper.io/test-sites/e-commerce/allinone`                           | Product grid                         | gzip     | Structured, DATASET                |
+| H   | `https://en.wikipedia.org/wiki/List_of_countries_and_dependencies_by_population` | Large reference table                | gzip     | Structured table, large export     |
+| I   | `https://news.ycombinator.com/`                                                  | Repeated rows, no obvious table      | gzip     | Repeated‑container vs table        |
+| J   | `https://en.wikipedia.org/wiki/Web_scraping`                                     | Prose/article                        | gzip     | CONTENT mode                       |
 
 Fallback rule: if one real site is temporarily slow or blocked from your network,
 try the named alternative in the same row or move to the next row. Do not chase
@@ -155,22 +155,22 @@ and diagnose before going further.
 
 One pass each. Don't repeat across many sites — one representative URL per row.
 
-| Case | URL | Steps | Expected |
-|------|-----|-------|----------|
-| Structured / CURRENT_PAGE | E | analyze (table mode) → fields → preview → extract | rows from the single page |
-| Content / RAG mode | J | analyze as **"Content / documents"** → preview → extract | cleaned primary text + selected metadata, not tabular noise |
-| PAGINATION scope | C or F | scope = "Paginated list" → **confirm scope** → frontier preview → extract (limit ~5) | crawls page 1..N; records from multiple pages |
-| COLLECTION scope | `https://www.calories.info/food/beef-veal` | leave scope as suggested (should be **"Related list pages"**, not Paginated) → frontier preview | included URLs are the `/food/*` sibling category pages; AI suggestion is COLLECTION with pattern `/food/*` |
-| COLLECTION one‑click broaden | same | set scope to "This page only" → frontier preview → click **"Crawl N pages (Related list pages)"** in the preview | scope switches to COLLECTION + `/food/*`, re‑previews, sibling pages now included |
-| DATASET scope | B | scope = "Listing + detail pages" → confirm → frontier preview → extract (limit ~10) | listing + per‑item detail pages crawled |
+| Case                                | URL                                        | Steps                                                                                                                                                           | Expected                                                                                                                                                                               |
+| ----------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Structured / CURRENT_PAGE           | E                                          | analyze (table mode) → fields → preview → extract                                                                                                               | rows from the single page                                                                                                                                                              |
+| Content / RAG mode                  | J                                          | analyze as **"Content / documents"** → preview → extract                                                                                                        | cleaned primary text + selected metadata, not tabular noise                                                                                                                            |
+| PAGINATION scope                    | C or F                                     | scope = "Paginated list" → **confirm scope** → frontier preview → extract (limit ~5)                                                                            | crawls page 1..N; records from multiple pages                                                                                                                                          |
+| COLLECTION scope                    | `https://www.calories.info/food/beef-veal` | leave scope as suggested (should be **"Related list pages"**, not Paginated) → frontier preview                                                                 | included URLs are the `/food/*` sibling category pages; AI suggestion is COLLECTION with pattern `/food/*`                                                                             |
+| COLLECTION one‑click broaden        | same                                       | set scope to "This page only" → frontier preview → click **"Crawl N pages (Related list pages)"** in the preview                                                | scope switches to COLLECTION + `/food/*`, re‑previews, sibling pages now included                                                                                                      |
+| DATASET scope                       | B                                          | scope = "Listing + detail pages" → confirm → frontier preview → extract (limit ~10)                                                                             | listing + per‑item detail pages crawled                                                                                                                                                |
 | Page variants (deterministic, auto) | `https://www.calories.info/food/beef-veal` | Variants → **Detect variants** → a `Column set` group appears and the numbered fields (`Calories 1/2`) collapse to `Calories` → enable → Save → Preview/extract | one row per food **per variant** tagged `column_set`; `Variant 1`/`Variant 2` calories differ. No browser needed. You can rename variants and edit each variant's CSS selector inline. |
-| Page variants (interactive) | same | also select Imperial → Save → extract | needs a browser backend; without one, extraction fails with `INTERACTION_BROWSER_REQUIRED` (no silent skip) |
-| Page variants (merged) | same | Variants → enable → check **"Merge variants into one row"** → Save → extract | one row per food with columns `Calories (per 100 g)` and `Calories (per serving)` (no `serving_basis` column); ~46 rows not 92 |
-| FULL_SITE scope | B | scope = "Entire website" → **broad‑scope warning shown** → confirm → frontier preview | many same‑origin URLs included; warning visible |
-| Export CSV | any completed | Results → Export → CSV | opens cleanly, spec field order, source_url last |
-| Export JSON | any completed | Export → JSON | valid JSON array of records |
-| Export XLSX | any completed | Export → XLSX | opens in Excel, styled header row |
-| Paginated results table | H (large) | extract → Results | server‑side paging (50/100/250/500), counts correct |
+| Page variants (interactive)         | same                                       | also select Imperial → Save → extract                                                                                                                           | needs a browser backend; without one, extraction fails with `INTERACTION_BROWSER_REQUIRED` (no silent skip)                                                                            |
+| Page variants (merged)              | same                                       | Variants → enable → check **"Merge variants into one row"** → Save → extract                                                                                    | one row per food with columns `Calories (per 100 g)` and `Calories (per serving)` (no `serving_basis` column); ~46 rows not 92                                                         |
+| FULL_SITE scope                     | B                                          | scope = "Entire website" → **broad‑scope warning shown** → confirm → frontier preview                                                                           | many same‑origin URLs included; warning visible                                                                                                                                        |
+| Export CSV                          | any completed                              | Results → Export → CSV                                                                                                                                          | opens cleanly, spec field order, source_url last                                                                                                                                       |
+| Export JSON                         | any completed                              | Export → JSON                                                                                                                                                   | valid JSON array of records                                                                                                                                                            |
+| Export XLSX                         | any completed                              | Export → XLSX                                                                                                                                                   | opens in Excel, styled header row                                                                                                                                                      |
+| Paginated results table             | H (large)                                  | extract → Results                                                                                                                                               | server‑side paging (50/100/250/500), counts correct                                                                                                                                    |
 
 **Scope confirmation gate:** for any non‑CURRENT_PAGE scope, try **Extract before
 confirming** → must be blocked with `SCOPE_NOT_CONFIRMED` (UI: "Confirm what
@@ -180,16 +180,16 @@ ScrapeGPT should crawl"). Confirm, then extract proceeds.
 
 ## TIER 2 — Pipeline robustness (the hardening)
 
-| Case | URL / How | Expected |
-|------|-----------|----------|
-| **Brotli decode** | B or C (br) | analyzes to clean HTML; **no** "corrupted/binary data" warning; preview finds rows |
-| **Zstd decode** | A or E (zstd) | same — clean analysis, rows found |
-| **gzip decode** | G or H | clean analysis |
-| **Table fallback** (weak AI selectors) | A | even if the AI's container selector is wrong, extraction still returns table rows (the deterministic fallback). Verify via the script below |
-| **Repeated‑container vs table** | I (HN) | rows extracted from repeated structure (no `<table>`) |
-| **JS‑rendered / sparse → browser** | D | with render mode **AUTO** and Playwright/camoufox installed, sparse static HTML triggers the stealth browser and content appears; **without** browser backends, expect a clean `FETCH_HTML_QUALITY_FAILED`, not garbage |
-| **Browser render mode** | D | set render mode **BROWSER**; content extracted via headless browser |
-| **Anti‑bot / Cloudflare** | any CF‑protected site you know | challenge detected → if JS challenge + browser available, retried; interactive Turnstile/CAPTCHA → fails cleanly as `BOT_PROTECTION_BLOCKED` with a guidance message (never silently "0 records"). *Don't pin a fragile CF URL into a permanent test — verify once.* |
+| Case                                   | URL / How                      | Expected                                                                                                                                                                                                                                                             |
+| -------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Brotli decode**                      | B or C (br)                    | analyzes to clean HTML; **no** "corrupted/binary data" warning; preview finds rows                                                                                                                                                                                   |
+| **Zstd decode**                        | A or E (zstd)                  | same — clean analysis, rows found                                                                                                                                                                                                                                    |
+| **gzip decode**                        | G or H                         | clean analysis                                                                                                                                                                                                                                                       |
+| **Table fallback** (weak AI selectors) | A                              | even if the AI's container selector is wrong, extraction still returns table rows (the deterministic fallback). Verify via the script below                                                                                                                          |
+| **Repeated‑container vs table**        | I (HN)                         | rows extracted from repeated structure (no `<table>`)                                                                                                                                                                                                                |
+| **JS‑rendered / sparse → browser**     | D                              | with render mode **AUTO** and Playwright/camoufox installed, sparse static HTML triggers the stealth browser and content appears; **without** browser backends, expect a clean `FETCH_HTML_QUALITY_FAILED`, not garbage                                              |
+| **Browser render mode**                | D                              | set render mode **BROWSER**; content extracted via headless browser                                                                                                                                                                                                  |
+| **Anti‑bot / Cloudflare**              | any CF‑protected site you know | challenge detected → if JS challenge + browser available, retried; interactive Turnstile/CAPTCHA → fails cleanly as `BOT_PROTECTION_BLOCKED` with a guidance message (never silently "0 records"). _Don't pin a fragile CF URL into a permanent test — verify once._ |
 
 Quick scripted proof of **brotli decode** without the UI:
 
@@ -243,43 +243,43 @@ asyncio.run(main())
 
 ---
 
-## TIER 3 — Error & edge cases (must fail *loudly and correctly*)
+## TIER 3 — Error & edge cases (must fail _loudly and correctly_)
 
 These verify the pipeline never "succeeds with nothing." Check the **error_code**
 (visible in the project Overview error + the activity log; use **Show raw debug
 data** for details).
 
-| Case | How to trigger | Expected error_code |
-|------|----------------|---------------------|
-| No provider | remove all providers, then analyze | `NO_PROVIDER_CONFIGURED` |
-| Active‑job limit | start more than `MAX_CONCURRENT_JOBS_PER_USER` (default 3) | `ACTIVE_JOB_LIMIT_REACHED` |
-| SSRF — loopback | analyze `http://127.0.0.1:8000/` | `URL_BLOCKED` (rejected immediately) |
-| SSRF — metadata IP | analyze `http://169.254.169.254/latest/meta-data/` | `URL_BLOCKED` |
-| Non‑HTML | analyze a `*.pdf` URL | `UNSUPPORTED_CONTENT_TYPE` |
-| Dead URL | analyze a known 404 | fetch failure (`FETCH_FAILED`/4xx surfaced), project FAILED |
-| Undecodable page | (covered automatically) a body we can't decode | `PAGE_DECODE_FAILED` — not garbage to the LLM |
-| Zero records | structured extract where selectors match nothing (e.g. set deliberately wrong fields on J) | project FAILED `NO_RECORDS_EXTRACTED`; the page shows under **"page(s) failed"** with reason "Selectors matched no elements", **not** as Extracted |
-| All pages failed | crawl where every page errors/blocks | `ALL_PAGES_FAILED` (or `BOT_PROTECTION_BLOCKED` if all anti‑bot) |
-| No preview | extract before previewing (no `extract_anyway`) | 409 `NO_PREVIEW`; "Extract anyway" offered |
-| Stale preview | change fields after a preview, then extract | 409 `STALE_PREVIEW`; "Extract anyway" offered |
-| **Zero‑record preview (hard gate)** | preview returns 0 rows, then click extract | 409 `ZERO_PREVIEW_RECORDS`; **"Extract anyway" is NOT offered** — only "Adjust fields" |
-| Scope too narrow | Any narrow scope (CURRENT_PAGE, or PAGINATION on a page with no pagination) that links to ≥10 same‑origin pages | frontier preview shows `SCOPE_TOO_NARROW` with a **"Crawl N pages"** button (suggested_mode COLLECTION for sibling lists, DATASET for detail pages) |
-| Cancel | start a crawl, hit Cancel | project → CANCELED; crawl stops |
-| Retry | on a FAILED project, Retry (optionally new provider) | reopens from field setup (analysis kept) or re‑analyzes |
+| Case                                | How to trigger                                                                                                  | Expected error_code                                                                                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No provider                         | remove all providers, then analyze                                                                              | `NO_PROVIDER_CONFIGURED`                                                                                                                            |
+| Active‑job limit                    | start more than `MAX_CONCURRENT_JOBS_PER_USER` (default 3)                                                      | `ACTIVE_JOB_LIMIT_REACHED`                                                                                                                          |
+| SSRF — loopback                     | analyze `http://127.0.0.1:8000/`                                                                                | `URL_BLOCKED` (rejected immediately)                                                                                                                |
+| SSRF — metadata IP                  | analyze `http://169.254.169.254/latest/meta-data/`                                                              | `URL_BLOCKED`                                                                                                                                       |
+| Non‑HTML                            | analyze a `*.pdf` URL                                                                                           | `UNSUPPORTED_CONTENT_TYPE`                                                                                                                          |
+| Dead URL                            | analyze a known 404                                                                                             | fetch failure (`FETCH_FAILED`/4xx surfaced), project FAILED                                                                                         |
+| Undecodable page                    | (covered automatically) a body we can't decode                                                                  | `PAGE_DECODE_FAILED` — not garbage to the LLM                                                                                                       |
+| Zero records                        | structured extract where selectors match nothing (e.g. set deliberately wrong fields on J)                      | project FAILED `NO_RECORDS_EXTRACTED`; the page shows under **"page(s) failed"** with reason "Selectors matched no elements", **not** as Extracted  |
+| All pages failed                    | crawl where every page errors/blocks                                                                            | `ALL_PAGES_FAILED` (or `BOT_PROTECTION_BLOCKED` if all anti‑bot)                                                                                    |
+| No preview                          | extract before previewing (no `extract_anyway`)                                                                 | 409 `NO_PREVIEW`; "Extract anyway" offered                                                                                                          |
+| Stale preview                       | change fields after a preview, then extract                                                                     | 409 `STALE_PREVIEW`; "Extract anyway" offered                                                                                                       |
+| **Zero‑record preview (hard gate)** | preview returns 0 rows, then click extract                                                                      | 409 `ZERO_PREVIEW_RECORDS`; **"Extract anyway" is NOT offered** — only "Adjust fields"                                                              |
+| Scope too narrow                    | Any narrow scope (CURRENT_PAGE, or PAGINATION on a page with no pagination) that links to ≥10 same‑origin pages | frontier preview shows `SCOPE_TOO_NARROW` with a **"Crawl N pages"** button (suggested_mode COLLECTION for sibling lists, DATASET for detail pages) |
+| Cancel                              | start a crawl, hit Cancel                                                                                       | project → CANCELED; crawl stops                                                                                                                     |
+| Retry                               | on a FAILED project, Retry (optionally new provider)                                                            | reopens from field setup (analysis kept) or re‑analyzes                                                                                             |
 
 ---
 
 ## TIER 4 — Auth & security
 
-| Case | Expected |
-|------|----------|
-| Register / login / logout | tokens issued; access token in memory, refresh in localStorage |
-| Token refresh on 401 | expired access token silently refreshes; session continues |
-| Password reset | request code (emailed if SMTP set, else dev‑logged) → confirm → old tokens rejected |
-| Provider key never returned | GET providers never includes key material |
-| Key reveal | requires password re‑confirm; wrong password → 401; success logs `security.key_revealed` |
-| Ownership isolation | access another user's project/provider id → **404** (not 403; existence not revealed) |
-| Rate limits | hammer `/auth/login` or `/providers/{id}/reveal-key` | 429 after the limit (auth 5/min, scrape 10/min) |
+| Case                        | Expected                                                                                 |
+| --------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Register / login / logout   | tokens issued; access token in memory, refresh in localStorage                           |
+| Token refresh on 401        | expired access token silently refreshes; session continues                               |
+| Password reset              | request code (emailed if SMTP set, else dev‑logged) → confirm → old tokens rejected      |
+| Provider key never returned | GET providers never includes key material                                                |
+| Key reveal                  | requires password re‑confirm; wrong password → 401; success logs `security.key_revealed` |
+| Ownership isolation         | access another user's project/provider id → **404** (not 403; existence not revealed)    |
+| Rate limits                 | hammer `/auth/login` or `/providers/{id}/reveal-key`                                     | 429 after the limit (auth 5/min, scrape 10/min) |
 
 ---
 
@@ -287,16 +287,16 @@ data** for details).
 
 Mostly covered by the automated suite; spot‑check live only if you changed these.
 
-| Case | How | Expected |
-|------|-----|----------|
-| Crash recovery | kill the backend mid‑extraction, restart | startup watchdog sweep + periodic sweep fail the stuck project/run after the EXTRACTING timeout; not stuck forever (production needs an external supervisor to restart the process) |
-| Concurrent extract | POST /extract twice quickly (or double‑click Extract) | exactly one run starts; the second returns 409 `EXTRACTION_ALREADY_RUNNING` |
-| Non‑destructive retry | complete a run, edit fields, re‑extract, then force a failure | prior records/exports stay visible; `current_extraction_run_id` only moves when the new run completes |
-| Idempotent records | (real‑DB verifier) | re‑processing a page in a run never duplicates rows; `GET /metrics` shows run/page counters |
-| Lease reaper | (unit‑tested) | FETCHING pages with expired leases reset to PENDING (+ lease_token cleared) within 60s, active projects only |
-| Analysis cache | analyze the same URL twice | 2nd is a cache hit (`analyzer.cache_hit` in logs), faster, no 2nd LLM call |
-| Cache not poisoned | a binary/garbage fetch | analysis is **not** cached (`analyzer.cache_skipped_binary_summary`) |
-| Export cap | extract a large set (H) then export | all rows exported in chunks; warning logged if >10k |
+| Case                  | How                                                           | Expected                                                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Crash recovery        | kill the backend mid‑extraction, restart                      | startup watchdog sweep + periodic sweep fail the stuck project/run after the EXTRACTING timeout; not stuck forever (production needs an external supervisor to restart the process) |
+| Concurrent extract    | POST /extract twice quickly (or double‑click Extract)         | exactly one run starts; the second returns 409 `EXTRACTION_ALREADY_RUNNING`                                                                                                         |
+| Non‑destructive retry | complete a run, edit fields, re‑extract, then force a failure | prior records/exports stay visible; `current_extraction_run_id` only moves when the new run completes                                                                               |
+| Idempotent records    | (real‑DB verifier)                                            | re‑processing a page in a run never duplicates rows; `GET /metrics` shows run/page counters                                                                                         |
+| Lease reaper          | (unit‑tested)                                                 | FETCHING pages with expired leases reset to PENDING (+ lease_token cleared) within 60s, active projects only                                                                        |
+| Analysis cache        | analyze the same URL twice                                    | 2nd is a cache hit (`analyzer.cache_hit` in logs), faster, no 2nd LLM call                                                                                                          |
+| Cache not poisoned    | a binary/garbage fetch                                        | analysis is **not** cached (`analyzer.cache_skipped_binary_summary`)                                                                                                                |
+| Export cap            | extract a large set (H) then export                           | all rows exported in chunks; warning logged if >10k                                                                                                                                 |
 
 Watch structured logs while testing (`.dev-backend.log` or stdout): look for
 `http.request`, `analyzer.*`, `extraction.*`, `frontier.*`, `fetcher.*`,
@@ -306,15 +306,15 @@ Watch structured logs while testing (`.dev-backend.log` or stdout): look for
 
 ## TIER 6 — Frontend UX
 
-| Case | Expected |
-|------|----------|
-| Provider dropdown (long model name) | trigger truncates inside the box; menu not clipped; scrolls; flips up near viewport bottom |
-| Select an option | selects and closes (does **not** instantly reopen) |
-| Scope selector | shows AI‑suggested mode; broad modes (DATASET/FULL_SITE) require explicit confirm; status AI_SUGGESTED → USER_CONFIRMED |
-| Frontier preview panel | included/excluded URL samples with reason codes; warnings (e.g. scope mismatch) shown |
-| Trust summary panel | after extraction: per‑field success rates, missing rates, overall good/needs_review/risky |
-| Provider‑test toast across logout | start a provider test, log out immediately → **no** stale toast on the login screen; log back in → previous result doesn't reappear |
-| Activity log | dashboard + project events show analysis/extraction milestones |
+| Case                                | Expected                                                                                                                            |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Provider dropdown (long model name) | trigger truncates inside the box; menu not clipped; scrolls; flips up near viewport bottom                                          |
+| Select an option                    | selects and closes (does **not** instantly reopen)                                                                                  |
+| Scope selector                      | shows AI‑suggested mode; broad modes (DATASET/FULL_SITE) require explicit confirm; status AI_SUGGESTED → USER_CONFIRMED             |
+| Frontier preview panel              | included/excluded URL samples with reason codes; warnings (e.g. scope mismatch) shown                                               |
+| Trust summary panel                 | after extraction: per‑field success rates, missing rates, overall good/needs_review/risky                                           |
+| Provider‑test toast across logout   | start a provider test, log out immediately → **no** stale toast on the login screen; log back in → previous result doesn't reappear |
+| Activity log                        | dashboard + project events show analysis/extraction milestones                                                                      |
 
 ---
 
@@ -354,8 +354,9 @@ sites — the matrix above is representative by design.
   do not expect robots‑based blocking.
 - Interactive CAPTCHA / Turnstile solving is a **permanent non‑goal** — detection +
   clean failure is the correct behavior, not a bypass.
-- Concurrent crawl workers are not implemented (single sequential executor);
-  `CRAWL_CONCURRENCY` is reserved.
+- Concurrent crawl workers are implemented. `CRAWL_CONCURRENCY` controls how
+  many worker sessions drain a run's page queue in parallel; leasing and
+  idempotent inserts are the safety backstops.
 - The legacy **`/scrape`** page still exists but is not the primary flow; test it
   only if you specifically rely on it.
 
