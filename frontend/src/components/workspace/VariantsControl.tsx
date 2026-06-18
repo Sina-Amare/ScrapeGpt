@@ -46,10 +46,34 @@ export function VariantsControl({
   const combos = countCombinations(groups);
   const usesBrowser = variantsUseBrowser(groups);
 
+  // Data axes (static columns / url params) are real, separable data and safe to
+  // capture. A purely *interactive* group is a DISPLAY toggle (e.g.
+  // Metric/Imperial) that re-renders the whole page — combining it with a static
+  // column axis misaligns the cells and multiplies rows into garbage (the
+  // "per 100 g × Imperial" problem). Keep those out of the simple chips; they
+  // stay in Advanced, off by default (the backend also auto-deselects them).
+  const dataGroups = groups
+    .map((group, index) => ({ group, index }))
+    .filter(({ group }) => group.execution !== "interactive");
+  const hasDisplayToggles = groups.some((g) => g.execution === "interactive");
+  const displayToggleSelected = groups.some(
+    (g) => g.execution === "interactive" && g.options.some((o) => o.selected)
+  );
+
   function toggleOption(gi: number, oi: number) {
     const nextGroups = groups.map((g, i) =>
       i === gi
         ? { ...g, options: g.options.map((o, j) => (j === oi ? { ...o, selected: !o.selected } : o)) }
+        : g
+    );
+    const enabled = nextGroups.some((g) => g.options.some((o) => o.selected));
+    onSave({ ...normalized, enabled, groups: nextGroups });
+  }
+
+  function clearDisplayToggles() {
+    const nextGroups = groups.map((g) =>
+      g.execution === "interactive"
+        ? { ...g, options: g.options.map((o) => ({ ...o, selected: false })) }
         : g
     );
     const enabled = nextGroups.some((g) => g.options.some((o) => o.selected));
@@ -85,37 +109,77 @@ export function VariantsControl({
       {detectError ? <Alert tone="danger">{detectError}</Alert> : null}
       {saveError ? <Alert tone="danger">{saveError}</Alert> : null}
 
-      <div className="grid gap-3">
-        {groups.map((group, gi) => {
-          const copy = variantCopy(group);
-          return (
-            <div key={gi} className="rounded-lg border border-line bg-surface p-4">
-              <p className="text-sm font-semibold text-ink">{copy.title}</p>
-              {copy.help ? <p className="mt-0.5 text-xs text-muted">{copy.help}</p> : null}
-              <div className="mt-3 flex flex-wrap gap-2">
-                {group.options.map((option, oi) => (
-                  <button
-                    key={oi}
-                    type="button"
-                    disabled={disabled || saving}
-                    onClick={() => toggleOption(gi, oi)}
-                    className={[
-                      "rounded-full border px-3 py-1.5 text-sm font-medium transition",
-                      option.selected
-                        ? "border-teal bg-teal-soft/50 text-ink"
-                        : "border-line bg-surface text-muted hover:border-teal/40",
-                      disabled || saving ? "cursor-not-allowed opacity-60" : "cursor-pointer",
-                    ].join(" ")}
-                    aria-pressed={option.selected}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+      {dataGroups.length > 0 ? (
+        <div className="grid gap-3">
+          {dataGroups.map(({ group, index: gi }) => {
+            const copy = variantCopy(group);
+            return (
+              <div key={gi} className="rounded-lg border border-line bg-surface p-4">
+                <p className="text-sm font-semibold text-ink">{copy.title}</p>
+                {copy.help ? <p className="mt-0.5 text-xs text-muted">{copy.help}</p> : null}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {group.options.map((option, oi) => (
+                    <button
+                      key={oi}
+                      type="button"
+                      disabled={disabled || saving}
+                      onClick={() => toggleOption(gi, oi)}
+                      className={[
+                        "rounded-full border px-3 py-1.5 text-sm font-medium transition",
+                        option.selected
+                          ? "border-teal bg-teal-soft/50 text-ink"
+                          : "border-line bg-surface text-muted hover:border-teal/40",
+                        disabled || saving ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+                      ].join(" ")}
+                      aria-pressed={option.selected}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-sm text-muted">
+          This page's only variations are display toggles — they're optional and stay off by default
+          (see Advanced).
+        </p>
+      )}
+
+      {hasDisplayToggles ? (
+        <Alert tone="warning">
+          <div className="flex flex-col gap-2">
+            <span>
+              This page also has a <strong>display toggle</strong> (e.g. Metric/Imperial). It re-renders
+              the whole page rather than adding new data, so it multiplies your rows and usually doesn't
+              line up with the columns above —{" "}
+              {displayToggleSelected ? (
+                <>
+                  and it's <strong>currently on</strong>, which is likely producing mismatched rows.
+                </>
+              ) : (
+                <>
+                  it's left <strong>off</strong> by default. Turn it on under <strong>Advanced</strong>{" "}
+                  only if you specifically want every unit combination.
+                </>
+              )}
+            </span>
+            {displayToggleSelected ? (
+              <div>
+                <Button
+                  variant="secondary"
+                  disabled={disabled || saving}
+                  onClick={clearDisplayToggles}
+                >
+                  {saving ? "Saving…" : "Turn off display toggles"}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </Alert>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="secondary" onClick={onDetect} disabled={disabled || detecting}>
