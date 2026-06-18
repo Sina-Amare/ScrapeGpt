@@ -104,7 +104,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   });
 
   return (
-    <div className="min-h-screen bg-porcelain text-ink">
+    <div className="min-h-screen bg-porcelain text-ink dark:bg-transparent">
       <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-line bg-surface px-4 py-5 md:block">
         <div className="mb-8 flex items-center gap-3 px-2">
           <div className="grid h-10 w-10 place-items-center rounded-md bg-teal text-white">

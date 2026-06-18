@@ -8,18 +8,22 @@
   --c-body:       #F5F6FC;
   --c-grid:       rgba(34, 114, 255, 0.03);
   --c-teal-soft:  #EEF4FF;
+  --shadow-panel: 0 4px 24px -1px rgba(15, 23, 42, 0.07),
+                  0 2px 6px -1px rgba(15, 23, 42, 0.04);
 }
 
 /* ─── Design tokens: dark mode ───────────────────────────────────────────── */
 html.dark {
-  --c-surface:    #1C1C22;
-  --c-porcelain:  #131317;
-  --c-ink:        #EDEDF0;
-  --c-muted:      #7E808C;
-  --c-line:       #25252D;
-  --c-body:       #0E0E13;
-  --c-grid:       rgba(255, 255, 255, 0.018);
-  --c-teal-soft:  #111A38;
+  --c-surface:    #1F2430;
+  --c-porcelain:  #171B24;
+  --c-ink:        #F4F7FB;
+  --c-muted:      #A4AFBF;
+  --c-line:       #343B4A;
+  --c-body:       #11141C;
+  --c-grid:       rgba(125, 154, 214, 0.035);
+  --c-teal-soft:  rgba(34, 114, 255, 0.16);
+  --shadow-panel: 0 14px 30px -24px rgba(0, 0, 0, 0.78),
+                  0 1px 0 rgba(255, 255, 255, 0.035) inset;
 }
 
 @font-face {
@@ -80,9 +84,25 @@ body {
   animation: grid-drift 80s linear infinite;
 }
 
+html.dark body {
+  background:
+    radial-gradient(circle at 18% -8%, rgba(34, 114, 255, 0.08), transparent 30rem),
+    linear-gradient(var(--c-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--c-grid) 1px, transparent 1px),
+    var(--c-body);
+  background-size: auto, 32px 32px, 32px 32px, auto;
+  animation: none;
+}
+
 @keyframes grid-drift {
   0%   { background-position: 0 0, 0 0; }
   100% { background-position: 32px 32px, 32px 32px; }
+}
+
+@keyframes extract-progress-indeterminate {
+  0%   { transform: translateX(-120%); }
+  50%  { transform: translateX(150%); }
+  100% { transform: translateX(320%); }
 }
 
 button,
@@ -100,6 +120,78 @@ select {
   box-shadow: 0 8px 32px -4px rgba(34, 114, 255, 0.13),
               0 4px 12px -2px rgba(34, 114, 255, 0.07);
   transform: translateY(-1px);
+}
+
+html.dark .card-hover:hover {
+  box-shadow: 0 14px 34px -26px rgba(0, 0, 0, 0.82),
+              0 0 0 1px rgba(34, 114, 255, 0.13);
+}
+
+html.dark ::selection {
+  background: rgba(34, 114, 255, 0.34);
+  color: var(--c-ink);
+}
+
+html.dark * {
+  scrollbar-color: #485266 var(--c-porcelain);
+}
+
+html.dark *::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+html.dark *::-webkit-scrollbar-track {
+  background: var(--c-porcelain);
+}
+
+html.dark *::-webkit-scrollbar-thumb {
+  background: #485266;
+  border: 3px solid var(--c-porcelain);
+  border-radius: 9999px;
+}
+
+html.dark *::-webkit-scrollbar-thumb:hover {
+  background: #5B6680;
+}
+
+html.dark .hover\:bg-red-50:hover {
+  background-color: rgba(185, 28, 28, 0.16) !important;
+}
+
+html.dark .bg-red-50 {
+  background-color: rgba(185, 28, 28, 0.13) !important;
+}
+
+html.dark .border-red-100,
+html.dark .border-red-200 {
+  border-color: rgba(248, 113, 113, 0.28) !important;
+}
+
+html.dark .text-red-600,
+html.dark .text-red-700 {
+  color: #FCA5A5 !important;
+}
+
+html.dark .bg-green-50 {
+  background-color: rgba(21, 128, 61, 0.16) !important;
+}
+
+html.dark .border-green-100,
+html.dark .border-green-200 {
+  border-color: rgba(74, 222, 128, 0.28) !important;
+}
+
+html.dark .text-green-700 {
+  color: #86EFAC !important;
+}
+
+html.dark .bg-amber-50 {
+  background-color: rgba(180, 83, 9, 0.16) !important;
+}
+
+html.dark .border-amber-200 {
+  border-color: rgba(251, 191, 36, 0.28) !important;
 }
 
 /* ─── Auth page dark dot grid ─────────────────────────────────────────────── */

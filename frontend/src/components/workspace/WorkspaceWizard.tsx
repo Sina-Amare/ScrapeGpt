@@ -162,6 +162,7 @@ export function WorkspaceWizard({ project }: { project: ProjectResponse }) {
         <StepRail
           steps={RAIL_STEPS}
           currentIndex={currentIndex}
+          completedThroughIndex={ws.isCompleted ? RAIL_STEPS.length - 1 : undefined}
           locked={ws.isActive}
           onStepClick={(index) => goTo(RAIL_ORDER[index])}
         />

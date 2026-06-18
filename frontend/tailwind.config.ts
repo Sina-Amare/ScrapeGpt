@@ -11,6 +11,7 @@ export default {
         ink: "var(--c-ink)",
         muted: "var(--c-muted)",
         line: "var(--c-line)",
+        body: "var(--c-body)",
         // Brand accent — electric blue. Components use "teal" class names (historical alias).
         teal: {
           DEFAULT: "#2272FF",
@@ -24,7 +25,7 @@ export default {
         danger: "#B91C1C",
       },
       boxShadow: {
-        panel: "0 4px 24px -1px rgba(15, 23, 42, 0.07), 0 2px 6px -1px rgba(15, 23, 42, 0.04)",
+        panel: "var(--shadow-panel)",
       },
       fontFamily: {
         sans: ["Geist", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "sans-serif"],

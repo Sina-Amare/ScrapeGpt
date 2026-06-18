@@ -1,6 +1,7 @@
 import { Info } from "lucide-react";
 import { motion } from "motion/react";
 import { ChangeEvent, ReactNode, useMemo } from "react";
+import { buildColumns } from "../../../lib/recordColumns";
 import type { FieldSpec } from "../../../types";
 import { Alert } from "../../ui/Alert";
 import { Input } from "../../ui/Input";
@@ -62,11 +63,17 @@ function asString(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function RecordsTable({ rows }: { rows: Record<string, unknown>[] }) {
-  const columns = useMemo(
-    () => Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 12),
-    [rows]
-  );
+export function RecordsTable({
+  rows,
+  specFields,
+}: {
+  rows: Record<string, unknown>[];
+  specFields?: FieldSpec[] | null;
+}) {
+  const columns = useMemo(() => {
+    const pageColumns = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+    return buildColumns(specFields, pageColumns).slice(0, 12);
+  }, [rows, specFields]);
   if (!rows.length) {
     return (
       <p className="rounded-lg border border-line bg-porcelain p-6 text-center text-sm text-muted">

@@ -12,18 +12,25 @@ export type RailStep = { key: string; label: string };
 export function StepRail({
   steps,
   currentIndex,
+  completedThroughIndex,
   onStepClick,
   locked,
 }: {
   steps: RailStep[];
   currentIndex: number;
+  completedThroughIndex?: number;
   onStepClick?: (index: number) => void;
   locked?: boolean;
 }) {
   return (
     <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
       {steps.map((step, i) => {
-        const status = i < currentIndex ? "done" : i === currentIndex ? "active" : "upcoming";
+        const status =
+          i < currentIndex || (completedThroughIndex != null && i <= completedThroughIndex)
+            ? "done"
+            : i === currentIndex
+            ? "active"
+            : "upcoming";
         const clickable = !locked && !!onStepClick && i <= currentIndex && status !== "active";
         const isLast = i === steps.length - 1;
         return (
@@ -67,7 +74,13 @@ export function StepRail({
               </span>
             </button>
             {!isLast ? (
-              <span className={`mx-1 h-px w-5 shrink-0 ${i < currentIndex ? "bg-teal" : "bg-line"}`} />
+              <span
+                className={`mx-1 h-px w-5 shrink-0 ${
+                  i < currentIndex || (completedThroughIndex != null && i < completedThroughIndex)
+                    ? "bg-teal"
+                    : "bg-line"
+                }`}
+              />
             ) : null}
           </div>
         );

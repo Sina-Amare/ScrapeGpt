@@ -102,8 +102,8 @@ export function VariantsControl({
   return (
     <div className="grid gap-4">
       <p className="text-sm text-muted">
-        This page shows the same items more than one way. Pick which versions to capture — each
-        becomes its own labelled rows. The defaults below already work; adjust only if you want to.
+        Each selected version becomes its own labelled rows. The defaults below already work; adjust
+        only if you want to.
       </p>
 
       {detectError ? <Alert tone="danger">{detectError}</Alert> : null}

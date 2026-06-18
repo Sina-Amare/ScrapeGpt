@@ -55,7 +55,7 @@ export function StepFields({
             </span>
             <span className="mt-0.5 block pl-6 text-sm text-muted">
               {hasVariantGroups
-                ? "This page shows items more than one way — pick which versions to capture."
+                ? "Detected optional page versions. Defaults are already set."
                 : "Capture per-100g/per-serving, metric/imperial and similar toggles as labelled rows."}
             </span>
           </span>

@@ -120,7 +120,7 @@ export function StepCheck({
 
       {project.preview ? (
         <div className="grid gap-4">
-          <RecordsTable rows={project.preview.sample_records} />
+          <RecordsTable rows={project.preview.sample_records} specFields={project.spec?.fields} />
           {project.preview.warnings.length ? (
             <Alert tone="warning">
               <ul className="list-disc space-y-1 pl-4 text-sm">
