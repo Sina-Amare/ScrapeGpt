@@ -128,8 +128,36 @@ async def test_interactive_variant_uses_browser_html():
     assert units == {"Metric", "Imperial"}
 
 
+def _mixed_profile():
+    """calories.info shape: static per-variant columns AND a browser toggle."""
+    return {
+        "enabled": True,
+        "max_variant_combinations": 12,
+        "groups": [
+            {
+                "label": "Serving basis",
+                "metadata_key": "serving_basis",
+                "execution": "mixed",
+                "options": [
+                    {"id": "per_100g", "label": "Show per 100 g", "selected": True,
+                     "field_selectors": {"Calories": "td:nth-of-type(3)"},
+                     "recipe": []},
+                    {"id": "per_serving", "label": "Show per serving",
+                     "selected": True,
+                     "field_selectors": {"Calories": "td:nth-of-type(5)"},
+                     "recipe": [{"action": "click", "by": "text",
+                                 "value": "Show per serving"}]},
+                ],
+            }
+        ],
+    }
+
+
 @pytest.mark.asyncio
-async def test_interactive_without_browser_raises_browser_required():
+async def test_interactive_without_browser_degrades_not_fails():
+    """A pure-interactive variant with no browser must NOT sink the extraction.
+    The no-browser baseline still extracts; the browser-only option (no static
+    columns to fall back to) is skipped with a warning instead of a hard fail."""
     profile = {
         "enabled": True,
         "max_variant_combinations": 12,
@@ -146,12 +174,37 @@ async def test_interactive_without_browser_raises_browser_required():
             }
         ],
     }
-    with pytest.raises(InteractionError) as exc:
-        await extract_records_with_variants(
-            base_html=TABLE_HTML, source_url="u", project=_project(),
-            spec=_spec(profile), max_records=100, fetch_variant_htmls=None,
+    records, warnings = await extract_records_with_variants(
+        base_html=TABLE_HTML, source_url="u", project=_project(),
+        spec=_spec(profile), max_records=100, fetch_variant_htmls=None,
+    )
+    # Baseline survives (real static data); the browser-only variant is skipped.
+    assert {r.normalized_data["unit_system"] for r in records} == {"Metric"}
+    assert any("Imperial" in w and "browser" in w.lower() for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_mixed_variant_degrades_to_static_columns_on_browser_crash():
+    """Headline robustness case: a 'mixed' page (static columns + browser toggle)
+    whose browser CRASHES must still deliver the static per-variant data (both
+    calorie columns) plus a visible warning — never a hard failure."""
+
+    async def boom(_recipes):
+        raise RuntimeError("Connection closed while reading from the driver")
+
+    records, warnings = await extract_records_with_variants(
+        base_html=TABLE_HTML, source_url="u", project=_project(),
+        spec=_spec(_mixed_profile()), max_records=100, fetch_variant_htmls=boom,
+    )
+    by_variant: dict[str, list] = {}
+    for r in records:
+        by_variant.setdefault(r.normalized_data["serving_basis"], []).append(
+            r.normalized_data["Calories"]
         )
-    assert exc.value.code == "INTERACTION_BROWSER_REQUIRED"
+    # The per-serving variant read its STATIC column even though the browser died.
+    assert sorted(by_variant["Show per 100 g"]) == [156, 242]
+    assert sorted(by_variant["Show per serving"]) == [265, 411]
+    assert any("static values" in w for w in warnings)
 
 
 @pytest.mark.asyncio

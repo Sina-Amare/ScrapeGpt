@@ -244,13 +244,19 @@ async def test_extract_returns_409_when_scope_not_confirmed(async_client, app, m
     """POST /extract returns 409 with actionable error_code when scope is unconfirmed."""
     project = _project(state=ProjectState.PREVIEW_READY)
     spec = _spec(crawl_scope={"mode": "PAGINATION", "status": "AI_SUGGESTED"})
+    spec.created_at = datetime.now(timezone.utc)
 
     async def fake_latest_spec(db, project_id):
         return spec
 
     async def fake_latest_preview(db, project_id):
         m = MagicMock()
-        m.sample_records = [{"id": 1}]  # non-empty to pass ZERO_PREVIEW_RECORDS gate
+        m.spec_id = spec.id
+        m.created_at = datetime.now(timezone.utc)
+        m.sample_records = [{"Title": "Example"}]  # non-empty to pass ZERO_PREVIEW_RECORDS gate
+        m.quality_summary = {
+            "selected_field_count": len(spec.fields),
+        }
         return m
 
     async def fake_start_extraction(db, project, spec, *, allow_unconfirmed=False):

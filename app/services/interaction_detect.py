@@ -448,6 +448,143 @@ def _field_label(field: dict[str, Any]) -> str:
     return str(field.get("user_label") or field.get("label") or field.get("name") or "")
 
 
+# Lenient table-cell column index: matches ``:nth-child(N)`` / ``:nth-of-type(N)``
+# anywhere in a selector (so ``td.MuiTableCell-body:nth-child(4)`` parses, not
+# only the bare ``td:nth-child(4)`` shape).
+_NTH_INDEX_RE = re.compile(r":nth-(?:child|of-type)\(\s*(\d+)\s*\)")
+
+
+def _cell_column_index(selector: str) -> int | None:
+    m = _NTH_INDEX_RE.search(selector or "")
+    return int(m.group(1)) if m else None
+
+
+def _collapse_to_base_fields(
+    fields: list[dict[str, Any]],
+    families: dict[str, list[tuple[str, dict[str, Any]]]],
+    options: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse each variant family to a single base field (keeping the first
+    member's spot), defaulting its selector to the first variant; drop the rest."""
+    member_ids = {id(fld) for members in families.values() for _, fld in members}
+    done: set[str] = set()
+    new_fields: list[dict[str, Any]] = []
+    for f in fields:
+        if id(f) not in member_ids:
+            new_fields.append(dict(f))
+            continue
+        base, _key, _opt, _strong = _split_variant_qualifier(_field_label(f))
+        if base in families and base not in done:
+            done.add(base)
+            collapsed = dict(f)
+            collapsed["name"] = base
+            collapsed["label"] = base
+            collapsed["user_label"] = base
+            collapsed["selector"] = options[0]["field_selectors"].get(
+                base, f.get("selector")
+            )
+            collapsed["selected"] = True
+            new_fields.append(collapsed)
+        # subsequent members of the same family are dropped
+    return new_fields
+
+
+def _position_aligned_column_variants(
+    fields: list[dict[str, Any]],
+    families: dict[str, list[tuple[str, dict[str, Any]]]],
+    key_label: dict[str, str],
+    key_strong: dict[str, bool],
+) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    """Fallback when families disagree on label keys: align parallel columns by
+    SELECTOR POSITION instead of by label.
+
+    Analyzers name parallel columns inconsistently between fields — e.g. one
+    family is ``Serving (100g)`` / ``Serving (alternative)`` while another is
+    ``Calories (per 100g)`` / ``Calories (alternative serving)``. The label keys
+    then differ, so the strict same-key-set path can't collapse them, even though
+    the columns are clearly parallel by position. This aligns the i-th column of
+    each family into variant i.
+
+    Vocabulary-INDEPENDENT: alignment is purely structural, so it works for ANY
+    variant axis (units, serving basis, currency, years, A/B, …), not only the
+    recognized per/metric/imperial/ordinal words. Conservative guards so
+    independent columns are never mis-aligned:
+      * >= 2 corroborating families (repeated base names), all with the SAME
+        member count (>= 2) — several distinct bases repeating in lockstep is a
+        strong signal of genuine parallel variants, whatever the qualifier words;
+      * every member has a parseable table-cell index, distinct within a family;
+      * variant blocks are positionally SEPARABLE — variant i's columns all
+        precede variant i+1's (so grouped single-base pairs like
+        ``Price,Price,Stock,Stock`` are rejected; only interleaved parallel
+        columns like ``Serving,Calories,Serving,Calories`` align).
+    """
+    counts = {len(m) for m in families.values()}
+    if len(counts) != 1:
+        return None
+    n = next(iter(counts))
+    if n < 2 or len(families) < 2:
+        return None
+
+    ordered: dict[str, list[tuple[int, str, dict[str, Any]]]] = {}
+    for base, members in families.items():
+        rows: list[tuple[int, str, dict[str, Any]]] = []
+        for key, fld in members:
+            idx = _cell_column_index(str(fld.get("selector") or ""))
+            if idx is None:
+                return None
+            rows.append((idx, key, fld))
+        rows.sort(key=lambda t: t[0])
+        if len({i for i, _, _ in rows}) != len(rows):
+            return None  # duplicate columns within a family -> ambiguous
+        ordered[base] = rows
+
+    variant_cols: list[set[int]] = [set() for _ in range(n)]
+    for rows in ordered.values():
+        for i, (idx, _k, _f) in enumerate(rows):
+            variant_cols[i].add(idx)
+    for i in range(n - 1):
+        if max(variant_cols[i]) >= min(variant_cols[i + 1]):
+            return None  # not contiguous/separable -> not parallel variants
+
+    options: list[dict[str, Any]] = []
+    for i in range(n):
+        field_selectors: dict[str, str] = {}
+        keys_here: list[str] = []
+        for rows in ordered.values():
+            _idx, key, fld = rows[i]
+            sel = fld.get("selector")
+            if sel:
+                field_selectors[str(_base_of(fld))] = str(sel)
+            keys_here.append(key)
+        if not field_selectors:
+            return None
+        strong_key = next((k for k in keys_here if key_strong.get(k, False)), None)
+        chosen = strong_key or keys_here[0]
+        label = key_label.get(chosen, chosen)
+        options.append({
+            "id": sanitize_metadata_key(label) or f"set_{i}",
+            "label": label,
+            "selected": True,
+            "field_selectors": field_selectors,
+            "recipe": [],
+        })
+    if len(options) < 2:
+        return None
+
+    group = {
+        "label": "Column set",
+        "metadata_key": "column_set",
+        "execution": EXECUTION_DETERMINISTIC,
+        "options": options,
+    }
+    return _collapse_to_base_fields(fields, families, options), group
+
+
+def _base_of(field: dict[str, Any]) -> str:
+    base, _key, _opt, _strong = _split_variant_qualifier(_field_label(field))
+    return base
+
+
 def detect_column_variants(
     fields: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -494,7 +631,12 @@ def detect_column_variants(
     # otherwise the columns are not parallel and we must not collapse them.
     key_sets = {frozenset(k for k, _ in members) for members in families.values()}
     if len(key_sets) != 1:
-        return fields, None
+        # Labels disagree across families (the analyzer named the parallel
+        # columns inconsistently). Fall back to aligning columns by SELECTOR
+        # POSITION instead of giving up — robust to analyzer label drift.
+        return _position_aligned_column_variants(
+            fields, families, key_label, key_strong
+        ) or (fields, None)
     shared_keys = next(iter(key_sets))
     keys = [k for k in key_order if k in shared_keys]
     if len(keys) < 2:
@@ -534,29 +676,7 @@ def detect_column_variants(
         "options": options,
     }
 
-    # Collapse each family to one base field (keeping the first member's spot),
-    # defaulting its selector to the first variant; drop the other members.
-    member_ids = {id(fld) for members in families.values() for _, fld in members}
-    done: set[str] = set()
-    new_fields: list[dict[str, Any]] = []
-    for f in fields:
-        if id(f) not in member_ids:
-            new_fields.append(dict(f))
-            continue
-        base, _key, _opt, _strong = _split_variant_qualifier(_field_label(f))
-        if base in families and base not in done:
-            done.add(base)
-            collapsed = dict(f)
-            collapsed["name"] = base
-            collapsed["label"] = base
-            collapsed["user_label"] = base
-            collapsed["selector"] = options[0]["field_selectors"].get(
-                base, f.get("selector")
-            )
-            collapsed["selected"] = True
-            new_fields.append(collapsed)
-        # subsequent members of the same family are dropped
-    return new_fields, group
+    return _collapse_to_base_fields(fields, families, options), group
 
 
 # --- #5: bounded reconciliation of redundant interactive groups -------------

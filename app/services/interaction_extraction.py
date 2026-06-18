@@ -192,16 +192,31 @@ async def extract_records_with_variants(
     combos = selected_combinations(profile)  # may raise VARIANT_LIMIT_EXCEEDED
 
     # Interactive combos -> one browser snapshot each (batched in one session).
+    # ROBUSTNESS: a missing or crashing browser must NOT sink the whole
+    # extraction. If we cannot get a browser snapshot we fall back, per combo, to
+    # the static base HTML (so any deterministic per-field selectors still yield
+    # the page's static values) and warn loudly. Only combos that have NO static
+    # selectors to fall back to are skipped. The static data is always delivered;
+    # browser-only values degrade with a visible warning rather than a hard fail.
     interactive = [c for c in combos if c.requires_browser]
     variant_html: dict[str, str] = {}
+    browser_unavailable_reason: str | None = None
     if interactive:
         if fetch_variant_htmls is None:
-            raise InteractionError(
-                "This page needs a browser to capture the selected interactive "
-                "variant(s), but none is available.",
-                code="INTERACTION_BROWSER_REQUIRED",
-            )
-        variant_html = await fetch_variant_htmls({c.id: c.recipe for c in interactive})
+            browser_unavailable_reason = "no browser backend is available"
+        else:
+            try:
+                variant_html = await fetch_variant_htmls(
+                    {c.id: c.recipe for c in interactive}
+                )
+            except InteractionError as exc:
+                browser_unavailable_reason = str(exc) or "the browser backend was unavailable"
+            except Exception as exc:  # noqa: BLE001 — any browser failure degrades, not fails
+                browser_unavailable_reason = f"the browser backend failed ({exc})"
+                logger.warning(
+                    "interaction.browser_degraded",
+                    extra={"source_url": source_url, "error": str(exc)},
+                )
 
     # URL-parameter combos -> static fetch of the variant URL (no browser).
     url_combos = [c for c in combos if c.requires_url_fetch and not c.requires_browser]
@@ -219,17 +234,25 @@ async def extract_records_with_variants(
     base_fields = spec.fields or []
     per_combo: list[tuple[VariantCombination, list[ExtractedPayload]]] = []
     zero_variants: list[str] = []
+    degraded_combos: list[str] = []  # browser missing -> static fallback used
+    skipped_combos: list[str] = []   # browser missing AND no static fallback
     nonzero = 0
 
     for combo in combos:
         if combo.requires_browser:
             html = variant_html.get(combo.id)
             if not html:
-                raise InteractionError(
-                    f"No browser snapshot was produced for variant "
-                    f"'{combo.label}'.",
-                    code="INTERACTION_BROWSER_REQUIRED",
-                )
+                # No browser snapshot — degrade gracefully, never hard-fail.
+                if combo.field_selectors:
+                    # Deterministic per-field selectors still read this combo's
+                    # static columns from the base HTML.
+                    html = base_html
+                    degraded_combos.append(combo.label)
+                else:
+                    # Nothing to read without a browser -> skip this combo.
+                    skipped_combos.append(combo.label)
+                    per_combo.append((combo, []))
+                    continue
         elif combo.requires_url_fetch:
             html = url_html.get(combo.id) or ""
         else:
@@ -244,6 +267,23 @@ async def extract_records_with_variants(
         per_combo.append((combo, records))
 
     warnings: list[str] = []
+
+    if degraded_combos:
+        reason = browser_unavailable_reason or "the browser backend was unavailable"
+        warnings.append(
+            "Browser-rendered values could not be captured for variant(s): "
+            + ", ".join(dict.fromkeys(degraded_combos))
+            + f" — {reason}. Showed the page's static values instead; any value "
+            "that only appears after a click/toggle may be missing or stale. "
+            "Install or fix the browser backend to capture them."
+        )
+    if skipped_combos:
+        reason = browser_unavailable_reason or "the browser backend was unavailable"
+        warnings.append(
+            "Skipped browser-only variant(s) with no static fallback: "
+            + ", ".join(dict.fromkeys(skipped_combos))
+            + f" — {reason}."
+        )
 
     merged_payloads = (
         _merge_variant_records(per_combo, _field_keys(spec))

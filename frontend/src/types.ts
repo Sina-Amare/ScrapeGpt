@@ -356,7 +356,14 @@ export type RecordPageResponse = {
 // Interaction profile (page variants: per-100g/serving, metric/imperial, …)
 // ---------------------------------------------------------------------------
 
-export type InteractionExecution = "deterministic" | "interactive" | "url_param";
+// "mixed" = a merged axis: the option carries BOTH a browser recipe AND per-field
+// selector overrides, used when a page exposes the same axis as static columns
+// (some fields) and a browser toggle (the only source of the rest).
+export type InteractionExecution =
+  | "deterministic"
+  | "interactive"
+  | "url_param"
+  | "mixed";
 
 export type InteractionStep = {
   action: "click" | "select" | "wait";

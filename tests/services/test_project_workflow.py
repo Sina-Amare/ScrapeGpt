@@ -3,10 +3,23 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import inspect
 
-from app.models.job import ExtractionMode, ExtractionSpec, FrontierPreview, Project, ProjectState, RenderMode, WorkflowMode
+from app.models.job import (
+    ExtractionMode,
+    ExtractionSpec,
+    FrontierPreview,
+    PreviewResult,
+    Project,
+    ProjectState,
+    RenderMode,
+    WorkflowMode,
+)
 from app.services.extractor import extract_records_from_html
 from app.services.extraction_spec_service import default_spec_from_analysis, selected_field_count
-from app.services.project_preview import build_preview_payload
+from app.services.project_preview import (
+    _spec_preview_fingerprint,
+    build_preview_payload,
+    preview_matches_spec,
+)
 from app.services.url_normalizer import discover_same_site_links, normalize_url
 
 
@@ -148,6 +161,83 @@ def test_preview_uses_selected_fields_only_and_reports_missing_samples():
     assert preview["missing_fields"][0]["name"] == "price"
     assert preview["quality_summary"]["selected_field_count"] == 2
     assert selected_field_count(spec) == 2
+
+
+def test_preview_fingerprint_matches_exact_spec_shape():
+    spec = ExtractionSpec(
+        id=1,
+        project_id=1,
+        mode=ExtractionMode.STRUCTURED,
+        fields=[{"name": "Title", "selector": "h1", "selected": True}],
+        content_config={},
+        url_patterns=[],
+        page_limit=50,
+        export_format="csv",
+        created_at=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    preview = PreviewResult(
+        id=1,
+        project_id=1,
+        spec_id=1,
+        sample_records=[{"Title": "A"}],
+        warnings=[],
+        missing_fields=[],
+        quality_summary={
+            "selected_field_count": 1,
+            "spec_fingerprint": _spec_preview_fingerprint(spec),
+        },
+        created_at=datetime(2026, 1, 1, 10, 1, tzinfo=timezone.utc),
+    )
+
+    assert preview_matches_spec(preview, spec)
+
+    spec.fields = [
+        {"name": "Title", "selector": "h1", "selected": True},
+        {"name": "Price", "selector": ".price", "selected": True},
+    ]
+    assert not preview_matches_spec(preview, spec)
+
+
+def test_legacy_preview_shape_mismatch_is_stale_even_when_timestamp_looks_fresh():
+    """Regression for re-detecting variants: the spec row can be changed from
+    flat duplicate columns to collapsed fields while an older PreviewResult still
+    points at the same spec id. That preview must not validate extraction."""
+    spec = ExtractionSpec(
+        id=1,
+        project_id=1,
+        mode=ExtractionMode.STRUCTURED,
+        fields=[
+            {"name": "Food Name", "label": "Food Name", "selected": True},
+            {"name": "Serving Size", "label": "Serving Size", "selected": True},
+            {"name": "Calories", "label": "Calories", "selected": True},
+        ],
+        content_config={},
+        url_patterns=[],
+        page_limit=50,
+        export_format="csv",
+        created_at=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, 10, 1, tzinfo=timezone.utc),
+    )
+    preview = PreviewResult(
+        id=1,
+        project_id=1,
+        spec_id=1,
+        sample_records=[
+            {
+                "Food Name": "Beef",
+                "Serving Size (per 100 g)": "100 g",
+                "Calories (per 100 g)": 156,
+                "Serving Size (alternate column)": "100 g",
+                "Calories (alternate column)": 265,
+            }
+        ],
+        warnings=[],
+        missing_fields=[],
+        quality_summary={"selected_field_count": 5},
+        created_at=datetime(2026, 1, 1, 10, 2, tzinfo=timezone.utc),
+    )
+
+    assert not preview_matches_spec(preview, spec)
 
 
 def test_selector_extractor_groups_records_by_repeated_container():

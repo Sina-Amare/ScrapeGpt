@@ -49,9 +49,12 @@ export function InteractionsPanel({
   );
   const overCap = combos > MAX_COMBOS;
   const hasGroups = draft.groups.length > 0;
+  // A selected option needs a browser whenever it carries a click/select recipe —
+  // true for "interactive" groups and for "mixed" groups (static columns + a
+  // browser toggle on the same axis).
   const interactiveSelected = draft.groups.some(
     (g) =>
-      g.execution === "interactive" &&
+      (g.execution === "interactive" || g.execution === "mixed") &&
       g.options.some((o) => o.selected && o.recipe.length > 0)
   );
 
@@ -145,12 +148,14 @@ export function InteractionsPanel({
             <div key={gi} className="rounded-lg border border-line bg-surface p-4">
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1 rounded-full bg-porcelain px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted">
-                  {group.execution === "interactive" ? (
+                  {group.execution === "interactive" || group.execution === "mixed" ? (
                     <MousePointerClick className="h-3 w-3" />
                   ) : (
                     <Layers className="h-3 w-3" />
                   )}
-                  {group.execution}
+                  {group.execution === "mixed"
+                    ? "columns + browser"
+                    : group.execution}
                 </span>
                 <span className="text-sm font-semibold text-ink">{group.label}</span>
               </div>
@@ -257,8 +262,9 @@ export function InteractionsPanel({
           ) : null}
           {draft.enabled && interactiveSelected ? (
             <Alert tone="info">
-              Interactive variants need a browser render backend. If none is
-              available, extraction will stop with INTERACTION_BROWSER_REQUIRED.
+              Some selected variants render in a browser. If no browser backend
+              is available, those values fall back to the page's static data and
+              a warning is shown — extraction won't fail.
             </Alert>
           ) : null}
         </>

@@ -88,10 +88,13 @@ async def test_transient_fetch_error_reverts_and_keeps_code(monkeypatch):
 async def test_interaction_error_hard_fails_with_precise_code(monkeypatch):
     project = _project(ProjectState.ANALYSIS_READY)
 
+    # A genuine spec/config problem (too many variant combinations) is the
+    # remaining hard-fail path — a missing/crashing browser now degrades
+    # gracefully inside extraction rather than raising InteractionError.
     async def boom(*_a, **_k):
         raise InteractionError(
-            "A browser backend is required to preview the variants.",
-            code="INTERACTION_BROWSER_REQUIRED",
+            "Selected variants produce too many combinations.",
+            code="INTERACTION_VARIANT_LIMIT_EXCEEDED",
         )
 
     monkeypatch.setattr(project_preview, "build_selector_preview_payload", boom)
@@ -100,7 +103,7 @@ async def test_interaction_error_hard_fails_with_precise_code(monkeypatch):
         await project_preview.create_preview(_FakeDB(), project, _spec())
 
     assert project.state == ProjectState.FAILED  # genuine spec problem
-    assert project.error_code == "INTERACTION_BROWSER_REQUIRED"
+    assert project.error_code == "INTERACTION_VARIANT_LIMIT_EXCEEDED"
 
 
 def test_previewing_revert_transitions_are_legal():

@@ -426,7 +426,22 @@ export function ProjectDetailPage() {
   // Detect page-variant controls and persist a draft interaction_profile.
   const detectInteractionsMutation = useMutation({
     mutationFn: () => api.detectInteractions(projectId),
-    onSuccess: () => {
+    onSuccess: (spec) => {
+      setFields(spec.fields);
+      setPageLimit(spec.page_limit);
+      setExportFormat(spec.export_format);
+      queryClient.setQueryData<ProjectResponse | undefined>(
+        ["project", projectId],
+        (current) =>
+          current
+            ? {
+                ...current,
+                spec,
+                preview_stale: current.preview ? true : current.preview_stale,
+                selected_field_count: spec.fields.filter((field) => field.selected).length,
+              }
+            : current
+      );
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     }
   });
@@ -435,7 +450,18 @@ export function ProjectDetailPage() {
   const saveInteractionsMutation = useMutation({
     mutationFn: (next: InteractionProfile) =>
       api.updateProjectSpec(projectId, { interaction_profile: next }),
-    onSuccess: () => {
+    onSuccess: (spec) => {
+      queryClient.setQueryData<ProjectResponse | undefined>(
+        ["project", projectId],
+        (current) =>
+          current
+            ? {
+                ...current,
+                spec,
+                preview_stale: current.preview ? true : current.preview_stale,
+              }
+            : current
+      );
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     }
   });
@@ -929,7 +955,10 @@ export function ProjectDetailPage() {
                 <h2 className="font-bold text-ink">Fields</h2>
                 <p className="text-sm text-muted">Choose the data to extract and adjust field labels.</p>
               </div>
-              <Button onClick={() => saveSpec.mutate()} disabled={!fields.length || saveSpec.isPending}>
+              <Button
+                onClick={() => saveSpec.mutate()}
+                disabled={!fields.length || saveSpec.isPending || detectInteractionsMutation.isPending}
+              >
                 <Save className="h-4 w-4" />
                 {saveSpec.isPending ? "Saving..." : "Save fields"}
               </Button>
@@ -963,11 +992,26 @@ export function ProjectDetailPage() {
                 <h2 className="font-bold text-ink">Sample preview <span className="text-xs font-normal text-muted">(optional)</span></h2>
                 <p className="text-sm text-muted">Runs the extraction on one page so you can verify field values before the full run.</p>
               </div>
-              <Button onClick={() => previewMutation.mutate()} disabled={!project.spec || previewMutation.isPending}>
+              <Button
+                onClick={() => previewMutation.mutate()}
+                disabled={
+                  !project.spec ||
+                  previewMutation.isPending ||
+                  detectInteractionsMutation.isPending ||
+                  saveInteractionsMutation.isPending
+                }
+              >
                 <Check className="h-4 w-4" />
                 {previewMutation.isPending ? "Preparing..." : "Preview data"}
               </Button>
             </div>
+            {project.preview_stale ? (
+              <div className="mb-4">
+                <Alert tone="warning">
+                  This preview is from an older field or variant setup. Run Preview data again before trusting these sample rows.
+                </Alert>
+              </div>
+            ) : null}
             {previewMutation.error
               ? (() => {
                   const code = apiErrorCode(previewMutation.error);

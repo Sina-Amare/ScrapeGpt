@@ -87,7 +87,7 @@ from app.services.project_extraction import (
     list_records,
     start_project_extraction,
 )
-from app.services.project_preview import create_preview, latest_preview
+from app.services.project_preview import create_preview, latest_preview, preview_matches_spec
 from app.services.project_retry import RetryError, retry_failed_project
 from app.services.project_status import confidence_label, detected_type, product_status_for
 
@@ -257,13 +257,7 @@ async def _project_response(db: AsyncSession, project: Project) -> ProjectRespon
     frontier_preview = await latest_frontier_preview(db, project.id)
     status_info = product_status_for(project)
     last_activity = project.updated_at or project.created_at
-    # Compute preview_stale: spec was updated after the last preview ran.
-    preview_stale = False
-    if spec is not None and preview is not None:
-        spec_updated = spec.updated_at or spec.created_at
-        preview_created = preview.created_at
-        if spec_updated is not None and preview_created is not None:
-            preview_stale = spec_updated > preview_created
+    preview_stale = spec is not None and preview is not None and not preview_matches_spec(preview, spec)
     return ProjectResponse(
         id=project.id,
         url=project.url,
@@ -514,6 +508,29 @@ async def detect_interactions(
         spec.fields or [],
         repeated_item_selector=analysis.get("repeated_item_selector"),
     )
+    # Auto-enable when detection found real parallel-column structure (a
+    # deterministic or mixed group). Those carry the page's actual data, so the
+    # user almost always wants them — and the preview/extract would otherwise
+    # show only the default column, which reads like missing data (the recurring
+    # "it only shows per-100 g" confusion). Graceful degradation means an enabled
+    # browser variant can never hard-fail.
+    #
+    # BUT auto-SELECT only the primary data axis. Leave purely-interactive
+    # toggles (e.g. a Metric/Imperial *display* switch that re-renders the whole
+    # table) DESELECTED so they don't cross-multiply the output into meaningless
+    # combinations like "per 100 g × Imperial" — the user opts into those
+    # explicitly. The deterministic/mixed columns are the high-confidence data;
+    # interactive toggles are secondary and often just display preferences.
+    groups = profile.get("groups") or []
+    auto_enabled = any(
+        g.get("execution") in ("deterministic", "mixed") for g in groups
+    )
+    if auto_enabled:
+        profile["enabled"] = True
+        for g in groups:
+            if g.get("execution") not in ("deterministic", "mixed"):
+                for opt in g.get("options") or []:
+                    opt["selected"] = False
     spec.interaction_profile = profile
     if new_fields is not None:
         # Numbered parallel columns (e.g. "Calories 1/2") were collapsed into
@@ -527,6 +544,7 @@ async def detect_interactions(
             "project_id": project.id,
             "group_count": len(profile.get("groups") or []),
             "collapsed_fields": new_fields is not None,
+            "auto_enabled": auto_enabled,
         },
     )
     return _spec_response(spec)  # type: ignore[return-value]
@@ -640,16 +658,10 @@ async def extract_project(
     preview = await latest_preview(db, project.id)
     extract_anyway = bool(payload.extract_anyway) if payload else False
 
-    # Is the latest preview stale relative to the current spec?
-    preview_is_stale = False
-    if preview is not None:
-        spec_updated = spec.updated_at or spec.created_at
-        preview_created = preview.created_at
-        preview_is_stale = bool(
-            spec_updated is not None
-            and preview_created is not None
-            and spec_updated > preview_created
-        )
+    # Is the latest preview stale relative to the current spec? Use a content
+    # fingerprint when present, with legacy shape/timestamp fallbacks, so an old
+    # preview cannot validate a changed spec row.
+    preview_is_stale = preview is not None and not preview_matches_spec(preview, spec)
 
     # Soft gates (bypassable with extract_anyway): no preview, or a stale one.
     if preview is None and not extract_anyway:

@@ -186,7 +186,7 @@ class CrawlScope(BaseModel):
         return self
 
 
-VALID_INTERACTION_EXECUTIONS = ("deterministic", "interactive", "url_param")
+VALID_INTERACTION_EXECUTIONS = ("deterministic", "interactive", "url_param", "mixed")
 VALID_INTERACTION_STEP_ACTIONS = ("click", "select", "wait")
 VALID_INTERACTION_STEP_BY = ("selector", "text")
 MAX_INTERACTION_COMBINATIONS = 12

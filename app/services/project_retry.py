@@ -11,7 +11,7 @@ from app.models.provider_config import ProviderConfig
 from app.models.user import User
 from app.services.extraction_spec_service import latest_spec
 from app.services.job_admission import resolve_provider_for_user
-from app.services.project_preview import latest_preview
+from app.services.project_preview import latest_preview, preview_matches_spec
 
 logger = logging.getLogger(__name__)
 
@@ -60,19 +60,10 @@ async def retry_failed_project(
         spec = await latest_spec(db, project.id)
         preview = await latest_preview(db, project.id)
 
-        # Only return to PREVIEW_READY if the saved preview matches the current
-        # spec and was created after the spec was last updated (not stale).
-        spec_updated = getattr(spec, "updated_at", None) or getattr(spec, "created_at", None)
-        preview_created = getattr(preview, "created_at", None)
-
-        if (
-            preview
-            and spec
-            and preview.spec_id == spec.id
-            and spec_updated is not None
-            and preview_created is not None
-            and spec_updated <= preview_created
-        ):
+        # Only return to PREVIEW_READY if the saved preview validates the exact
+        # current spec shape. A content fingerprint catches legacy/direct JSON
+        # spec edits that do not reliably move updated_at.
+        if preview_matches_spec(preview, spec):
             project.transition_to(ProjectState.PREVIEW_READY)
         else:
             project.transition_to(ProjectState.ANALYSIS_READY)

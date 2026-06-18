@@ -371,6 +371,69 @@ def test_mismatched_qualifier_families_do_not_collapse():
     assert new_fields == fields
 
 
+def test_position_aligned_collapse_with_inconsistent_labels():
+    """Headline robustness: the analyzer named the two families inconsistently
+    ('(100g)/(alternative)' vs '(per 100g)/(alternative serving)') so the label
+    keys don't match — but the columns are clearly parallel by SELECTOR POSITION
+    (2,3 then 4,5). Position alignment collapses them anyway. This is the #154
+    failure mode (a re-analysis of the same calories.info page)."""
+    fields = [
+        _f("Food", "td:nth-child(1) a p"),
+        _f("Serving (100g)", "td:nth-child(2)"),
+        _f("Calories (per 100g)", "td:nth-child(3)"),
+        _f("Serving (alternative)", "td:nth-child(4)"),
+        _f("Calories (alternative serving)", "td:nth-child(5)"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is not None
+    assert group["execution"] == "deterministic"
+    assert [f["label"] for f in new_fields] == ["Food", "Serving", "Calories"]
+    v1, v2 = group["options"]
+    # Variant 1 reads columns 2/3, variant 2 reads columns 4/5 (by position).
+    assert v1["field_selectors"]["Calories"] == "td:nth-child(3)"
+    assert v2["field_selectors"]["Calories"] == "td:nth-child(5)"
+    assert v1["field_selectors"]["Serving"] == "td:nth-child(2)"
+    assert v2["field_selectors"]["Serving"] == "td:nth-child(4)"
+    assert all(o["recipe"] == [] for o in group["options"])
+
+
+def test_position_alignment_rejects_grouped_nonparallel_columns():
+    """Safety: when each base's columns are ADJACENT (grouped: Width 2,3 then
+    Depth 4,5) the bases are independent, not parallel variants. The
+    separability guard must reject them even though a strong key is present."""
+    fields = [
+        _f("Width (metric)", "td:nth-child(2)"),
+        _f("Width (alt)", "td:nth-child(3)"),
+        _f("Depth (imperial)", "td:nth-child(4)"),
+        _f("Depth (other)", "td:nth-child(5)"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is None
+    assert new_fields == fields
+
+
+def test_position_alignment_is_vocabulary_independent():
+    """Generality: parallel columns align by POSITION even when the qualifier
+    words are arbitrary (no recognized metric/serving/ordinal token). The
+    structural signal — >=2 repeated bases, interleaved, separable — is enough,
+    so the mechanism works for ANY variant axis (currency, years, A/B, …), not
+    just calories.info's serving basis."""
+    fields = [
+        _f("Price (wholesale)", "td:nth-child(2)"),
+        _f("Stock (wholesale)", "td:nth-child(3)"),
+        _f("Price (clearance)", "td:nth-child(4)"),
+        _f("Stock (overstock)", "td:nth-child(5)"),
+    ]
+    new_fields, group = detect_column_variants(fields)
+    assert group is not None
+    assert [f["label"] for f in new_fields] == ["Price", "Stock"]
+    v1, v2 = group["options"]
+    assert v1["field_selectors"]["Price"] == "td:nth-child(2)"
+    assert v1["field_selectors"]["Stock"] == "td:nth-child(3)"
+    assert v2["field_selectors"]["Price"] == "td:nth-child(4)"
+    assert v2["field_selectors"]["Stock"] == "td:nth-child(5)"
+
+
 def test_single_qualified_family_member_does_not_collapse():
     """A lone qualified field (no sibling with another key) is left alone."""
     fields = [_f("Food", ".f"), _f("Calories (per serving)", ".c")]

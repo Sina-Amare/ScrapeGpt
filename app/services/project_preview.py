@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from typing import Any
 
@@ -27,6 +29,75 @@ logger = logging.getLogger(__name__)
 
 def _selected_fields(spec: ExtractionSpec) -> list[dict[str, Any]]:
     return [field for field in spec.fields or [] if field.get("selected")]
+
+
+def _field_key(field: dict[str, Any]) -> str:
+    return str(field.get("user_label") or field.get("label") or field.get("name") or "field")
+
+
+def _spec_preview_fingerprint(spec: ExtractionSpec) -> str:
+    """Stable fingerprint for the parts of a spec that affect preview/extract.
+
+    Timestamps are not enough because some legacy or direct JSON mutations can
+    leave an old PreviewResult attached to a changed spec row. The fingerprint
+    lets the API say "this preview validates this exact spec shape".
+    """
+    payload = {
+        "mode": spec.mode.value if hasattr(spec.mode, "value") else str(spec.mode),
+        "fields": spec.fields or [],
+        "content_config": spec.content_config or {},
+        "url_patterns": spec.url_patterns or [],
+        "page_limit": spec.page_limit,
+        "crawl_scope": spec.crawl_scope or {},
+        "interaction_profile": getattr(spec, "interaction_profile", None) or {},
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _legacy_preview_shape_matches_spec(preview: PreviewResult, spec: ExtractionSpec) -> bool:
+    """Best-effort guard for previews created before fingerprints existed."""
+    selected_keys = [_field_key(field) for field in _selected_fields(spec)]
+    summary = preview.quality_summary or {}
+    selected_count = summary.get("selected_field_count")
+    if selected_count is not None:
+        try:
+            if int(selected_count) != len(selected_keys):
+                return False
+        except (TypeError, ValueError):
+            return False
+
+    samples = preview.sample_records or []
+    if samples and selected_keys:
+        seen_keys = {
+            key
+            for sample in samples
+            if isinstance(sample, dict)
+            for key in sample.keys()
+        }
+        if not set(selected_keys).issubset(seen_keys):
+            return False
+    return True
+
+
+def preview_matches_spec(preview: PreviewResult | None, spec: ExtractionSpec | None) -> bool:
+    """Whether *preview* can be trusted as validation for the current *spec*."""
+    if preview is None or spec is None:
+        return False
+    if preview.spec_id != spec.id:
+        return False
+
+    summary = preview.quality_summary or {}
+    actual_fingerprint = summary.get("spec_fingerprint")
+    if actual_fingerprint:
+        return actual_fingerprint == _spec_preview_fingerprint(spec)
+
+    spec_updated = spec.updated_at or spec.created_at
+    preview_created = preview.created_at
+    if spec_updated is None or preview_created is None or spec_updated > preview_created:
+        return False
+    return _legacy_preview_shape_matches_spec(preview, spec)
 
 
 def build_sample_records(project: Project, spec: ExtractionSpec, max_records: int = 5) -> list[dict[str, Any]]:
@@ -211,6 +282,7 @@ async def build_selector_preview_payload(
             "source": "selector_preview",
             "final_url": fetched.final_url,
             "render_mode_used": fetched.render_mode_used.value,
+            "spec_fingerprint": _spec_preview_fingerprint(spec),
         },
     }
 
