@@ -113,18 +113,19 @@ def test_apply_field_overrides_only_touches_matching_field():
 
 def test_metadata_columns_order():
     cols = metadata_columns(_profile())
-    assert cols[0] == META_VARIANT_ID
-    assert cols[1] == META_VARIANT_LABEL
-    assert cols[2:] == ["serving_basis", "unit_system"]
+    # Only the per-axis columns are exported — no generic id/label clutter.
+    assert cols == ["serving_basis", "unit_system"]
 
 
 def test_tag_record_metadata():
     combo = selected_combinations(_profile())[0]
     tagged = tag_record_metadata({"Food": "beef", "source_url": "u"}, combo)
     assert tagged["Food"] == "beef"
-    assert tagged[META_VARIANT_ID] == combo.id
-    assert tagged[META_VARIANT_LABEL] == combo.label
     assert tagged["serving_basis"] == combo.metadata["serving_basis"]
+    # the generic variant id/label are intentionally NOT added (kept out of
+    # exports; the per-axis columns identify the variant).
+    assert META_VARIANT_ID not in tagged
+    assert META_VARIANT_LABEL not in tagged
 
 
 def test_mixed_group_carries_both_recipe_and_field_selectors():

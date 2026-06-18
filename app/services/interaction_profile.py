@@ -250,8 +250,15 @@ def apply_field_overrides(
 
 
 def metadata_columns(profile: dict[str, Any] | None) -> list[str]:
-    """Ordered metadata column names a variant export carries (group order)."""
-    cols: list[str] = [META_VARIANT_ID, META_VARIANT_LABEL]
+    """Ordered variant metadata columns an export carries (group order).
+
+    Only the per-axis columns (e.g. ``serving_basis``, ``unit_system``) are
+    exported — they identify the variant in a human-meaningful, named way. The
+    generic ``interaction_variant_id`` / ``interaction_variant_label`` are
+    intentionally NOT exported: they duplicated the per-axis columns and only
+    cluttered the output files.
+    """
+    cols: list[str] = []
     if not isinstance(profile, dict):
         return cols
     for group in _selected_groups(profile):
@@ -264,10 +271,11 @@ def metadata_columns(profile: dict[str, Any] | None) -> list[str]:
 def tag_record_metadata(
     record: dict[str, Any], combo: VariantCombination
 ) -> dict[str, Any]:
-    """Return ``record`` augmented with this combo's metadata columns."""
+    """Return ``record`` augmented with this combo's per-axis variant columns
+    (e.g. ``serving_basis``). The generic interaction_variant_id/label are
+    deliberately omitted to keep exported files clean — the per-axis columns
+    already identify the variant without redundancy."""
     enriched = dict(record)
-    enriched[META_VARIANT_ID] = combo.id
-    enriched[META_VARIANT_LABEL] = combo.label
     for key, value in combo.metadata.items():
         enriched[key] = value
     return enriched

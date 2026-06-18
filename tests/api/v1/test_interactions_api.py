@@ -373,10 +373,12 @@ def test_spec_field_order_appends_variant_metadata_when_enabled():
     )
     order = projects._spec_field_order(spec)
     assert order[:2] == ["Food", "Calories"]
-    assert "interaction_variant_id" in order
+    # only the per-axis metadata column is exported (no generic id/label)
     assert "serving_basis" in order
+    assert "interaction_variant_id" not in order
+    assert "interaction_variant_label" not in order
     # spec fields come before metadata columns
-    assert order.index("Calories") < order.index("interaction_variant_id")
+    assert order.index("Calories") < order.index("serving_basis")
 
 
 def test_spec_field_order_ignores_disabled_profile():

@@ -152,7 +152,7 @@ async def test_merge_falls_back_to_row_per_variant_on_nonunique_key():
     )
     # 2 rows x 2 variants, NOT merged.
     assert len(records) == 4
-    assert all("interaction_variant_id" in r.normalized_data for r in records)
+    assert all("serving_basis" in r.normalized_data for r in records)
     assert any("safely" in w for w in warnings)
 
 
@@ -193,7 +193,7 @@ async def test_merge_falls_back_for_interactive_variants():
         spec=spec, max_records=100, fetch_variant_htmls=fake_fetch,
     )
     assert any("safely" in w for w in warnings)
-    assert all("interaction_variant_id" in r.normalized_data for r in records)
+    assert all("unit_system" in r.normalized_data for r in records)
 
 
 @pytest.mark.asyncio
