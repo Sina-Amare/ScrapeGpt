@@ -474,6 +474,7 @@ export type ProjectResponse = ProjectListItem & {
   frontier_preview: FrontierPreviewResponse | null;
   extraction_quality: ExtractionQuality | null;
   preview_stale: boolean;
+  current_extraction_run_id: number | null;
   progress: ExtractionProgress;
   created_at: string;
   updated_at: string | null;
