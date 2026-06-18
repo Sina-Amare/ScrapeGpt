@@ -50,7 +50,6 @@ class RenderMode(str, enum.Enum):
 class CrawlPageState(str, enum.Enum):
     PENDING = "PENDING"
     FETCHING = "FETCHING"
-    FETCHED = "FETCHED"
     EXTRACTED = "EXTRACTED"
     BLOCKED = "BLOCKED"
     FAILED = "FAILED"
