@@ -14,6 +14,7 @@ from app.models.job import (
 )
 from app.services.crawl_scope import (
     REASON_CURRENT_PAGE_SCOPE,
+    REASON_DATASET_PATTERN_MATCH,
     REASON_EXCLUDED_DIFFERENT_ORIGIN,
     REASON_EXCLUDED_SCOPE_MODE,
     REASON_FULL_SITE_SAME_ORIGIN,
@@ -23,6 +24,7 @@ from app.services.crawl_scope import (
     default_crawl_scope,
     derive_include_patterns_from_links,
     discover_links_for_scope,
+    dominant_path_template,
     normalize_crawl_scope,
     scope_max_depth,
     scope_max_pages,
@@ -364,6 +366,69 @@ def test_derive_dataset_only_from_detail_link_evidence():
         analysis={"detail_link_selector": "div.item a"},
     )
     assert out == ["/item/*"]
+
+
+def test_dominant_path_template_preserves_segment_depth():
+    """Detail links that share a segment count yield a precise template glob —
+    the varying segment becomes ``*`` and constant segments (incl. a literal
+    leaf like ``index.html``) stay literal, so the template can't also match a
+    deeper nav/category path."""
+    urls = [
+        "https://x.com/catalogue/a-slug_1000/index.html",
+        "https://x.com/catalogue/b-slug_999/index.html",
+        "https://x.com/catalogue/c-slug_998/index.html",
+    ]
+    assert dominant_path_template(urls) == ("/catalogue/*/index.html", 3)
+    # Single-segment detail links still collapse to /item/* (regression with
+    # the prior first-segment behaviour).
+    flat = ["https://x.com/item/1", "https://x.com/item/2", "https://x.com/item/3"]
+    assert dominant_path_template(flat) == ("/item/*", 3)
+
+
+def test_derive_dataset_uses_segment_template_not_broad_prefix():
+    """Regression for the live DATASET bug: detail links nested under a shared
+    prefix (``/catalogue/<slug>/index.html``) must derive the precise
+    ``/catalogue/*/index.html`` template, NOT the broad ``/catalogue/*`` that
+    would also swallow ``/catalogue/category/...`` nav pages."""
+    scope = {"mode": "DATASET", "include_patterns": [], "link_rules": []}
+    html = (
+        '<article class="pod"><a href="/catalogue/a_1/index.html">a</a></article>'
+        '<article class="pod"><a href="/catalogue/b_2/index.html">b</a></article>'
+        '<article class="pod"><a href="/catalogue/c_3/index.html">c</a></article>'
+        '<a href="/catalogue/category/books/travel/index.html">cat</a>'
+    )
+    out = derive_include_patterns_from_links(
+        scope, html=html, seed_url="https://x.com/",
+        analysis={"detail_link_selector": "article.pod a"},
+    )
+    assert out == ["/catalogue/*/index.html"]
+
+
+def test_dataset_segment_template_excludes_deeper_category_paths():
+    """The derived detail template, matched segment-aware, includes the detail
+    pages but excludes deeper category/nav pages that a plain ``*`` glob (which
+    crosses ``/``) would wrongly include — the root cause of the crawl being
+    flooded by category links."""
+    html = (
+        '<a href="/catalogue/a-slug_1/index.html">a</a>'
+        '<a href="/catalogue/category/books/travel_2/index.html">cat</a>'
+        '<a href="/catalogue/page-2.html">next</a>'
+    )
+    scope = {
+        "mode": "DATASET", "status": "USER_CONFIRMED",
+        "include_patterns": ["/catalogue/*/index.html"], "pagination": {},
+    }
+    d = classify_links_for_scope(
+        html, page_url="https://x.com/", root_url="https://x.com", scope=scope
+    )
+    inc = {x.normalized_url for x in d if x.decision == "included"}
+    assert "https://x.com/catalogue/a-slug_1/index.html" in inc
+    assert "https://x.com/catalogue/category/books/travel_2/index.html" not in inc
+    detail = next(
+        x for x in d
+        if x.normalized_url.endswith("a-slug_1/index.html") and x.decision == "included"
+    )
+    assert detail.reason_code == REASON_DATASET_PATTERN_MATCH
 
 
 def test_derive_dataset_returns_none_without_detail_evidence():

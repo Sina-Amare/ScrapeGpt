@@ -478,6 +478,39 @@ def _collection_match(url: str, pattern: str) -> bool:
     return _glob_match(url, pattern)
 
 
+def _segment_glob_match(url: str, pattern: str) -> bool:
+    """Segment-aware include match where each ``*`` matches exactly ONE path
+    segment (never crossing ``/``), and literal segments must match exactly.
+
+    This is the DATASET counterpart to :func:`_collection_match`: it keeps a
+    derived detail template like ``/catalogue/*/index.html`` from also matching a
+    deeper nav/category path such as ``/catalogue/category/books/travel/index.html``
+    (different segment count), which plain ``fnmatch`` ``*`` would wrongly match
+    because it spans ``/``. Patterns that do not start with ``/`` fall back to a
+    plain full-URL glob so callers can still pass absolute-URL patterns.
+    """
+    if not pattern:
+        return False
+    if not pattern.startswith("/"):
+        return _glob_match(url, pattern)
+    parsed = _safe_urlparse(url)
+    path = (parsed.path if parsed is not None else url) or ""
+    p_segs = [s for s in pattern.split("/") if s != ""]
+    u_segs = [s for s in path.split("/") if s != ""]
+    if len(p_segs) != len(u_segs):
+        return False
+    for ps, us in zip(p_segs, u_segs):
+        if ps == "*":
+            if not us:
+                return False
+        elif any(ch in ps for ch in "*?["):
+            if not fnmatch(us, ps):
+                return False
+        elif ps != us:
+            return False
+    return True
+
+
 def _pagination_decision(
     normalized: str,
     page_url: str,
@@ -685,7 +718,7 @@ def _classify_one(
         if decision is not None:
             return decision
         for pattern in scope.get("include_patterns") or []:
-            if _glob_match(normalized, pattern):
+            if _segment_glob_match(normalized, pattern):
                 return UrlDecision(
                     **base,
                     decision="included",
@@ -698,7 +731,7 @@ def _classify_one(
                 continue
             rule_role = rule.get("role")
             pattern = rule.get("pattern")
-            if rule_role in ("dataset", "detail") and pattern and _glob_match(
+            if rule_role in ("dataset", "detail") and pattern and _segment_glob_match(
                 normalized, pattern
             ):
                 code = (
@@ -921,6 +954,47 @@ def dominant_prefix_glob(urls: list[str]) -> tuple[str, int] | None:
     return f"{best_prefix}/*", best_count
 
 
+def dominant_path_template(urls: list[str]) -> tuple[str, int] | None:
+    """Segment-count-aware include template derived from a set of detail links.
+
+    Groups the URLs by their number of path segments, takes the largest group,
+    and builds a glob where segments that VARY across that group become ``*``
+    while segments that are CONSTANT stay literal. This preserves the detail-page
+    template instead of collapsing to a broad first-segment glob:
+
+        /catalogue/<slug>/index.html (x20) -> /catalogue/*/index.html
+        /item/1, /item/2, /item/3          -> /item/*
+
+    The precise template, matched segment-aware by :func:`_segment_glob_match`,
+    keeps a DATASET crawl from being flooded by deeper nav/category pages that a
+    first-segment glob (``/catalogue/*``) would wrongly include. Returns
+    ``(glob, count)`` for the dominant template, or ``None``.
+    """
+    groups: dict[int, list[list[str]]] = {}
+    for url in urls:
+        parsed = _safe_urlparse(url)
+        if parsed is None:
+            continue
+        segs = [s for s in (parsed.path or "").split("/") if s]
+        if not segs:
+            continue
+        groups.setdefault(len(segs), []).append(segs)
+    if not groups:
+        return None
+    # Largest group wins; ties broken toward MORE segments (more specific).
+    best_n = max(groups, key=lambda n: (len(groups[n]), n))
+    rows = groups[best_n]
+    template: list[str] = []
+    for i in range(best_n):
+        column = {row[i] for row in rows}
+        template.append(column.pop() if len(column) == 1 else "*")
+    if "*" not in template:
+        # All segments constant (e.g. one repeated URL) -> wildcard the leaf so
+        # the pattern still generalises rather than pinning a single page.
+        template[-1] = "*"
+    return "/" + "/".join(template), len(rows)
+
+
 def _selector_same_origin_links(
     html: str, seed_url: str, selector: str | None
 ) -> list[str]:
@@ -988,7 +1062,12 @@ def derive_include_patterns_from_links(
             html, seed_url, analysis.get("detail_link_selector")
         )
         if len(detail_links) >= DATASET_MIN_DETAIL_LINKS:
-            dominant = dominant_prefix_glob(detail_links)
+            # Prefer a precise segment-aware template (e.g. /catalogue/*/index.html)
+            # over the broad first-segment glob, so the crawl follows real detail
+            # pages and not deeper nav/category lists that share the prefix.
+            dominant = dominant_path_template(detail_links) or dominant_prefix_glob(
+                detail_links
+            )
             if dominant is not None:
                 return [dominant[0]]
         return None
