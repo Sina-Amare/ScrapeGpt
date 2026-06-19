@@ -95,6 +95,53 @@ def check_ip(ip_str: str) -> None:
     _check_ip(ip_str)
 
 
+def resolve_validated_ip(url: str) -> str | None:
+    """Return one validated public IP for ``url``'s host, for connection pinning.
+
+    Resolves the hostname and returns the first address that passes the same
+    SSRF block rules as ``validate_url``. Callers use this to pin a browser's
+    connection (e.g. Chromium ``--host-resolver-rules``) to a pre-validated IP,
+    narrowing the DNS-rebinding TOCTOU window described in ``validate_url``.
+
+    Returns ``None`` when no safe IP can be determined (no hostname, DNS
+    failure, or the resolved address is blocked). ``None`` means "could not
+    pin" — the caller must still rely on per-request re-validation and MUST NOT
+    treat it as "safe to connect". A raw-IP host is returned as-is after the
+    same block check.
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except Exception:
+        return None
+    if not hostname:
+        return None
+
+    # Raw IP literal: validate it and return as-is.
+    try:
+        ipaddress.ip_address(hostname)
+        _check_ip(hostname)
+        return hostname
+    except URLValidationError:
+        return None
+    except ValueError:
+        pass  # It's a hostname — resolve it.
+
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return None
+
+    for _family, _type, _proto, _canonname, sockaddr in addr_infos:
+        ip = sockaddr[0]
+        try:
+            _check_ip(ip)
+        except URLValidationError:
+            return None
+        return ip
+    return None
+
+
 def validate_url(url: str) -> str:
     """
     Validate a URL for safe fetching.
@@ -143,13 +190,17 @@ def validate_url(url: str) -> str:
     # TOCTOU / DNS-rebinding: we resolve here in Python, but httpx (and the
     # browser backends) re-resolve when the TCP connection is established, so an
     # attacker-controlled domain could return a public IP here and a private one
-    # at connect time. The static httpx path now closes this window by
-    # re-validating the ACTUAL connected peer IP after the request (see
-    # fetcher._static_fetch, which calls check_ip on network_stream's
-    # server_addr). The browser backends (Playwright/Camoufox/FlareSolverr) are
-    # NOT pinned and still rely on an egress firewall blocking RFC-1918/loopback
-    # ranges — we document that residual gap rather than claim SSRF is fully
-    # prevented.
+    # at connect time. Mitigations by path:
+    #   * Static httpx: re-validates the ACTUAL connected peer IP after the
+    #     request (fetcher._static_fetch calls check_ip on the server_addr).
+    #   * Chromium (Playwright): launched with --host-resolver-rules mapping the
+    #     host to the IP validated here, so it connects to the pre-validated
+    #     address (fetcher._chromium_launch_args via resolve_validated_ip).
+    #   * Camoufox (Firefox) / FlareSolverr: no equivalent pin; they rely on an
+    #     egress firewall blocking RFC-1918/loopback ranges. This residual gap is
+    #     documented (README / .env.example) rather than claiming SSRF is fully
+    #     prevented. The browser route handler still re-validates every request
+    #     URL on every backend.
     try:
         addr_infos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:

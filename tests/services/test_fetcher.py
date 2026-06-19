@@ -928,3 +928,59 @@ async def test_browser_interactions_are_serialized(monkeypatch):
 
     assert peak == 1, f"browser interactions not serialized (peak concurrency {peak})"
     assert all(r == {"r": "<html>r</html>"} for r in results)
+
+
+# ---------------------------------------------------------------------------
+# Chromium DNS-pinning launch args (DNS-rebinding defense-in-depth)
+# ---------------------------------------------------------------------------
+
+
+def _public_only(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.url_validator.settings",
+        type("S", (), {"ALLOW_PRIVATE_NETWORK_URLS": False})(),
+    )
+
+
+def test_chromium_launch_args_pins_validated_ip(monkeypatch):
+    from app.services.fetcher import _chromium_launch_args
+
+    _public_only(monkeypatch)
+    # Raw public-IP host: pin is deterministic and needs no DNS.
+    args = _chromium_launch_args("https://93.184.216.34/page")
+    assert args == ["--host-resolver-rules=MAP 93.184.216.34 93.184.216.34"]
+
+
+def test_chromium_launch_args_pins_resolved_hostname(monkeypatch):
+    import socket
+    from app.services.fetcher import _chromium_launch_args
+
+    _public_only(monkeypatch)
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda host, port: [(None, None, None, None, ("93.184.216.34", 0))],
+    )
+    assert _chromium_launch_args("https://example.com/x") == [
+        "--host-resolver-rules=MAP example.com 93.184.216.34"
+    ]
+
+
+def test_chromium_launch_args_empty_when_unsafe(monkeypatch):
+    from app.services.fetcher import _chromium_launch_args
+
+    _public_only(monkeypatch)
+    # Blocked address → no pin (route handler remains the gate).
+    assert _chromium_launch_args("http://127.0.0.1/secret") == []
+    # No hostname → no pin.
+    assert _chromium_launch_args("not-a-url") == []
+
+
+def test_chromium_launch_args_brackets_ipv6(monkeypatch):
+    from app.services.fetcher import _chromium_launch_args
+
+    _public_only(monkeypatch)
+    # Public IPv6 literal (Cloudflare DNS) → bracketed in the MAP rule.
+    args = _chromium_launch_args("https://[2606:4700:4700::1111]/x")
+    assert args == [
+        "--host-resolver-rules=MAP 2606:4700:4700::1111 [2606:4700:4700::1111]"
+    ]

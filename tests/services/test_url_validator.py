@@ -5,9 +5,17 @@ import pytest
 from app.services.url_validator import (
     URLBlockReason,
     URLValidationError,
+    resolve_validated_ip,
     validate_url,
     validate_redirect_target,
 )
+
+
+def _public_only_settings(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.url_validator.settings",
+        type("S", (), {"ALLOW_PRIVATE_NETWORK_URLS": False})(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -161,3 +169,55 @@ def test_redirect_target_resolves_relative(monkeypatch):
     )
     result = validate_redirect_target("/other-page", "http://example.com/page")
     assert result == "http://example.com/other-page"
+
+
+# ---------------------------------------------------------------------------
+# resolve_validated_ip — connection-pinning helper (DNS-rebinding defense)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_validated_ip_returns_public_literal(monkeypatch):
+    _public_only_settings(monkeypatch)
+    assert resolve_validated_ip("http://93.184.216.34/page") == "93.184.216.34"
+
+
+def test_resolve_validated_ip_blocks_private_literal(monkeypatch):
+    _public_only_settings(monkeypatch)
+    # A blocked address must not be returned as a pin target.
+    assert resolve_validated_ip("http://127.0.0.1/secret") is None
+    assert resolve_validated_ip("http://10.0.0.5/internal") is None
+
+
+def test_resolve_validated_ip_resolves_hostname(monkeypatch):
+    import socket
+    _public_only_settings(monkeypatch)
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda host, port: [(None, None, None, None, ("93.184.216.34", 0))],
+    )
+    assert resolve_validated_ip("https://example.com/x") == "93.184.216.34"
+
+
+def test_resolve_validated_ip_none_when_resolves_private(monkeypatch):
+    import socket
+    _public_only_settings(monkeypatch)
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda host, port: [(None, None, None, None, ("127.0.0.1", 0))],
+    )
+    assert resolve_validated_ip("https://rebind.example/x") is None
+
+
+def test_resolve_validated_ip_none_on_dns_failure(monkeypatch):
+    import socket
+    _public_only_settings(monkeypatch)
+
+    def _boom(host, port):
+        raise socket.gaierror("no such host")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _boom)
+    assert resolve_validated_ip("https://nope.example/x") is None
+
+
+def test_resolve_validated_ip_none_without_hostname():
+    assert resolve_validated_ip("not-a-url") is None

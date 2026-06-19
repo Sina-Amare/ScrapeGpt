@@ -1,6 +1,6 @@
 # ScrapeGPT Status
 
-Last verified: June 17, 2026. Regenerated from HEAD against code (not prior docs).
+Last verified: June 19, 2026. Regenerated from HEAD against code (not prior docs).
 For the testing approach and exact, current command output see
 [`docs/testing_guide.md`](testing_guide.md), which is the authoritative
 current-state reference; `docs/product/strategic_redesign.md` is historical
@@ -91,6 +91,11 @@ roadmap context only.
     `ALL_PAGES_FAILED`; structured zero-records → `NO_RECORDS_EXTRACTED`;
     anti-bot challenge pages classified as `BLOCKED`.
   - Startup watchdog sweep recovers orphans left by a prior process death.
+  - **Orphaned-run reaper:** the watchdog deletes crawl pages/records of
+    superseded or failed extraction runs older than
+    `EXTRACTION_RUN_RETENTION_DAYS` (default 14; 0 disables). The current
+    (visible) run and any active run are always kept; deletes are bounded
+    (≤50 runs/sweep) and cascade to pages/records/exports.
 
 - **Observability:**
   - Structured stdlib logging + JSON formatter + `contextvars` correlation;
@@ -103,10 +108,11 @@ roadmap context only.
 
 ## Migrations
 
-Schema is at head **014**: 001–007 (users → project workflow), 008 (phase 2.5
+Schema is at head **015**: 001–007 (users → project workflow), 008 (phase 2.5
 foundation), 009 (analysis cache TTL), `dcbda4fc8a19` (browser sessions), 010
 (password reset), 011 (project events), 012 (interaction profile), 013
-(extraction runs), 014 (extraction-run `resume_count`).
+(extraction runs), 014 (extraction-run `resume_count`), 015 (remove unused
+`FETCHED` crawl-page state).
 
 ## Not Implemented Yet
 
@@ -134,10 +140,14 @@ foundation), 009 (analysis cache TTL), `dcbda4fc8a19` (browser sessions), 010
 
 ## Known Issues
 
-- **DNS rebinding (A4 partially mitigated).** The static httpx fetch path now
-  re-validates the actual connected peer IP, closing the TOCTOU window there.
-  The browser backends (Playwright/Camoufox/FlareSolverr) are not pinned and
-  still rely on an egress firewall blocking private ranges.
+- **DNS rebinding (A4 partially mitigated).** The static httpx fetch path
+  re-validates the actual connected peer IP, and the Chromium (Playwright)
+  backend is now pinned to the validated IP via `--host-resolver-rules`
+  (`fetcher._chromium_launch_args`), closing the TOCTOU window on both. The
+  Camoufox (Firefox) and FlareSolverr backends cannot be pinned and still rely
+  on an egress firewall blocking private ranges (documented in README /
+  `.env.example`). The browser route handler re-validates every request URL on
+  all backends regardless.
 - **In-process BackgroundTasks do not survive a restart.** A1 re-dispatch now
   resumes a stalled run (bounded) instead of always hard-failing, but recovery
   still waits for the watchdog sweep; there is no live failover.
@@ -155,9 +165,9 @@ foundation), 009 (analysis cache TTL), `dcbda4fc8a19` (browser sessions), 010
 venv\Scripts\python.exe -m pytest -q
 ```
 
-Backend: **562 passed, 10 skipped** (verified 2026-06-17). Frontend: **83 passed**
+Backend: **657 passed, 10 skipped** (verified 2026-06-19). Frontend: **87 passed**
 plus typecheck/lint clean. The Phase 2.5 E2E harness
 (`tests\validation\run_validation.py`, now run-scoped) is run separately; real-DB
-behavior for the run model, concurrent workers, and watchdog resume is covered by
-`tests\manual\verify_extraction_runs.py` and
+behavior for the run model, concurrent workers, watchdog resume, and the
+orphaned-run reaper is covered by `tests\manual\verify_extraction_runs.py` and
 `tests\manual\verify_watchdog_resume.py` (require Postgres at head).

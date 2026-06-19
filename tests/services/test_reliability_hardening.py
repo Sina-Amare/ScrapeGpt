@@ -1123,3 +1123,90 @@ async def test_extraction_spawns_crawl_concurrency_workers(monkeypatch):
 
     # 1 setup/finalization session + CRAWL_CONCURRENCY (3) worker sessions.
     assert calls["sessions"] == 4
+
+
+# ---------------------------------------------------------------------------
+# 7. Orphaned extraction-run cleanup (control flow). The SQL guards — never
+# deleting the current/active run, and the retention age window — are exercised
+# against real Postgres in tests/manual/verify_extraction_runs.py (check #7).
+# ---------------------------------------------------------------------------
+
+
+class _OrphanCleanupDB:
+    """Bounded SELECT of reclaimable run ids, then a delete-by-id (rowcount)."""
+
+    def __init__(self, run_ids):
+        self._run_ids = run_ids
+        self.executed = []
+        self.committed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def execute(self, statement):
+        self.executed.append(statement)
+        if len(self.executed) == 1:
+            return FakeListResult(self._run_ids)  # the SELECT of ids
+        return _RowcountResult(len(self._run_ids))  # the DELETE by id
+
+    async def commit(self):
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_orphaned_run_cleanup_deletes_aged_runs(monkeypatch):
+    """Selects reclaimable ids then deletes by id, commits, returns the count."""
+    from app.services import watchdog
+
+    monkeypatch.setattr(
+        watchdog, "settings",
+        SimpleNamespace(EXTRACTION_RUN_RETENTION_DAYS=14),
+    )
+    fake = _OrphanCleanupDB([5, 6])
+    monkeypatch.setattr(watchdog, "async_session_factory", lambda: fake)
+
+    result = await watchdog.cleanup_orphaned_extraction_runs()
+
+    assert result == 2
+    assert fake.committed is True
+    assert len(fake.executed) == 2  # one SELECT + one DELETE (no unbounded delete)
+
+
+@pytest.mark.asyncio
+async def test_orphaned_run_cleanup_disabled_when_retention_zero(monkeypatch):
+    """Retention 0 disables the sweep — the DB is never touched."""
+    from app.services import watchdog
+
+    monkeypatch.setattr(
+        watchdog, "settings",
+        SimpleNamespace(EXTRACTION_RUN_RETENTION_DAYS=0),
+    )
+
+    def _boom():
+        raise AssertionError("session factory used while retention disabled")
+
+    monkeypatch.setattr(watchdog, "async_session_factory", _boom)
+
+    assert await watchdog.cleanup_orphaned_extraction_runs() == 0
+
+
+@pytest.mark.asyncio
+async def test_orphaned_run_cleanup_noop_when_no_runs(monkeypatch):
+    """No reclaimable ids → no DELETE and no commit (short-circuits)."""
+    from app.services import watchdog
+
+    monkeypatch.setattr(
+        watchdog, "settings",
+        SimpleNamespace(EXTRACTION_RUN_RETENTION_DAYS=14),
+    )
+    fake = _OrphanCleanupDB([])
+    monkeypatch.setattr(watchdog, "async_session_factory", lambda: fake)
+
+    result = await watchdog.cleanup_orphaned_extraction_runs()
+
+    assert result == 0
+    assert len(fake.executed) == 1  # only the SELECT; no DELETE issued
+    assert fake.committed is False

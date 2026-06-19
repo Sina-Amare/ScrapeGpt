@@ -649,6 +649,86 @@ async def cleanup_expired_analysis_cache() -> int:
     return cleaned
 
 
+# Terminal run states whose data may be reclaimed once superseded / aged out.
+_RECLAIMABLE_RUN_STATES = (
+    ExtractionRunState.COMPLETED.value,
+    ExtractionRunState.FAILED.value,
+    ExtractionRunState.CANCELED.value,
+)
+
+# Max runs reclaimed per sweep, to keep the delete transaction short.
+_ORPHANED_RUN_BATCH = 50
+
+
+async def cleanup_orphaned_extraction_runs() -> int:
+    """Reclaim crawl pages/records of superseded or failed extraction runs.
+
+    A retry writes to a NEW run and only promotes it to
+    ``projects.current_extraction_run_id`` on success, so old completed runs and
+    every failed/canceled run keep their (potentially large) crawl_pages and
+    extracted_records forever. This sweep deletes such runs once they are past
+    the retention window; the FK ``ondelete="CASCADE"`` on ``extraction_run_id``
+    removes their pages, records, and exports atomically. (Exports are streamed
+    on demand — ``Export.file_path`` is never populated — so there are no
+    app-owned files to unlink.)
+
+    Guards (all must hold for a run to be reclaimed):
+      * state is terminal (COMPLETED / FAILED / CANCELED) — never QUEUED/RUNNING.
+      * the run is NOT any project's ``current_extraction_run_id`` (the visible run).
+      * ``finished_at`` (or, when null, ``created_at``) is older than the window.
+
+    Bounded to ``_ORPHANED_RUN_BATCH`` runs per sweep via a SELECT of ids
+    followed by a delete-by-id (never an unbounded bulk delete). Only runs when
+    ``EXTRACTION_RUN_RETENTION_DAYS > 0``. Returns the number of runs reclaimed.
+    """
+    if settings.EXTRACTION_RUN_RETENTION_DAYS <= 0:
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        days=settings.EXTRACTION_RUN_RETENTION_DAYS
+    )
+
+    async with async_session_factory() as db:
+        current_runs = (
+            select(Project.current_extraction_run_id)
+            .where(Project.current_extraction_run_id.isnot(None))
+            .scalar_subquery()
+        )
+        age = func.coalesce(ExtractionRun.finished_at, ExtractionRun.created_at)
+        run_ids = (
+            (
+                await db.execute(
+                    select(ExtractionRun.id)
+                    .where(
+                        ExtractionRun.state.in_(_RECLAIMABLE_RUN_STATES),
+                        ExtractionRun.id.notin_(current_runs),
+                        age < cutoff,
+                    )
+                    .order_by(ExtractionRun.id.asc())
+                    .limit(_ORPHANED_RUN_BATCH)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if not run_ids:
+            return 0
+
+        result = await db.execute(
+            delete(ExtractionRun).where(ExtractionRun.id.in_(run_ids))
+        )
+        reclaimed = int(result.rowcount or 0)
+        if reclaimed > 0:
+            await db.commit()
+            logger.info(
+                "watchdog.orphaned_runs_reclaimed",
+                extra={"count": reclaimed},
+            )
+
+    return reclaimed
+
+
 async def run_watchdog_once() -> None:
     """Run watchdog cleanup once. Called by background scheduler."""
     try:
@@ -664,6 +744,7 @@ async def run_watchdog_once() -> None:
         lease_recovered = await cleanup_expired_crawl_page_leases()
         project_cleaned = await cleanup_stuck_projects()
         cache_purged = await cleanup_expired_analysis_cache()
+        runs_reclaimed = await cleanup_orphaned_extraction_runs()
         duration_ms = round(
             (time.monotonic() - sweep_start) * 1000, 1
         )
@@ -675,6 +756,7 @@ async def run_watchdog_once() -> None:
                 "leases_recovered": lease_recovered,
                 "projects_reset": project_cleaned,
                 "cache_purged": cache_purged,
+                "runs_reclaimed": runs_reclaimed,
                 "duration_ms": duration_ms,
             },
         )

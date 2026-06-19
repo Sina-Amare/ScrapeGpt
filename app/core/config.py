@@ -263,6 +263,17 @@ class Settings(BaseSettings):
             "Stale cache entries are purged by the watchdog."
         ),
     )
+    EXTRACTION_RUN_RETENTION_DAYS: int = Field(
+        default=14,
+        ge=0,
+        le=3650,
+        description=(
+            "Days to keep crawl pages/records of superseded or failed extraction "
+            "runs before the watchdog reclaims them. The current (visible) run of "
+            "every project is always kept regardless of age. 0 = never reclaim "
+            "(unbounded growth, prior behavior)."
+        ),
+    )
 
     # -------------------------------------------------------------------------
     # Rate Limiting Settings

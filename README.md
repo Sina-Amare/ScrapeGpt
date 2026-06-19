@@ -149,6 +149,7 @@ Start here:
 - Multi-worker durable crawler recovery is not implemented.
 - Authenticated-content browser sessions are not implemented.
 - CAPTCHA solving, stealth browser patches, proxy evasion, and challenge bypass are non-goals.
+- **SSRF / DNS rebinding:** the static fetch path pins the connected peer IP and the Chromium (Playwright) backend is pinned to the validated IP via `--host-resolver-rules`. The Camoufox and FlareSolverr backends cannot be pinned — if you enable them, restrict the app's outbound network (firewall / egress policy) to public destinations so private/loopback ranges are unreachable.
 
 ## License
 

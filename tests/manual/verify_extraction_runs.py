@@ -196,6 +196,62 @@ async def main() -> int:
         check(cnt == 1 and [r.normalized_data["v"] for r in rows] == ["new"],
               "reads are scoped to current_extraction_run_id")
 
+    async with async_session_factory() as db:
+        # 7. Orphaned-run cleanup: reclaims only aged, superseded/failed runs —
+        # never the current (visible) run, never an active run, and never a run
+        # within the retention window. Cascade removes the reclaimed run's
+        # pages/records.
+        from datetime import datetime, timezone, timedelta
+        from app.services.watchdog import cleanup_orphaned_extraction_runs
+
+        user, project, spec = await _make_project(db)
+        created_users.append(user.id)
+        old_ts = datetime.now(timezone.utc) - timedelta(days=100)
+        now_ts = datetime.now(timezone.utc)
+
+        current_run = ExtractionRun(project_id=project.id,
+                                    state=ExtractionRunState.COMPLETED.value,
+                                    finished_at=old_ts)
+        failed_aged = ExtractionRun(project_id=project.id,
+                                    state=ExtractionRunState.FAILED.value,
+                                    finished_at=old_ts)
+        failed_recent = ExtractionRun(project_id=project.id,
+                                      state=ExtractionRunState.FAILED.value,
+                                      finished_at=now_ts)
+        running = ExtractionRun(project_id=project.id,
+                                state=ExtractionRunState.RUNNING.value)
+        db.add_all([current_run, failed_aged, failed_recent, running])
+        await db.flush()
+        # Capture ids before commit (expire_on_commit must not force a reload of
+        # the aged run after another session deletes it).
+        current_id, aged_id = current_run.id, failed_aged.id
+        recent_id, running_id = failed_recent.id, running.id
+        page = CrawlPage(project_id=project.id, extraction_run_id=aged_id,
+                         url="u", normalized_url="u",
+                         state=CrawlPageState.EXTRACTED, depth=0)
+        db.add(page)
+        await db.flush()
+        db.add(ExtractedRecord(project_id=project.id, extraction_run_id=aged_id,
+                               page_id=page.id, record_ordinal=0, source_url="u",
+                               raw_data={"v": 1}, normalized_data={"v": 1}))
+        project.current_extraction_run_id = current_id
+        await db.commit()
+
+        reclaimed = await cleanup_orphaned_extraction_runs()
+        surviving = set((await db.execute(
+            select(ExtractionRun.id).where(ExtractionRun.project_id == project.id)
+        )).scalars().all())
+        rec_left = await db.scalar(select(func.count(ExtractedRecord.id)).where(
+            ExtractedRecord.extraction_run_id == aged_id))
+        check(
+            reclaimed >= 1
+            and aged_id not in surviving
+            and {current_id, recent_id, running_id} <= surviving
+            and rec_left == 0,
+            "orphaned-run cleanup deletes only aged superseded run; keeps "
+            "current/recent/active; cascade removes its records",
+        )
+
     # Cleanup (fresh session, FK cascade wipes the project tree).
     async with async_session_factory() as db:
         for uid in created_users:

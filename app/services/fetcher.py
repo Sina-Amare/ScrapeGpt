@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -35,6 +36,7 @@ from app.services.dom_summary import assess_html_quality
 from app.services.url_validator import (
     URLValidationError,
     check_ip,
+    resolve_validated_ip,
     validate_redirect_target,
     validate_url,
 )
@@ -495,6 +497,35 @@ def _ensure_windows_proactor_policy_for_playwright() -> None:
 # SSRF route handler factory (shared by Playwright + camoufox)
 # ---------------------------------------------------------------------------
 
+def _chromium_launch_args(url: str) -> list[str]:
+    """Chromium launch args that pin DNS for ``url``'s host to a validated IP.
+
+    Defense-in-depth against DNS rebinding: ``validate_url`` checks the resolved
+    IP, but Chromium re-resolves the hostname when it connects, reopening the
+    TOCTOU window. ``--host-resolver-rules=MAP <host> <ip>`` forces Chromium to
+    connect to the already-validated IP. SNI / Host headers keep the hostname,
+    so TLS still validates against the cert; cross-host redirects and
+    subresources resolve normally and are still checked by the route handler.
+
+    Returns ``[]`` when no safe IP can be determined — the route handler then
+    remains the gate, exactly as before. This MUST be applied to every Chromium
+    launch (fetch + interaction capture); Camoufox (Firefox) and FlareSolverr
+    have no equivalent and rely on the egress firewall (see README / .env).
+    """
+    host = None
+    try:
+        host = urlparse(url).hostname
+    except Exception:
+        host = None
+    if not host:
+        return []
+    ip = resolve_validated_ip(url)
+    if not ip:
+        return []
+    mapped = f"[{ip}]" if ":" in ip else ip  # bracket IPv6 literals
+    return [f"--host-resolver-rules=MAP {host} {mapped}"]
+
+
 def _make_route_handler(blocked: list[FetchError], is_async: bool):  # type: ignore[return]
     if is_async:
         async def _async_handler(route: Any) -> None:
@@ -549,7 +580,9 @@ def _browser_fetch_sync(
     blocked: list[FetchError] = []
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True)
+            browser = pw.chromium.launch(
+                headless=True, args=_chromium_launch_args(url)
+            )
             try:
                 context = browser.new_context(
                     user_agent=settings.USER_AGENT,
@@ -636,7 +669,9 @@ async def _browser_fetch_async(
     blocked: list[FetchError] = []
     try:
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
+            browser = await pw.chromium.launch(
+                headless=True, args=_chromium_launch_args(url)
+            )
             try:
                 context = await browser.new_context(
                     user_agent=settings.USER_AGENT,
@@ -1040,7 +1075,9 @@ async def _apply_interactions_playwright(
     blocked: list[FetchError] = []
     try:
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
+            browser = await pw.chromium.launch(
+                headless=True, args=_chromium_launch_args(url)
+            )
             try:
                 context = await browser.new_context(
                     user_agent=settings.USER_AGENT,
