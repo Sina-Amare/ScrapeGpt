@@ -235,11 +235,19 @@ def _assemble_group(label: str, options: list[dict[str, Any]]) -> dict[str, Any]
         "label": label,
         "metadata_key": _infer_metadata_key(label, option_labels),
         "execution": EXECUTION_INTERACTIVE,
+        # Display toggles (Metric/Imperial, per-100g/per-serving rendered by a
+        # client-side re-render) are OFF by default: each option is unselected so
+        # the group is inert until the user explicitly opts in. A pure display
+        # toggle re-renders the whole page rather than adding separable data, so
+        # enabling it silently would multiply rows and misalign columns. Data
+        # axes that ARE separable in the static DOM are emitted as a
+        # ``deterministic`` / ``mixed`` column group elsewhere (selected by
+        # default) — only these interactive toggles default off.
         "options": [
             {
                 "id": sanitize_metadata_key(o["label"]) or f"opt{i}",
                 "label": o["label"],
-                "selected": True,
+                "selected": False,
                 "field_selectors": {},
                 "recipe": o["recipe"],
             }

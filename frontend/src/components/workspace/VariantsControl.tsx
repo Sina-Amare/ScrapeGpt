@@ -56,9 +56,17 @@ export function VariantsControl({
     .map((group, index) => ({ group, index }))
     .filter(({ group }) => group.execution !== "interactive");
   const hasDisplayToggles = groups.some((g) => g.execution === "interactive");
-  const displayToggleSelected = groups.some(
-    (g) => g.execution === "interactive" && g.options.some((o) => o.selected)
-  );
+  // A display toggle only actually affects extraction when the profile is
+  // ENABLED *and* one of its interactive options is selected. Detection leaves
+  // these options unselected and the profile disabled, so reading the option
+  // flags alone falsely reported "currently on … producing mismatched rows" on
+  // pages whose variants were never applied (the warning the user saw on a
+  // disabled profile). Gate on enabled so the warning reflects reality.
+  const displayToggleSelected =
+    normalized.enabled &&
+    groups.some(
+      (g) => g.execution === "interactive" && g.options.some((o) => o.selected)
+    );
 
   function toggleOption(gi: number, oi: number) {
     const nextGroups = groups.map((g, i) =>

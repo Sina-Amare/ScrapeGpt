@@ -242,6 +242,29 @@ def test_detect_interaction_profile_is_disabled_draft():
     assert new_fields is None  # no fields passed -> no collapse
 
 
+def test_detected_display_toggle_options_default_unselected():
+    """Interactive display toggles (Metric/Imperial, per-100g/per-serving) are a
+    whole-page re-render, not separable data — detection must leave their options
+    UNSELECTED so they are inert until the user opts in. Enabling them silently
+    would multiply rows and misalign columns (the calories.info symptom)."""
+    html = '<div><button class="active">Metric</button><button>Imperial</button></div>'
+    groups = detect_interaction_groups(html)
+    assert len(groups) == 1
+    g = groups[0]
+    assert g["execution"] == "interactive"
+    assert [o["selected"] for o in g["options"]] == [False, False]
+
+    # And via the full profile builder: with no group's options selected, the
+    # profile is not "enabled" in effect — selected_combinations is empty even if
+    # the stored ``enabled`` flag were flipped on.
+    from app.services.interaction_profile import is_enabled, selected_combinations
+
+    profile, _ = detect_interaction_profile(html)
+    forced_on = {**profile, "enabled": True}
+    assert is_enabled(forced_on) is False
+    assert selected_combinations(forced_on) == []
+
+
 def test_detect_empty_html():
     assert detect_interaction_groups("") == []
 
