@@ -138,6 +138,20 @@ class Settings(BaseSettings):
             "behavior. Effective concurrency is capped by the run's page limit."
         ),
     )
+    BROWSER_INTERACTION_CONCURRENCY: int = Field(
+        default=1, ge=1, le=8,
+        description=(
+            "Max browser variant-interaction captures (click/toggle then snapshot) "
+            "running at once across the whole process, independent of "
+            "CRAWL_CONCURRENCY. Launching several headless browsers concurrently to "
+            "drive interactions contends for resources and makes the Firefox/Chromium "
+            "drivers crash, which silently degrades a variant to the page's STATIC "
+            "values (e.g. a per-serving size stuck at the per-100g default). "
+            "Serializing them (1) makes the camoufox->Chromium cascade recover "
+            "reliably so every crawled page captures the real browser-rendered "
+            "values. Raise only if the browser backend is known to be stable."
+        ),
+    )
     MIN_CRAWL_DELAY_MS: int = Field(default=500, ge=0, le=60000)
     JOB_QUEUE_DEPTH: int = Field(default=10, ge=1, le=1000)
     USER_AGENT: str = Field(

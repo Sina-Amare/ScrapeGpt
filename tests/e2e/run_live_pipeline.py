@@ -36,8 +36,7 @@ import sys
 import time
 from dataclasses import dataclass, field as dc_field
 from types import SimpleNamespace
-from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
+from typing import Any, Callable
 
 from openpyxl import load_workbook
 
@@ -47,12 +46,11 @@ from app.api.v1.endpoints.projects import (
     _xlsx_bytes,
 )
 from app.core.logging_config import configure_logging
-from app.models.job import CrawlScopeMode, ExtractionMode
+from app.models.job import ExtractionMode
 from app.services.crawl_scope import (
     derive_include_patterns_from_links,
     discover_links_for_scope,
     normalize_crawl_scope,
-    recommend_scope,
 )
 from app.services.extractor import extract_records_from_html
 from app.services.fetcher import FetchError, apply_interactions_and_capture, fetch_url
@@ -418,6 +416,83 @@ async def run_variant_scenario() -> Outcome:
     return Outcome(sc, status, fails, evidence, secs)
 
 
+async def run_collection_variant_scenario() -> Outcome:
+    """COLLECTION + browser variants on a NON-seed child page (/food/meat).
+
+    Regression for project-189: the COLLECTION crawl applies the seed's variant
+    spec to every sibling /food/* page. Under concurrent crawling the browser
+    toggle silently degraded to the page's STATIC values on child pages, so the
+    per-serving SERVING SIZE stayed '100 g' (calories were correct). Build the
+    spec from the seed, confirm /food/meat is reachable via the sibling glob, then
+    extract /food/meat with the real browser capture and assert the
+    browser-rendered per-serving sizes Codex flagged."""
+    start = time.monotonic()
+    seed_url = "https://www.calories.info/food/beef-veal"
+    meat_url = "https://www.calories.info/food/meat"
+    row = "table.MuiTable-root tr"
+    sc = Scenario("calories", "COLLECTION+variants /food/meat (child page)", meat_url,
+                  ExtractionMode.STRUCTURED, "COLLECTION", {}, lambda r: [])
+    fails: list[str] = []
+    try:
+        seed = await fetch_with_retry(seed_url, "AUTO")
+    except FetchError as exc:
+        return Outcome(sc, "ENV", [f"seed unreachable: {exc.error_code}"], "",
+                       time.monotonic() - start)
+
+    ord_fields = [
+        f("Food", "td:nth-child(1) p"),
+        f("Serving Size (per 100 g)", "td:nth-child(2) p"),
+        f("Calories (per 100 g)", "td:nth-child(3)", "number"),
+        f("Serving Size (alternate column)", "td:nth-child(4) p"),
+        f("Calories (alternate column)", "td:nth-child(5)", "number"),
+    ]
+    mprof, mfields = detect_interaction_profile(seed.html, ord_fields, repeated_item_selector=row)
+    mfields = mfields or ord_fields
+    skey = next((x.get("user_label") or x.get("label") or x.get("name")
+                 for x in mfields if "serving" in str(x.get("label", "")).lower()),
+                "Serving Size")
+
+    # /food/meat must be reachable via the COLLECTION sibling glob.
+    scope = normalize_crawl_scope({"mode": "COLLECTION"}, seed_url=seed.final_url, page_limit=10)
+    derived = derive_include_patterns_from_links(
+        scope, html=seed.html, seed_url=seed.final_url,
+        analysis={"detail_link_selector": "a[href*='/food/']"})
+    if derived:
+        scope = {**scope, "include_patterns": derived}
+    siblings = discover_links_for_scope(
+        seed.html, page_url=seed.final_url, root_url=seed.final_url,
+        scope=scope, analysis=None, limit=200, source_depth=0)
+    if not any("/food/meat" in u for u in siblings):
+        fails.append(f"/food/meat not reachable via COLLECTION glob {derived}")
+
+    meat = await fetch_with_retry(meat_url, "AUTO")
+
+    async def cb(recipes: dict[str, list[dict]]) -> dict[str, str]:
+        return await apply_interactions_and_capture(meat.final_url, recipes)
+
+    spec = make_spec(mode=ExtractionMode.STRUCTURED, fields=mfields,
+                     interaction_profile={**mprof, "enabled": True})
+    recs, _w = await extract_records_with_variants(
+        base_html=meat.html, source_url=meat.final_url,
+        project=SimpleNamespace(analysis={"repeated_item_selector": row}),
+        spec=spec, max_records=2000, fetch_variant_htmls=cb)
+    got = {(d.get("Food"), str(d.get("serving_basis"))): (d.get(skey), d.get("Calories"))
+           for d in (r.normalized_data for r in recs)}
+    bserv, bcal = got.get(("Beef", "Show per serving"), (None, None))
+    cserv, ccal = got.get(("Chicken", "Show per serving"), (None, None))
+    if not (bserv and "portion" in str(bserv).lower() and str(bcal) == "265"):
+        fails.append(f"/food/meat Beef per-serving wrong: serving={bserv!r} cal={bcal!r} "
+                     f"(want '1 portion (170 g)'/265)")
+    if not (cserv and "piece" in str(cserv).lower() and str(ccal) == "764"):
+        fails.append(f"/food/meat Chicken per-serving wrong: serving={cserv!r} cal={ccal!r} "
+                     f"(want '1/2 piece (460 g)'/764)")
+
+    evidence = (f"derived={derived} Beef/per-serving=({bserv!r},{bcal!r}) "
+                f"Chicken/per-serving=({cserv!r},{ccal!r})")
+    return Outcome(sc, "PASS" if not fails else "FAIL", fails, evidence,
+                   time.monotonic() - start)
+
+
 # --------------------------------------------------------------------------- #
 # scenarios
 # --------------------------------------------------------------------------- #
@@ -633,6 +708,11 @@ async def main() -> int:
             outcomes.append(await run_variant_scenario())
         except Exception as exc:  # noqa: BLE001
             logger.exception("variant scenario crashed")
+        logger.info("=== calories :: COLLECTION+variants /food/meat (child page) ===")
+        try:
+            outcomes.append(await run_collection_variant_scenario())
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("collection variant scenario crashed")
 
     # report
     print("\n" + "=" * 78)

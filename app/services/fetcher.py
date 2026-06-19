@@ -44,6 +44,27 @@ logger = logging.getLogger(__name__)
 _CONTENT_TYPE_ALLOWLIST = ("text/html", "text/plain", "application/xhtml+xml")
 
 
+# Browser variant-interaction captures are serialized process-wide (see
+# settings.BROWSER_INTERACTION_CONCURRENCY). Launching several headless browsers
+# at once to drive clicks/toggles contends for resources and crashes the
+# Firefox/Chromium drivers, which makes a variant silently degrade to the page's
+# STATIC values (e.g. a per-serving size stuck at the per-100g default on every
+# crawled page but the seed). The semaphore is created lazily and re-bound if the
+# running event loop changes (so tests that spin up their own loop are safe).
+_interaction_semaphore: asyncio.Semaphore | None = None
+_interaction_semaphore_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _browser_interaction_semaphore() -> asyncio.Semaphore:
+    global _interaction_semaphore, _interaction_semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _interaction_semaphore is None or _interaction_semaphore_loop is not loop:
+        limit = max(1, int(getattr(settings, "BROWSER_INTERACTION_CONCURRENCY", 1)))
+        _interaction_semaphore = asyncio.Semaphore(limit)
+        _interaction_semaphore_loop = loop
+    return _interaction_semaphore
+
+
 def _supported_accept_encoding() -> str:
     """Build an `Accept-Encoding` header advertising only what httpx can decode.
 
@@ -1120,7 +1141,12 @@ async def apply_interactions_and_capture(
             )
         return await _apply_interactions_async(url, recipes, cookies)
 
-    return await _retry_once_on_driver_crash(_op)
+    # Serialize browser interactions process-wide so concurrent crawl workers
+    # don't launch competing headless browsers (which crash and silently degrade
+    # a variant to the page's static values). With the cascade + single-retry
+    # inside _op, each serialized capture recovers reliably.
+    async with _browser_interaction_semaphore():
+        return await _retry_once_on_driver_crash(_op)
 
 
 # ---------------------------------------------------------------------------

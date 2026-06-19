@@ -884,3 +884,47 @@ async def test_auto_falls_back_to_browser_on_binary_static(monkeypatch):
 
     result = await fetch_url("https://example.com/", render_mode="AUTO")
     assert result.fetch_metadata["browser_fallback_skipped"] is True
+
+
+@pytest.mark.asyncio
+async def test_browser_interactions_are_serialized(monkeypatch):
+    """BROWSER_INTERACTION_CONCURRENCY serializes concurrent variant captures.
+
+    Regression: under a concurrent crawl, launching several headless browsers at
+    once to drive a click/toggle crashes the drivers, which silently degrades a
+    variant to the page's STATIC values (e.g. a per-serving size stuck at the
+    per-100g default on every crawled child page). Serializing the captures makes
+    the camoufox->Chromium cascade recover reliably.
+    """
+    import asyncio
+
+    import app.services.fetcher as fetcher
+
+    # Async (non-threaded) path + a fresh semaphore for this loop
+    # (default BROWSER_INTERACTION_CONCURRENCY == 1).
+    monkeypatch.setattr(fetcher, "_should_use_threaded_browser_fetch", lambda: False)
+    fetcher._interaction_semaphore = None
+    fetcher._interaction_semaphore_loop = None
+
+    active = 0
+    peak = 0
+
+    async def _fake_async(url, recipes, cookies):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return {rid: f"<html>{rid}</html>" for rid in recipes}
+
+    monkeypatch.setattr(fetcher, "_apply_interactions_async", _fake_async)
+
+    results = await asyncio.gather(*[
+        fetcher.apply_interactions_and_capture(
+            f"https://example.com/{i}", {"r": [{"action": "click"}]}
+        )
+        for i in range(6)
+    ])
+
+    assert peak == 1, f"browser interactions not serialized (peak concurrency {peak})"
+    assert all(r == {"r": "<html>r</html>"} for r in results)
