@@ -465,6 +465,138 @@ def test_single_qualified_family_member_does_not_collapse():
     assert new_fields == fields
 
 
+# --- #188 regression: asymmetric labels (plain + weak) still collapse cleanly ---
+
+# The exact field shape project #188's analyzer produced for calories.info: the
+# DEFAULT columns are labeled plainly ("Serving size", "Calories (per serving)")
+# and their twins weakly ("... (alt column)"). The table is Food | Serving |
+# Calories | Serving | Calories (cols 1-5); the per-serving serving size only
+# appears after a browser "Show per serving" toggle (so it must become `mixed`).
+_188_FIELDS = [
+    {"name": "food_name", "label": "Food name", "user_label": "Food name",
+     "selector": "td.MuiTableCell-body a p.MuiTypography-body2",
+     "type": "string", "selected": True},
+    {"name": "serving_size", "label": "Serving size", "user_label": "Serving size",
+     "selector": "td:nth-child(2)", "type": "string", "selected": True},
+    {"name": "calories", "label": "Calories (per serving)",
+     "user_label": "Calories (per serving)",
+     "selector": "td:nth-child(3)", "type": "number", "selected": True},
+    {"name": "serving_size_alt", "label": "Serving size (alt column)",
+     "user_label": "Serving size (alt column)",
+     "selector": "td:nth-child(4)", "type": "string", "selected": True},
+    {"name": "calories_alt", "label": "Calories (alt column)",
+     "user_label": "Calories (alt column)",
+     "selector": "td:nth-child(5)", "type": "number", "selected": True},
+]
+
+
+def _188_html(serving2="100 g", cal3="156 Cal", serving4="100 g", cal5="265 Cal"):
+    return (
+        "<table><tbody><tr>"
+        "<td class='MuiTableCell-body'><a>"
+        "<p class='MuiTypography-body2'>Beef</p></a></td>"
+        f"<td>{serving2}</td><td>{cal3}</td>"
+        f"<td>{serving4}</td><td>{cal5}</td>"
+        "</tr></tbody></table>"
+        "<div class='toggle'><button class='active'>Show per 100 g</button>"
+        "<button>Show per serving</button></div>"
+        "<div class='toggle'><button class='active'>Metric</button>"
+        "<button>Imperial</button></div>"
+    )
+
+
+def test_188_asymmetric_labels_collapse_to_mixed_serving_basis():
+    """Regression: the #188 plain+weak label shape must collapse to clean base
+    fields and merge with the per-serving toggle into a `mixed` serving_basis
+    group; the Metric/Imperial display toggle stays interactive and OFF."""
+    profile, new_fields = detect_interaction_profile(
+        _188_html(), _188_FIELDS, repeated_item_selector="tbody tr"
+    )
+
+    # Clean collapse: one base set, no "(alt column)" fields.
+    assert new_fields is not None
+    assert [f["label"] for f in new_fields] == ["Food name", "Serving size", "Calories"]
+
+    groups = {g["metadata_key"]: g for g in profile["groups"]}
+
+    # serving_basis is MIXED (static columns + browser toggle), labeled by the
+    # toggle; per-variant calories come from the distinct columns (3 vs 5), and
+    # the per-serving serving size comes from the browser toggle (recipe), not the
+    # duplicate static column.
+    sb = groups["serving_basis"]
+    assert sb["execution"] == "mixed"
+    opt = {o["label"]: o for o in sb["options"]}
+    assert set(opt) == {"Show per 100 g", "Show per serving"}
+    assert opt["Show per 100 g"]["field_selectors"]["Calories"] == "td:nth-child(3)"
+    assert opt["Show per serving"]["field_selectors"]["Calories"] == "td:nth-child(5)"
+    assert opt["Show per 100 g"]["recipe"] == []
+    assert opt["Show per serving"]["recipe"]  # browser recipe for per-serving
+
+    # unit_system display toggle: interactive and OFF by default.
+    us = groups["unit_system"]
+    assert us["execution"] == "interactive"
+    assert all(o["selected"] is False for o in us["options"])
+
+    # The detect endpoint auto-enables because a deterministic/mixed group exists.
+    assert any(g["execution"] in ("deterministic", "mixed") for g in profile["groups"])
+
+
+@pytest.mark.asyncio
+async def test_188_extraction_produces_162_style_rows():
+    """End-to-end on the #188 shape: enabling the detected profile yields the
+    clean #162 output — 2 rows per food tagged serving_basis, per-100g from the
+    static columns and per-serving from the browser toggle (no alt columns)."""
+    profile, new_fields = detect_interaction_profile(
+        _188_html(), _188_FIELDS, repeated_item_selector="tbody tr"
+    )
+    # Replicate the detect endpoint's auto-enable (enable; keep display toggles off).
+    profile["enabled"] = True
+    for g in profile["groups"]:
+        if g["execution"] not in ("deterministic", "mixed"):
+            for o in g["options"]:
+                o["selected"] = False
+
+    project = SimpleNamespace(analysis={"repeated_item_selector": "tbody tr"})
+    spec = SimpleNamespace(
+        mode=ExtractionMode.STRUCTURED,
+        content_config={},
+        fields=new_fields,
+        interaction_profile=profile,
+    )
+    # The "Show per serving" combo requires the browser; return the toggled view
+    # where the serving-size column now shows the per-serving size.
+    per_serving_html = _188_html(
+        serving2="1 portion (170 g)", cal3="265 Cal",
+        serving4="1 portion (170 g)", cal5="265 Cal",
+    )
+
+    async def _fake_browser(recipes):
+        return {cid: per_serving_html for cid in recipes}
+
+    records, _warnings = await extract_records_with_variants(
+        base_html=_188_html(),
+        source_url="https://www.calories.info/food/beef-veal",
+        project=project,
+        spec=spec,
+        max_records=50,
+        fetch_variant_htmls=_fake_browser,
+    )
+
+    by_basis = {
+        r.normalized_data.get("serving_basis"): r.normalized_data for r in records
+    }
+    assert set(by_basis) == {"Show per 100 g", "Show per serving"}
+    # No leftover alt columns in the output.
+    for data in by_basis.values():
+        assert "Serving size (alt column)" not in data
+        assert "Calories (alt column)" not in data
+    per100 = by_basis["Show per 100 g"]
+    per_serv = by_basis["Show per serving"]
+    assert str(per100["Calories"]) == "156" and per100["Serving size"] == "100 g"
+    assert str(per_serv["Calories"]) == "265"
+    assert per_serv["Serving size"] == "1 portion (170 g)"
+
+
 @pytest.mark.asyncio
 async def test_generalized_variants_extract_without_browser():
     """The real functional payoff: a static parenthetical-basis table extracts

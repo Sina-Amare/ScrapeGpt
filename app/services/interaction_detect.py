@@ -566,11 +566,15 @@ def _position_aligned_column_variants(
             keys_here.append(key)
         if not field_selectors:
             return None
-        strong_key = next((k for k in keys_here if key_strong.get(k, False)), None)
-        chosen = strong_key or keys_here[0]
-        label = key_label.get(chosen, chosen)
+        # NEUTRAL labels: we only reach position-alignment because the analyzer
+        # labeled the parallel columns inconsistently, so its qualifiers are not
+        # trustworthy variant names. Use plain "Column N". When this column set is
+        # merged with an interactive toggle (_merge_column_set_with_toggle), the
+        # merge replaces these with the toggle's real labels (e.g. "Show per
+        # serving"); otherwise neutral names are the honest choice.
+        label = f"Column {i + 1}"
         options.append({
-            "id": sanitize_metadata_key(label) or f"set_{i}",
+            "id": f"column_{i + 1}",
             "label": label,
             "selected": True,
             "field_selectors": field_selectors,
@@ -593,6 +597,54 @@ def _base_of(field: dict[str, Any]) -> str:
     return base
 
 
+# Synthetic key for the *default* (unqualified) column of a parallel pair — e.g.
+# a page that labels one column plainly ("Serving size") and only its twin with a
+# qualifier ("Serving size (alt column)").
+_DEFAULT_COLUMN_KEY = "__default_column__"
+
+
+def _attach_default_columns(
+    families: dict[str, list[tuple[str, dict[str, Any]]]],
+    plain_by_base: dict[str, list[dict[str, Any]]],
+    key_label: dict[str, str],
+    key_order: list[str],
+    key_strong: dict[str, bool],
+) -> None:
+    """Fold a plain (unqualified) field into a family that already has a qualified
+    sibling, as an implicit *default* first variant — IN PLACE.
+
+    Analyzers frequently label only the alternate column of a parallel table pair
+    (``Serving size`` + ``Serving size (alt column)``), which otherwise leaves the
+    family with a single key and blocks collapse. We only do this for **simple
+    table-cell columns** (``td:nth-child(n)``), where interleaved parallel
+    structure is unambiguous; the strict separability/verification guards in
+    ``_position_aligned_column_variants`` still gate the final collapse.
+    """
+    for base, members in families.items():
+        plains = plain_by_base.get(base) or []
+        if not plains:
+            continue
+        if any(
+            _cell_column_index(str(fld.get("selector") or "")) is None
+            for _k, fld in members
+        ):
+            continue  # a qualified member isn't a simple cell -> don't risk it
+        plain = next(
+            (
+                p for p in plains
+                if _cell_column_index(str(p.get("selector") or "")) is not None
+            ),
+            None,
+        )
+        if plain is None:
+            continue
+        members.append((_DEFAULT_COLUMN_KEY, plain))
+        if _DEFAULT_COLUMN_KEY not in key_label:
+            key_label[_DEFAULT_COLUMN_KEY] = "default"
+            key_order.insert(0, _DEFAULT_COLUMN_KEY)
+        key_strong.setdefault(_DEFAULT_COLUMN_KEY, False)
+
+
 def detect_column_variants(
     fields: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -613,18 +665,24 @@ def detect_column_variants(
     The per-option selectors come straight from the analyzer, never synthesized.
     """
     families: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    plain_by_base: dict[str, list[dict[str, Any]]] = {}
     key_label: dict[str, str] = {}
     key_order: list[str] = []  # first-appearance order across the field list
     key_strong: dict[str, bool] = {}
     for f in fields:
         base, key, opt_label, strong = _split_variant_qualifier(_field_label(f))
-        if key is None or not base:
+        if not base:
+            continue
+        if key is None:
+            plain_by_base.setdefault(base, []).append(f)
             continue
         families.setdefault(base, []).append((key, f))
         if key not in key_label:
             key_label[key] = opt_label or key
             key_order.append(key)
         key_strong[key] = key_strong.get(key, False) or strong
+
+    _attach_default_columns(families, plain_by_base, key_label, key_order, key_strong)
 
     # Keep only families that carry >=2 distinct variant keys.
     families = {
