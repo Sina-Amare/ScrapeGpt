@@ -45,6 +45,13 @@ logger = logging.getLogger(__name__)
 # browser backend is available. Never silently omits a requested combo.
 FetchVariantHtmls = Callable[[dict[str, list[dict[str, Any]]]], Awaitable[dict[str, str]]]
 
+# Column stamped onto the rows of a browser-required variant whose snapshot could
+# not be captured, so extraction fell back to the page's STATIC values. A
+# toggle-only value (e.g. a per-serving size left at the per-100g default) would
+# otherwise look clean; this makes those rows visibly suspect in the preview,
+# records view, and CSV/JSON/XLSX export. Absent on cleanly-captured rows.
+VARIANT_QUALITY_COLUMN = "data_quality"
+
 
 def _variant_spec(spec: ExtractionSpec, fields: list[dict[str, Any]]) -> Any:
     """A lightweight spec view the extractor accepts (reads mode/fields/config)."""
@@ -242,6 +249,7 @@ async def extract_records_with_variants(
     per_combo: list[tuple[VariantCombination, list[ExtractedPayload]]] = []
     zero_variants: list[str] = []
     degraded_combos: list[str] = []  # browser missing -> static fallback used
+    degraded_ids: set[str] = set()   # combo ids whose rows are stale-suspect
     skipped_combos: list[str] = []   # browser missing AND no static fallback
     nonzero = 0
 
@@ -255,6 +263,7 @@ async def extract_records_with_variants(
                     # static columns from the base HTML.
                     html = base_html
                     degraded_combos.append(combo.label)
+                    degraded_ids.add(combo.id)
                 else:
                     # Nothing to read without a browser -> skip this combo.
                     skipped_combos.append(combo.label)
@@ -309,15 +318,26 @@ async def extract_records_with_variants(
     if merged_payloads is not None:
         payloads = merged_payloads
     else:
-        payloads = [
-            ExtractedPayload(
-                raw_data=tag_record_metadata(r.raw_data, combo),
-                normalized_data=tag_record_metadata(r.normalized_data, combo),
-                warnings=r.warnings,
+        # Browser-required combos never merge (see _merge_variant_records), so a
+        # degraded combo is always here in the row-per-variant output. Stamp each
+        # of its rows with a visible quality flag + row warning so a value that
+        # fell back to the page's static default can never look clean downstream.
+        payloads = []
+        for combo, records in per_combo:
+            stale_note = (
+                f"Browser-rendered values for '{combo.label}' could not be "
+                "captured; shown values may be the page's static defaults (stale)."
+                if combo.id in degraded_ids else None
             )
-            for combo, records in per_combo
-            for r in records
-        ]
+            for r in records:
+                raw = tag_record_metadata(r.raw_data, combo)
+                norm = tag_record_metadata(r.normalized_data, combo)
+                row_warnings = list(r.warnings or [])
+                if stale_note:
+                    raw[VARIANT_QUALITY_COLUMN] = stale_note
+                    norm[VARIANT_QUALITY_COLUMN] = stale_note
+                    row_warnings.append(stale_note)
+                payloads.append(ExtractedPayload(raw, norm, row_warnings))
 
     # Partial-zero is a warning, not a hard failure: some variants may legitimately
     # be empty on a given page. An all-zero result falls through to the caller's

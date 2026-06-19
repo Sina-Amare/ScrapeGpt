@@ -7,7 +7,10 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.job import ExtractionMode
-from app.services.interaction_extraction import extract_records_with_variants
+from app.services.interaction_extraction import (
+    VARIANT_QUALITY_COLUMN,
+    extract_records_with_variants,
+)
 from app.services.interaction_profile import InteractionError
 
 # A calories-style table: Food | amount | per-100g cal | amount | per-serving cal
@@ -187,7 +190,12 @@ async def test_interactive_without_browser_degrades_not_fails():
 async def test_mixed_variant_degrades_to_static_columns_on_browser_crash():
     """Headline robustness case: a 'mixed' page (static columns + browser toggle)
     whose browser CRASHES must still deliver the static per-variant data (both
-    calorie columns) plus a visible warning — never a hard failure."""
+    calorie columns) plus a visible warning — never a hard failure.
+
+    AND the degraded (browser-required) rows must be stamped with a visible
+    ``data_quality`` flag so a value that fell back to the page's static default
+    can never silently look clean in the export/UI, while cleanly-extracted rows
+    stay unflagged."""
 
     async def boom(_recipes):
         raise RuntimeError("Connection closed while reading from the driver")
@@ -205,6 +213,26 @@ async def test_mixed_variant_degrades_to_static_columns_on_browser_crash():
     assert sorted(by_variant["Show per 100 g"]) == [156, 242]
     assert sorted(by_variant["Show per serving"]) == [265, 411]
     assert any("static values" in w for w in warnings)
+
+    # Loud-degrade: browser-required rows are flagged; the static-only rows are not.
+    per_serving = [r for r in records
+                   if r.normalized_data["serving_basis"] == "Show per serving"]
+    per_100g = [r for r in records
+                if r.normalized_data["serving_basis"] == "Show per 100 g"]
+    assert per_serving and all(
+        "stale" in str(r.normalized_data.get(VARIANT_QUALITY_COLUMN, "")).lower()
+        for r in per_serving
+    ), "degraded per-serving rows must carry the data_quality flag"
+    assert all(
+        VARIANT_QUALITY_COLUMN in r.normalized_data for r in per_serving
+    )
+    assert all(
+        VARIANT_QUALITY_COLUMN not in r.normalized_data for r in per_100g
+    ), "cleanly-extracted static rows must NOT be flagged"
+    # The flag is also a row-level warning.
+    assert all(
+        any("stale" in w.lower() for w in r.warnings) for r in per_serving
+    )
 
 
 @pytest.mark.asyncio
