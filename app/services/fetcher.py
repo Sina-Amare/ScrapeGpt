@@ -854,6 +854,67 @@ async def _run_interaction_steps(page, steps: list[dict]) -> None:
             pass
 
 
+async def _content_len(page) -> int | None:
+    try:
+        return len(await page.content())
+    except Exception:
+        return None
+
+
+async def _wait_for_dom_settle(
+    page,
+    *,
+    baseline_len: int | None = None,
+    interval_ms: int = 250,
+    stable_reads: int = 2,
+    max_ms: int = 10_000,
+) -> None:
+    """Wait for a client-side re-render to land, then for the DOM to stabilize.
+
+    Client-side toggles (e.g. a React/MUI ToggleButtonGroup re-rendering a table)
+    do NO network I/O, so ``wait_for_load_state("networkidle")`` returns before
+    the re-render lands and ``page.content()`` would capture the stale, pre-toggle
+    DOM (the flaky "shows the default value" bug). Two phases, no site knowledge:
+
+      1. If ``baseline_len`` (the pre-interaction size) is known, wait until the
+         content size CHANGES — otherwise we could "stabilize" on the unchanged
+         pre-toggle DOM that simply has not updated yet.
+      2. Then wait until the size stops changing for ``stable_reads`` reads.
+    """
+    elapsed = 0
+    if baseline_len is not None:
+        while elapsed < max_ms:
+            size = await _content_len(page)
+            if size is None:
+                return
+            if size != baseline_len:
+                break
+            try:
+                await page.wait_for_timeout(interval_ms)
+            except Exception:
+                return
+            elapsed += interval_ms
+
+    prev: int | None = None
+    stable = 0
+    while elapsed < max_ms:
+        size = await _content_len(page)
+        if size is None:
+            return
+        if prev is not None and size == prev:
+            stable += 1
+            if stable >= stable_reads:
+                return
+        else:
+            stable = 0
+        prev = size
+        try:
+            await page.wait_for_timeout(interval_ms)
+        except Exception:
+            return
+        elapsed += interval_ms
+
+
 async def _capture_recipes_on_context(
     context, url: str, recipes: dict[str, list[dict]], blocked: list[FetchError]
 ) -> dict[str, str]:
@@ -863,29 +924,63 @@ async def _capture_recipes_on_context(
     both expose the same page API. Re-goto per recipe resets to the base state.
     """
     out: dict[str, str] = {}
+    stalled: list[str] = []  # stepped recipes whose interaction never changed the DOM
     page = await context.new_page()
     for recipe_id, steps in recipes.items():
-        response = await page.goto(
-            url,
-            wait_until="domcontentloaded",
-            timeout=settings.SCRAPE_TIMEOUT * 1000,
+        # A click recipe SHOULD change the DOM. Browser drivers occasionally drop
+        # a click on a freshly-hydrated control (no re-render), leaving the stale
+        # pre-toggle DOM (the flaky "shows the default value" bug). Retry the whole
+        # navigate+interact a few times until the content actually changes.
+        attempts = 3 if steps else 1
+        last_html = ""
+        changed = False
+        for attempt in range(attempts):
+            response = await page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=settings.SCRAPE_TIMEOUT * 1000,
+            )
+            if blocked:
+                raise blocked[0]
+            if response is None:
+                raise FetchError("Browser got no response", "FETCH_FAILED")
+            try:
+                validate_url(page.url)
+            except URLValidationError as exc:
+                raise FetchError(
+                    f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
+                ) from exc
+            try:
+                await page.wait_for_load_state(
+                    "networkidle", timeout=_BROWSER_SETTLE_MS
+                )
+            except Exception:
+                pass
+            if not steps:
+                last_html = await page.content()
+                break
+            baseline_len = await _content_len(page)
+            await _run_interaction_steps(page, steps)
+            # Wait for the client-side re-render to land + stabilize.
+            await _wait_for_dom_settle(page, baseline_len=baseline_len)
+            last_html = await page.content()
+            if baseline_len is None or len(last_html) != baseline_len:
+                changed = True
+                break  # interaction took effect — done
+        out[recipe_id] = last_html
+        if steps and not changed:
+            stalled.append(recipe_id)
+
+    # Some drivers (notably the stealth Firefox/camoufox build) run without
+    # crashing yet never register the click, so retrying in the SAME driver stays
+    # stuck on the pre-toggle DOM. Signal a retryable driver failure so the caller
+    # cascades to the next backend (Chromium clicks these reliably). If the next
+    # backend also can't move the DOM, the caller degrades gracefully to static.
+    if stalled:
+        raise FetchError(
+            f"Interaction produced no DOM change for: {', '.join(stalled)}",
+            "BROWSER_DRIVER_CRASHED",
         )
-        if blocked:
-            raise blocked[0]
-        if response is None:
-            raise FetchError("Browser got no response", "FETCH_FAILED")
-        try:
-            validate_url(page.url)
-        except URLValidationError as exc:
-            raise FetchError(
-                f"Final URL blocked: {exc}", "BROWSER_URL_BLOCKED"
-            ) from exc
-        try:
-            await page.wait_for_load_state("networkidle", timeout=_BROWSER_SETTLE_MS)
-        except Exception:
-            pass
-        await _run_interaction_steps(page, steps)
-        out[recipe_id] = await page.content()
     return out
 
 

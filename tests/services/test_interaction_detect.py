@@ -529,6 +529,10 @@ def test_188_asymmetric_labels_collapse_to_mixed_serving_basis():
     assert set(opt) == {"Show per 100 g", "Show per serving"}
     assert opt["Show per 100 g"]["field_selectors"]["Calories"] == "td:nth-child(3)"
     assert opt["Show per serving"]["field_selectors"]["Calories"] == "td:nth-child(5)"
+    # Each option reads its OWN column — the per-serving option must NOT reuse the
+    # default per-100g serving-size column (the bug that kept showing "100 g").
+    assert opt["Show per 100 g"]["field_selectors"]["Serving size"] == "td:nth-child(2)"
+    assert opt["Show per serving"]["field_selectors"]["Serving size"] == "td:nth-child(4)"
     assert opt["Show per 100 g"]["recipe"] == []
     assert opt["Show per serving"]["recipe"]  # browser recipe for per-serving
 
@@ -563,10 +567,12 @@ async def test_188_extraction_produces_162_style_rows():
         fields=new_fields,
         interaction_profile=profile,
     )
-    # The "Show per serving" combo requires the browser; return the toggled view
-    # where the serving-size column now shows the per-serving size.
+    # The "Show per serving" combo requires the browser; return the toggled view.
+    # Discriminating: only the per-serving column (col4) gets "1 portion (170 g)";
+    # the default per-100g column (col2) stays "100 g". So a per-serving option
+    # that wrongly reused col2 would read "100 g" and fail this test.
     per_serving_html = _188_html(
-        serving2="1 portion (170 g)", cal3="265 Cal",
+        serving2="100 g", cal3="156 Cal",
         serving4="1 portion (170 g)", cal5="265 Cal",
     )
 

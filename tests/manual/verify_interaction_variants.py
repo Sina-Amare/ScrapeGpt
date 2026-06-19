@@ -242,23 +242,31 @@ async def main() -> int:
              if "serving" in str(f.get("label", "")).lower()),
             "Serving Size",
         )
+        # Key by (Food, serving_basis) only. unit_system is a DISPLAY toggle that
+        # detection intentionally leaves OFF, so it is absent from the rows — the
+        # old key required unit_system="Metric" and never matched (stale).
         got = {
-            (d.get("Food"), str(d.get("serving_basis")), str(d.get("unit_system"))):
-            (d.get(skey), d.get("Calories"))
+            (d.get("Food"), str(d.get("serving_basis"))): (d.get(skey), d.get("Calories"))
             for d in (r.normalized_data for r in mrecs)
         }
-        for combo in [
-            ("Beef", "Show per 100 g", "Metric"),
-            ("Beef", "Show per serving", "Metric"),
-            ("Beef", "Show per serving", "Imperial"),
-        ]:
+        for combo in [("Beef", "Show per 100 g"), ("Beef", "Show per serving")]:
             logger.info("merge E2E %s -> serving=%r cal=%r", combo, *got.get(combo, (None, None)))
-        real = got.get(("Beef", "Show per serving", "Metric"), (None, None))[0]
-        if not (real and "portion" in str(real).lower()):
-            logger.error("merge E2E did not yield the real per-serving serving size")
+        serv, cal = got.get(("Beef", "Show per serving"), (None, None))
+        # The headline correctness check: the per-serving row must carry the REAL
+        # browser-rendered serving size (e.g. "1 portion (170 g)"), not the static
+        # default "100 g", AND the per-serving calories (265).
+        if not (serv and "portion" in str(serv).lower()):
+            logger.error(
+                "merge E2E per-serving serving size wrong: %r (want a '... portion ...')", serv
+            )
+            failures += 1
+        elif str(cal) != "265":
+            logger.error("merge E2E per-serving calories wrong: %r (want 265)", cal)
             failures += 1
         else:
-            logger.info("OK merge E2E: real per-serving serving size via browser = %r", real)
+            logger.info(
+                "OK merge E2E: per-serving serving=%r calories=%r (browser-rendered)", serv, cal
+            )
 
     logger.info("verify_interaction_variants done failures=%s", failures)
     return failures

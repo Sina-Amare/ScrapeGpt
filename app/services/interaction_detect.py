@@ -995,8 +995,14 @@ def _merge_column_set_with_toggle(
     for col_o, tog_o in zip(col_opts, tog_opts):
         field_selectors: dict[str, str] = {}
         for base in bases:
-            source = col_o if distinct[base] else col_opts[0]
-            sel = (source.get("field_selectors") or {}).get(base)
+            # Each option reads its OWN column, including toggle-dependent fields
+            # whose static values are identical (e.g. the per-serving serving size
+            # that only differs after the browser toggle re-renders): the
+            # per-serving option must read the per-serving column on the rendered
+            # HTML, not the default (per-100g) column — otherwise it keeps showing
+            # the static default value. The browser recipe on this option makes
+            # that column hold the real per-variant value.
+            sel = (col_o.get("field_selectors") or {}).get(base)
             if sel:
                 field_selectors[str(base)] = str(sel)
         label = str(tog_o.get("label") or col_o.get("label") or "Option")
