@@ -91,7 +91,7 @@ export function ScopeSelector({
                 <span className="text-sm font-semibold">{info.label}</span>
                 {isAiSuggested ? (
                   <span className="rounded-full bg-teal-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-teal">
-                    Suggested
+                    Best match
                   </span>
                 ) : null}
                 {info.warnStrong ? (

@@ -14,16 +14,16 @@
 
 /* ─── Design tokens: dark mode ───────────────────────────────────────────── */
 html.dark {
-  --c-surface:    #1F2430;
-  --c-porcelain:  #171B24;
+  --c-surface:    #252B36;
+  --c-porcelain:  #1E2430;
   --c-ink:        #F4F7FB;
-  --c-muted:      #A4AFBF;
-  --c-line:       #343B4A;
-  --c-body:       #11141C;
-  --c-grid:       rgba(125, 154, 214, 0.035);
-  --c-teal-soft:  rgba(34, 114, 255, 0.16);
-  --shadow-panel: 0 14px 30px -24px rgba(0, 0, 0, 0.78),
-                  0 1px 0 rgba(255, 255, 255, 0.035) inset;
+  --c-muted:      #B2BDCE;
+  --c-line:       #3B4657;
+  --c-body:       #171D28;
+  --c-grid:       rgba(125, 154, 214, 0.028);
+  --c-teal-soft:  rgba(34, 114, 255, 0.13);
+  --shadow-panel: 0 10px 26px -20px rgba(0, 0, 0, 0.62),
+                  0 1px 0 rgba(255, 255, 255, 0.045) inset;
 }
 
 @font-face {
@@ -47,7 +47,7 @@ html.dark {
 @tailwind utilities;
 
 /* ─── Smooth theme transitions ───────────────────────────────────────────── */
-*, *::before, *::after {
+:where(button, a, input, textarea, select, [role="button"], .card-hover) {
   transition-property: background-color, border-color, color, fill, stroke, box-shadow;
   transition-duration: 0.18s;
   transition-timing-function: ease;
@@ -81,22 +81,15 @@ body {
     linear-gradient(90deg, var(--c-grid) 1px, transparent 1px),
     var(--c-body);
   background-size: 32px 32px;
-  animation: grid-drift 80s linear infinite;
 }
 
 html.dark body {
   background:
-    radial-gradient(circle at 18% -8%, rgba(34, 114, 255, 0.08), transparent 30rem),
+    radial-gradient(circle at 18% -8%, rgba(34, 114, 255, 0.06), transparent 28rem),
     linear-gradient(var(--c-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--c-grid) 1px, transparent 1px),
     var(--c-body);
   background-size: auto, 32px 32px, 32px 32px, auto;
-  animation: none;
-}
-
-@keyframes grid-drift {
-  0%   { background-position: 0 0, 0 0; }
-  100% { background-position: 32px 32px, 32px 32px; }
 }
 
 @keyframes extract-progress-indeterminate {

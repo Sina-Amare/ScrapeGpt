@@ -143,6 +143,30 @@ def normalize_crawl_scope(
     out.setdefault("exclude_patterns", [])
     out.setdefault("pagination", {})
     out.setdefault("link_rules", [])
+    rec = out.get("ai_recommendation")
+    suggested_patterns: list[str] = []
+    if isinstance(rec, dict):
+        raw_patterns = rec.get("suggested_include_patterns") or []
+        if isinstance(raw_patterns, list):
+            suggested_patterns = [
+                str(pattern).strip()
+                for pattern in raw_patterns
+                if str(pattern or "").strip()
+            ]
+    if (
+        out.get("mode") == CrawlScopeMode.COLLECTION.value
+        and not out.get("include_patterns")
+        and not out.get("link_rules")
+        and suggested_patterns
+    ):
+        out["include_patterns"] = suggested_patterns
+    if (
+        out.get("mode") == CrawlScopeMode.DATASET.value
+        and not out.get("include_patterns")
+        and not out.get("link_rules")
+        and suggested_patterns
+    ):
+        out["include_patterns"] = suggested_patterns
     # Defense-in-depth: COLLECTION is meant to crawl one level of sibling/category
     # list pages. The classifier only caps depth when a positive max_depth is set
     # (None/<=0 == unbounded), so guarantee a positive bound here for any
@@ -743,10 +767,7 @@ def _recommend_scope_from_analysis(analysis: dict[str, Any]) -> dict[str, Any] |
     if not isinstance(analysis, dict):
         return None
     warnings: list[str] = []
-    if analysis.get("pagination_selector"):
-        recommended = "PAGINATION"
-        confidence = 0.65
-    elif analysis.get("repeated_item_selector"):
+    if analysis.get("repeated_item_selector"):
         recommended = "DATASET"
         confidence = 0.55
     else:
@@ -829,6 +850,23 @@ def _selector_match_count(html: str, selector: str | None) -> int:
         return 0
 
 
+def _anchor_selector_match_count(html: str, selector: str | None) -> int:
+    """Number of anchor elements matched by a selector.
+
+    AI analysis can point at generic UI buttons/tabs for pagination. A selector
+    is only evidence for crawl pagination when it directly identifies links the
+    crawler can follow. URL-shape heuristics still cover real page links even
+    when the selector is absent or noisy.
+    """
+    if not html or not selector:
+        return 0
+    try:
+        matches = BeautifulSoup(html, "lxml").select(str(selector))
+    except Exception:
+        return 0
+    return sum(1 for match in matches if isinstance(match, Tag) and match.name == "a")
+
+
 def dominant_path_glob(urls: list[str], seed_url: str) -> tuple[str, int] | None:
     """Derive a sibling include glob from the seed's parent path.
 
@@ -901,7 +939,7 @@ def recommend_scope(
 
     # 1. Real pagination? Selector must match an anchor, or links look paginated.
     pagination_selector = (analysis.get("pagination_selector") or "").strip()
-    selector_hits = _selector_match_count(html, pagination_selector)
+    selector_hits = _anchor_selector_match_count(html, pagination_selector)
     heuristic_pagination = [u for u in links if _looks_like_pagination(u)]
     if selector_hits > 0 or heuristic_pagination:
         evidence = []

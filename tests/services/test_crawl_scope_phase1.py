@@ -15,6 +15,7 @@ from app.services.crawl_scope import (
     discover_links_for_scope,
     dominant_path_glob,
     dominant_prefix_glob,
+    normalize_crawl_scope,
     recommend_scope,
 )
 from app.schemas.project import CrawlScope
@@ -160,6 +161,23 @@ def test_recommend_scope_ignores_unmatched_pagination_selector():
     assert rec["recommended_mode"] != "PAGINATION"
 
 
+def test_recommend_scope_ignores_button_pagination_selector_for_category_links():
+    html = (
+        '<button class="tab">Charts</button>'
+        '<button class="tab">More information</button>'
+        '<a href="/food/meat">Meat</a>'
+        '<a href="/food/beer">Beer</a>'
+        '<a href="/food/fruit">Fruit</a>'
+    )
+    rec = recommend_scope(
+        {"pagination_selector": "button.tab"},
+        html,
+        "https://x.com/food/beef",
+    )
+    assert rec["recommended_mode"] == "COLLECTION"
+    assert rec["suggested_include_patterns"] == ["/food/*"]
+
+
 def test_recommend_scope_pagination_detects_page_num_param():
     """scrapethissite.com-style ?page_num=N pagination must be recognised even
     though the key is not a bare 'page='."""
@@ -237,6 +255,112 @@ def test_default_crawl_scope_prefers_precomputed_recommendation():
     rec = scope["ai_recommendation"]
     assert rec["recommended_mode"] == "COLLECTION"
     assert rec["suggested_include_patterns"] == ["/food/*"]
+
+
+def test_normalize_collection_seeds_recommended_include_patterns():
+    scope = normalize_crawl_scope(
+        {
+            "mode": "COLLECTION",
+            "status": "USER_CONFIRMED",
+            "include_patterns": [],
+            "ai_recommendation": {
+                "recommended_mode": "COLLECTION",
+                "confidence": 0.7,
+                "warnings": [],
+                "evidence": [],
+                "suggested_include_patterns": ["/food/*"],
+            },
+        }
+    )
+    assert scope["include_patterns"] == ["/food/*"]
+    assert scope["max_depth"] == 1
+
+
+def test_normalize_collection_preserves_explicit_empty_when_link_rules_exist():
+    scope = normalize_crawl_scope(
+        {
+            "mode": "COLLECTION",
+            "status": "USER_CONFIRMED",
+            "include_patterns": [],
+            "link_rules": [{"role": "collection", "pattern": "/category/*"}],
+            "ai_recommendation": {
+                "recommended_mode": "COLLECTION",
+                "confidence": 0.7,
+                "warnings": [],
+                "evidence": [],
+                "suggested_include_patterns": ["/food/*"],
+            },
+        }
+    )
+    assert scope["include_patterns"] == []
+
+
+def test_start_project_extraction_normalizes_scope_before_hashing():
+    from app.models.job import ExtractionMode, ExtractionSpec, Project, ProjectState
+    from app.services import project_extraction
+
+    class FakeResult:
+        def scalars(self):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeDB:
+        def __init__(self):
+            self.added = []
+
+        async def execute(self, statement):
+            return FakeResult()
+
+        def add(self, obj):
+            self.added.append(obj)
+            if obj.__class__.__name__ == "ExtractionRun":
+                obj.id = 99
+
+        async def flush(self):
+            pass
+
+    project = Project(
+        id=1,
+        user_id=1,
+        url=SEED,
+        normalized_url=SEED,
+        state=ProjectState.ANALYSIS_READY,
+    )
+    spec = ExtractionSpec(
+        id=10,
+        project_id=1,
+        mode=ExtractionMode.STRUCTURED,
+        fields=[],
+        content_config={},
+        url_patterns=[],
+        page_limit=25,
+        export_format="csv",
+        crawl_scope={
+            "mode": "COLLECTION",
+            "status": "USER_CONFIRMED",
+            "include_patterns": [],
+            "link_rules": [],
+            "ai_recommendation": {
+                "recommended_mode": "COLLECTION",
+                "confidence": 0.8,
+                "warnings": [],
+                "evidence": [],
+                "suggested_include_patterns": ["/food/*"],
+            },
+        },
+    )
+
+    async def run():
+        return await project_extraction.start_project_extraction(FakeDB(), project, spec)
+
+    import asyncio
+
+    run = asyncio.run(run())
+    assert spec.crawl_scope["include_patterns"] == ["/food/*"]
+    assert spec.crawl_scope["max_depth"] == 1
+    assert run.spec_hash == project_extraction._spec_hash(spec)
 
 
 # ---------------------------------------------------------------------------

@@ -215,6 +215,50 @@ async def test_update_spec_saves_crawl_scope(async_client, app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_update_spec_seeds_collection_patterns_from_recommendation(async_client, app, monkeypatch):
+    project = _project()
+    scope = {
+        "version": 1,
+        "mode": "COLLECTION",
+        "status": "USER_CONFIRMED",
+        "seed_url": "https://example.com/food/beef",
+        "max_pages": 25,
+        "max_depth": None,
+        "include_patterns": [],
+        "exclude_patterns": [],
+        "pagination": {},
+        "link_rules": [],
+        "ai_recommendation": {
+            "recommended_mode": "COLLECTION",
+            "confidence": 0.7,
+            "warnings": [],
+            "evidence": [],
+            "suggested_include_patterns": ["/food/*"],
+        },
+        "user_confirmed_at": None,
+    }
+    spec = _spec()
+
+    async def fake_ensure_default_spec(db, proj):
+        return spec
+
+    monkeypatch.setattr("app.api.v1.endpoints.projects.ensure_default_spec", fake_ensure_default_spec)
+
+    app.dependency_overrides[deps.get_current_user] = lambda: _user()
+    app.dependency_overrides[deps.get_db] = lambda: (yield FakeSession(project=project, spec=spec))
+
+    response = await async_client.patch(
+        "/api/v1/projects/1/spec",
+        json={"crawl_scope": scope},
+    )
+
+    assert response.status_code == 200
+    assert spec.crawl_scope["mode"] == "COLLECTION"
+    assert spec.crawl_scope["include_patterns"] == ["/food/*"]
+    assert spec.crawl_scope["max_depth"] == 1
+
+
+@pytest.mark.asyncio
 async def test_update_spec_rejects_invalid_crawl_scope_mode(async_client, app, monkeypatch):
     """PATCH /spec with an unknown crawl_scope.mode returns 422."""
     project = _project()

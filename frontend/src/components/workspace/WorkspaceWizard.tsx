@@ -54,6 +54,15 @@ export function WorkspaceWizard({ project }: { project: ProjectResponse }) {
     }
   }
 
+  async function advanceFromScope() {
+    try {
+      await ws.saveScopeAndContinue();
+      setCurrent("check");
+    } catch {
+      // Scope/network errors are surfaced in the Scope step; stay put.
+    }
+  }
+
   // One-time "resuming where you left off" hint when we land past Review.
   const resumeNotified = useRef(false);
   useEffect(() => {
@@ -113,11 +122,11 @@ export function WorkspaceWizard({ project }: { project: ProjectResponse }) {
         return (
           <NextStepBar
             back={{ onClick: () => setCurrent("fields"), disabled: ws.isActive }}
-            hint={!scopeOk ? "Confirm the crawl scope to continue" : null}
             primary={{
               label: "Check sample data →",
-              onClick: () => setCurrent("check"),
-              disabled: !scopeOk,
+              onClick: advanceFromScope,
+              loading: ws.isSavingScope,
+              disabled: ws.isActive,
             }}
           />
         );

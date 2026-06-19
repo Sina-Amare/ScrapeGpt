@@ -45,9 +45,9 @@ def test_default_crawl_scope_uses_current_page_and_system_defaulted():
     assert s["max_pages"] == DEFAULT_CRAWL_SCOPE["max_pages"]
 
 
-def test_default_crawl_scope_recommends_pagination_when_ai_saw_one():
+def test_default_crawl_scope_does_not_trust_analysis_only_pagination_selector():
     s = default_crawl_scope(_project(), {"pagination_selector": "a.next"})
-    assert s["ai_recommendation"]["recommended_mode"] == "PAGINATION"
+    assert s["ai_recommendation"]["recommended_mode"] == "CURRENT_PAGE"
     assert s["ai_recommendation"]["confidence"] >= 0.5
 
 

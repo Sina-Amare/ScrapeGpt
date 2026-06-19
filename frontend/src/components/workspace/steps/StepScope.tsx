@@ -1,10 +1,10 @@
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { scopeModeLabel } from "../../../lib/scopeCopy";
-import type { CrawlScopeMode, ProjectResponse } from "../../../types";
+import { suggestedIncludePatterns } from "../../../lib/scopeDefaults";
+import type { ProjectResponse } from "../../../types";
 import { FrontierPreviewPanel } from "../../project/FrontierPreviewPanel";
 import { ScopeSelector } from "../../project/ScopeSelector";
 import { Alert } from "../../ui/Alert";
-import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import type { WorkspaceController } from "../useWorkspaceMutations";
 import { StepCard } from "./shared";
@@ -23,6 +23,7 @@ export function StepScope({
     isActive,
     saveScopeMutation,
     confirmScopeMutation,
+    saveScopeAndContinueMutation,
     savePatternsMutation,
     frontierPreviewMutation,
     broadenScopeMutation,
@@ -32,6 +33,11 @@ export function StepScope({
     pageLimit,
     setPageLimit,
   } = ws;
+  const suggestedPatterns = suggestedIncludePatterns(effectiveScope, draftMode ?? "CURRENT_PAGE");
+  const willApplySuggestedPatterns =
+    (draftMode === "COLLECTION" || draftMode === "DATASET") &&
+    (effectiveScope?.include_patterns ?? []).length === 0 &&
+    suggestedPatterns.length > 0;
 
   return (
     <div className="grid gap-6">
@@ -54,6 +60,11 @@ export function StepScope({
             <Alert tone="danger">{savePatternsMutation.error.message}</Alert>
           </div>
         ) : null}
+        {saveScopeAndContinueMutation.error ? (
+          <div className="mb-4">
+            <Alert tone="danger">{saveScopeAndContinueMutation.error.message}</Alert>
+          </div>
+        ) : null}
         {project.spec ? (
           <ScopeSelector
             crawlScope={effectiveScope}
@@ -68,19 +79,23 @@ export function StepScope({
         ) : (
           <p className="text-sm text-muted">Scope will be available after analysis.</p>
         )}
+        {willApplySuggestedPatterns ? (
+          <div className="mt-3 rounded-lg border border-teal/40 bg-teal-soft/30 p-3 text-sm text-ink">
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-teal" />
+              <span>
+                ScrapeGPT found matching related pages automatically. It will use{" "}
+                <strong>{suggestedPatterns.join(", ")}</strong> when you continue.
+              </span>
+            </div>
+          </div>
+        ) : null}
         {draftMode !== null && draftMode !== savedScope?.mode && draftMode !== "CURRENT_PAGE" ? (
-          <div className="mt-3 flex flex-wrap items-center gap-3">
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-line bg-porcelain p-3">
             <AlertCircle className="h-4 w-4 text-warning" />
             <span className="text-sm text-muted">
-              Scope mode changed to <strong>{scopeModeLabel(draftMode)}</strong>. Save to confirm.
+              Scope will be saved as <strong>{scopeModeLabel(draftMode)}</strong> when you continue.
             </span>
-            <Button
-              variant="secondary"
-              disabled={saveScopeMutation.isPending}
-              onClick={() => saveScopeMutation.mutate(draftMode as CrawlScopeMode)}
-            >
-              {saveScopeMutation.isPending ? "Saving..." : "Save scope"}
-            </Button>
           </div>
         ) : null}
 

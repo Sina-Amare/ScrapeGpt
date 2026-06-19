@@ -178,6 +178,7 @@ export function StepExtract({
           projectId={projectId}
           specFields={project.spec?.fields}
           isCompleted={isCompleted}
+          mode={project.extraction_mode}
         />
       </StepCard>
     </div>

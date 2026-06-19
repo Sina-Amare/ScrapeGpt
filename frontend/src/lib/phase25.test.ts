@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { buildColumns } from "./recordColumns";
 import { reasonCodeCopy } from "./frontierReasonCopy";
 import { qualityStateInfo, isScopeNotConfirmedError } from "./qualityCopy";
+import { scopeWithSmartDefaults, suggestedIncludePatterns } from "./scopeDefaults";
 import {
   scopeModeLabel,
   scopeModeInfo,
@@ -102,6 +103,47 @@ describe("scopeCopy — isUserConfirmed", () => {
 
   it("undefined returns false", () => {
     assert.ok(!isUserConfirmed(undefined));
+  });
+});
+
+const baseScope = {
+  version: 1,
+  mode: "CURRENT_PAGE" as const,
+  status: "SYSTEM_DEFAULTED" as const,
+  seed_url: "https://example.com/food/beef",
+  max_pages: 500,
+  max_depth: null,
+  include_patterns: [],
+  exclude_patterns: [],
+  pagination: { selector: null, url_pattern: null, estimated_pages: null },
+  link_rules: [],
+  ai_recommendation: {
+    recommended_mode: "COLLECTION" as const,
+    confidence: 0.7,
+    warnings: [],
+    evidence: [],
+    suggested_include_patterns: ["/food/*"],
+  },
+  user_confirmed_at: null,
+};
+
+describe("scopeDefaults", () => {
+  it("returns suggested include patterns for related-page scopes", () => {
+    assert.deepEqual(suggestedIncludePatterns(baseScope, "COLLECTION"), ["/food/*"]);
+  });
+
+  it("seeds collection include patterns so users do not type globs", () => {
+    const scope = scopeWithSmartDefaults(baseScope, "COLLECTION");
+    assert.deepEqual(scope.include_patterns, ["/food/*"]);
+    assert.equal(scope.max_depth, 1);
+  });
+
+  it("preserves user-entered include patterns", () => {
+    const scope = scopeWithSmartDefaults(
+      { ...baseScope, include_patterns: ["/custom/*"] },
+      "COLLECTION"
+    );
+    assert.deepEqual(scope.include_patterns, ["/custom/*"]);
   });
 });
 

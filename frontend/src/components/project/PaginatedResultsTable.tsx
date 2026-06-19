@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { useState } from "react";
 import { Alert } from "../ui/Alert";
 import { Button } from "../ui/Button";
@@ -7,7 +7,7 @@ import { Select } from "../ui/Select";
 import { Skeleton } from "../ui/Skeleton";
 import { api } from "../../lib/api";
 import { buildColumns } from "../../lib/recordColumns";
-import type { FieldSpec } from "../../types";
+import type { FieldSpec, ProjectRecord } from "../../types";
 
 function asString(value: unknown): string {
   if (value == null) return "";
@@ -21,9 +21,54 @@ type Props = {
   projectId: number;
   specFields: FieldSpec[] | null | undefined;
   isCompleted: boolean;
+  mode?: "STRUCTURED" | "CONTENT" | string;
 };
 
-export function PaginatedResultsTable({ projectId, specFields, isCompleted }: Props) {
+function ContentCard({
+  record,
+}: {
+  record: ProjectRecord;
+}) {
+  const data = record.normalized_data ?? record.raw_data;
+  const content = asString(data.content);
+  const sourceUrl = asString(data.source_url);
+  const [expanded, setExpanded] = useState(false);
+  const visibleText = expanded || content.length <= 900 ? content : `${content.slice(0, 900)}...`;
+
+  return (
+    <article className="rounded-lg border border-line bg-surface p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+            <FileText className="h-4 w-4 text-teal" />
+            Content page
+          </div>
+          {sourceUrl ? (
+            <p className="mt-1 truncate text-xs text-muted" title={sourceUrl}>
+              {sourceUrl}
+            </p>
+          ) : null}
+        </div>
+        <span className="rounded-full bg-porcelain px-2.5 py-1 text-xs font-semibold text-muted">
+          {content.length.toLocaleString()} chars
+        </span>
+      </div>
+      <p className="whitespace-pre-wrap text-sm leading-6 text-ink">{visibleText || "-"}</p>
+      {content.length > 900 ? (
+        <Button
+          variant="secondary"
+          className="mt-3"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          <ChevronDown className={["h-4 w-4 transition", expanded ? "rotate-180" : ""].join(" ")} />
+          {expanded ? "Show less" : "Read full content"}
+        </Button>
+      ) : null}
+    </article>
+  );
+}
+
+export function PaginatedResultsTable({ projectId, specFields, isCompleted, mode }: Props) {
   const [skip, setSkip] = useState(0);
   const [limit, setLimit] = useState(100);
 
@@ -39,6 +84,7 @@ export function PaginatedResultsTable({ projectId, specFields, isCompleted }: Pr
   const hasMore = data?.has_more ?? false;
   const items = data?.items ?? [];
   const columns = buildColumns(specFields, data?.columns ?? []);
+  const isContentMode = mode === "CONTENT" || columns.includes("content");
 
   const pageStart = total > 0 ? skip + 1 : 0;
   const pageEnd = Math.min(skip + limit, total);
@@ -97,36 +143,44 @@ export function PaginatedResultsTable({ projectId, specFields, isCompleted }: Pr
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-line">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-line bg-porcelain text-left text-xs font-bold uppercase tracking-widest text-muted">
-              {columns.map((col) => (
-                <th key={col} className="px-4 py-2.5">{col}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line bg-surface">
-            {items.map((record) => (
-              <tr key={record.id} className="hover:bg-teal-soft/30">
-                {columns.map((col) => {
-                  const val = (record.normalized_data ?? record.raw_data)[col];
-                  const str = asString(val);
-                  return (
-                    <td
-                      key={col}
-                      className="max-w-xs truncate px-4 py-3 text-muted"
-                      title={str || undefined}
-                    >
-                      {str || "-"}
-                    </td>
-                  );
-                })}
+      {isContentMode ? (
+        <div className="grid gap-3">
+          {items.map((record) => (
+            <ContentCard key={record.id} record={record} />
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-line">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-line bg-porcelain text-left text-xs font-bold uppercase tracking-widest text-muted">
+                {columns.map((col) => (
+                  <th key={col} className="px-4 py-2.5">{col}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-line bg-surface">
+              {items.map((record) => (
+                <tr key={record.id} className="hover:bg-teal-soft/30">
+                  {columns.map((col) => {
+                    const val = (record.normalized_data ?? record.raw_data)[col];
+                    const str = asString(val);
+                    return (
+                      <td
+                        key={col}
+                        className="max-w-xs truncate px-4 py-3 text-muted"
+                        title={str || undefined}
+                      >
+                        {str || "-"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-3">
         <Button

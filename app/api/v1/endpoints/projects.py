@@ -59,7 +59,7 @@ from app.schemas.project import (
     RecordResponse,
     RetryRequest,
 )
-from app.services.crawl_scope import ScopeConfirmationError
+from app.services.crawl_scope import ScopeConfirmationError, normalize_crawl_scope
 from app.services.extraction_mode import resolve_extraction_mode
 from app.services.fetcher import FetchError, fetch_url
 from app.services.interaction_detect import detect_interaction_profile
@@ -442,7 +442,11 @@ async def update_project_spec(
     if payload.export_format is not None:
         spec.export_format = payload.export_format
     if payload.crawl_scope is not None:
-        spec.crawl_scope = payload.crawl_scope.model_dump(mode="json")
+        spec.crawl_scope = normalize_crawl_scope(
+            payload.crawl_scope.model_dump(mode="json"),
+            seed_url=project.normalized_url or project.url,
+            page_limit=spec.page_limit,
+        )
     if payload.interaction_profile is not None:
         spec.interaction_profile = payload.interaction_profile.model_dump(mode="json")
 

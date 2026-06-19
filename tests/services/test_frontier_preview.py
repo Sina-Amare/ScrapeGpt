@@ -314,6 +314,36 @@ def test_select_links_to_enqueue_returns_empty_for_legacy_no_scope():
     assert "https://other.example.com/x" not in out
 
 
+def test_frontier_preview_normalizes_collection_recommendation_before_classifying():
+    project = SimpleNamespace(
+        id=1,
+        url="https://example.com/food/beef",
+        normalized_url="https://example.com/food/beef",
+        analysis=None,
+    )
+    spec = _spec(
+        mode="COLLECTION",
+        include_patterns=[],
+        ai_recommendation={
+            "recommended_mode": "COLLECTION",
+            "confidence": 0.8,
+            "warnings": [],
+            "evidence": [],
+            "suggested_include_patterns": ["/food/*"],
+        },
+    )
+    html = (
+        '<a href="/food/meat">Meat</a>'
+        '<a href="/food/beer">Beer</a>'
+        '<a href="/about">About</a>'
+    )
+    preview = build_frontier_preview_from_fetch(project, spec, html)
+    included = {row["normalized_url"] for row in preview.included_urls or []}
+    assert "https://example.com/food/meat" in included
+    assert "https://example.com/food/beer" in included
+    assert "https://example.com/about" not in included
+
+
 def test_too_narrow_cta_suggests_dataset_for_detail_links():
     """PAGINATION chosen, no pagination links, but the page links to many detail
     pages -> SCOPE_TOO_NARROW CTA suggesting DATASET with a derived pattern."""
@@ -351,6 +381,28 @@ def test_too_narrow_cta_suggests_collection_for_sibling_links():
     spec = _spec(mode="CURRENT_PAGE")
     cats = "".join(
         f'<a href="/food/cat{i}">Cat {i}</a>' for i in range(1, 13)
+    )
+    html = f"<html><body>{cats}</body></html>"
+    preview = build_frontier_preview_from_fetch(project, spec, html)
+    warning = next(
+        (w for w in (preview.warnings or []) if w["code"] == "SCOPE_TOO_NARROW"),
+        None,
+    )
+    assert warning is not None
+    assert warning["suggested_mode"] == "COLLECTION"
+    assert warning["suggested_include_patterns"] == ["/food/*"]
+
+
+def test_too_narrow_cta_prefers_collection_for_seed_sibling_cluster_even_with_detail_selector():
+    project = SimpleNamespace(
+        id=1,
+        url="https://example.com/food/beef",
+        normalized_url="https://example.com/food/beef",
+        analysis={"detail_link_selector": "a.food-link"},
+    )
+    spec = _spec(mode="CURRENT_PAGE")
+    cats = "".join(
+        f'<a class="food-link" href="/food/cat{i}">Cat {i}</a>' for i in range(1, 13)
     )
     html = f"<html><body>{cats}</body></html>"
     preview = build_frontier_preview_from_fetch(project, spec, html)

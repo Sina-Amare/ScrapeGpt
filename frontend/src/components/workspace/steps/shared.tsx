@@ -1,9 +1,10 @@
 import { Info } from "lucide-react";
 import { motion } from "motion/react";
-import { ChangeEvent, ReactNode, useMemo } from "react";
+import { ChangeEvent, ReactNode, useMemo, useState } from "react";
 import { buildColumns } from "../../../lib/recordColumns";
 import type { FieldSpec } from "../../../types";
 import { Alert } from "../../ui/Alert";
+import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { Select } from "../../ui/Select";
 
@@ -66,19 +67,31 @@ function asString(value: unknown): string {
 export function RecordsTable({
   rows,
   specFields,
+  mode,
 }: {
   rows: Record<string, unknown>[];
   specFields?: FieldSpec[] | null;
+  mode?: "STRUCTURED" | "CONTENT" | string;
 }) {
   const columns = useMemo(() => {
     const pageColumns = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
     return buildColumns(specFields, pageColumns).slice(0, 12);
   }, [rows, specFields]);
+  const isContentMode = mode === "CONTENT" || columns.includes("content");
   if (!rows.length) {
     return (
       <p className="rounded-lg border border-line bg-porcelain p-6 text-center text-sm text-muted">
         No rows yet.
       </p>
+    );
+  }
+  if (isContentMode) {
+    return (
+      <div className="grid gap-3">
+        {rows.map((row, index) => (
+          <ContentPreviewCard key={index} row={row} />
+        ))}
+      </div>
     );
   }
   return (
@@ -110,6 +123,41 @@ export function RecordsTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ContentPreviewCard({ row }: { row: Record<string, unknown> }) {
+  const [expanded, setExpanded] = useState(false);
+  const content = asString(row.content);
+  const sourceUrl = asString(row.source_url);
+  const visibleText = expanded || content.length <= 700 ? content : `${content.slice(0, 700)}...`;
+
+  return (
+    <article className="rounded-lg border border-line bg-surface p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink">Content preview</p>
+          {sourceUrl ? (
+            <p className="mt-1 truncate text-xs text-muted" title={sourceUrl}>
+              {sourceUrl}
+            </p>
+          ) : null}
+        </div>
+        <span className="rounded-full bg-porcelain px-2.5 py-1 text-xs font-semibold text-muted">
+          {content.length.toLocaleString()} chars
+        </span>
+      </div>
+      <p className="whitespace-pre-wrap text-sm leading-6 text-ink">{visibleText || "-"}</p>
+      {content.length > 700 ? (
+        <Button
+          variant="secondary"
+          className="mt-3"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Show less" : "Read full preview"}
+        </Button>
+      ) : null}
+    </article>
   );
 }
 

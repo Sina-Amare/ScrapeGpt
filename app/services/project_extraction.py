@@ -41,6 +41,7 @@ from app.services.crawl_scope import (
     ScopeConfirmationError,
     assert_scope_confirmed,
     discover_links_for_scope,
+    normalize_crawl_scope,
     scope_max_pages,
 )
 from app.services.fetcher import (
@@ -109,8 +110,18 @@ async def start_project_extraction(
 
     Enforces the scope confirmation policy (``ScopeConfirmationError``).
     """
+    scope = spec.crawl_scope
+    if scope:
+        scope = normalize_crawl_scope(
+            scope,
+            seed_url=project.normalized_url or project.url,
+            page_limit=spec.page_limit,
+        )
+        if spec.crawl_scope != scope:
+            spec.crawl_scope = scope
+
     assert_scope_confirmed(
-        spec.crawl_scope,
+        scope,
         allow_unconfirmed=allow_unconfirmed,
         allow_legacy_missing=True,
         project_id=project.id,
@@ -672,6 +683,17 @@ async def execute_project_extraction(
             return
 
         try:
+            scope = spec.crawl_scope or {}
+            if scope:
+                scope = normalize_crawl_scope(
+                    scope,
+                    seed_url=project.normalized_url or project.url,
+                    page_limit=spec.page_limit,
+                )
+                if spec.crawl_scope != scope:
+                    spec.crawl_scope = scope
+                    await db.commit()
+
             # Defensive confirmation gate. ``start_project_extraction``
             # already enforces this synchronously; this catch-all keeps
             # a forgotten confirmation from silently broad-crawling if
@@ -679,7 +701,7 @@ async def execute_project_extraction(
             # missing (legacy) still passes here so existing data is
             # not stranded; the API never starts such a scope anyway.
             assert_scope_confirmed(
-                spec.crawl_scope,
+                scope,
                 allow_unconfirmed=False,
                 allow_legacy_missing=True,
                 project_id=project_id,
@@ -697,7 +719,6 @@ async def execute_project_extraction(
 
             processed_pages = 0
             total_records = 0
-            scope = spec.crawl_scope or {}
             scope_mode = scope.get("mode") if scope else None
             page_limit = min(spec.page_limit, settings.MAX_PAGES_PER_JOB)
             if isinstance(scope, dict) and scope_mode:

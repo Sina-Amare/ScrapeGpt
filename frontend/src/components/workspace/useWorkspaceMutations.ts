@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ApiError, api } from "../../lib/api";
 import { ACTIVE_PROJECT_STATES } from "../../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation } from "../../lib/scopeCopy";
+import { scopeWithSmartDefaults } from "../../lib/scopeDefaults";
 import {
   BrowserSession,
   CrawlScope,
@@ -99,7 +100,8 @@ export function useWorkspaceMutations(project: ProjectResponse) {
   const saveScopeMutation = useMutation({
     mutationFn: (newMode: CrawlScopeMode) =>
       api.updateProjectSpec(projectId, {
-        crawl_scope: { ...(savedScope ?? {}), mode: newMode } as Partial<CrawlScope>,
+        page_limit: pageLimit,
+        crawl_scope: scopeWithSmartDefaults(savedScope, newMode),
       }),
     onSuccess: () => {
       setScopeChangedAfterPreview(true);
@@ -110,15 +112,16 @@ export function useWorkspaceMutations(project: ProjectResponse) {
   const confirmScopeMutation = useMutation({
     mutationFn: () =>
       api.updateProjectSpec(projectId, {
+        page_limit: pageLimit,
         crawl_scope: {
-          ...(savedScope ?? {}),
-          mode: effectiveDraftMode,
+          ...scopeWithSmartDefaults(savedScope, effectiveDraftMode),
           status: "USER_CONFIRMED" as CrawlScopeStatus,
           user_confirmed_at: new Date().toISOString(),
-        } as Partial<CrawlScope>,
+        },
       }),
     onSuccess: () => {
       setExtractScopeError(null);
+      setScopeChangedAfterPreview(true);
       void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     },
   });
@@ -196,9 +199,9 @@ export function useWorkspaceMutations(project: ProjectResponse) {
   const savePatternsMutation = useMutation({
     mutationFn: (vars: { include: string[]; exclude: string[] }) =>
       api.updateProjectSpec(projectId, {
+        page_limit: pageLimit,
         crawl_scope: {
-          ...(savedScope ?? {}),
-          mode: effectiveDraftMode,
+          ...scopeWithSmartDefaults(savedScope, effectiveDraftMode),
           include_patterns: vars.include,
           exclude_patterns: vars.exclude,
           status: "AI_SUGGESTED" as CrawlScopeStatus,
@@ -306,6 +309,30 @@ export function useWorkspaceMutations(project: ProjectResponse) {
     },
   });
 
+  const saveScopeAndContinueMutation = useMutation({
+    mutationFn: () => {
+      const nextScope = scopeWithSmartDefaults(savedScope, effectiveDraftMode);
+      const needsConfirm = requiresConfirmation(effectiveDraftMode);
+      return api.updateProjectSpec(projectId, {
+        page_limit: pageLimit,
+        crawl_scope: {
+          ...nextScope,
+          status: needsConfirm
+            ? ("USER_CONFIRMED" as CrawlScopeStatus)
+            : (nextScope.status ?? "SYSTEM_DEFAULTED"),
+          user_confirmed_at: needsConfirm
+            ? new Date().toISOString()
+            : (nextScope.user_confirmed_at ?? null),
+        },
+      });
+    },
+    onSuccess: () => {
+      setExtractScopeError(null);
+      setScopeChangedAfterPreview(true);
+      void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+    },
+  });
+
   function handleModeChange(mode: CrawlScopeMode) {
     setDraftMode(mode);
     // CURRENT_PAGE saves immediately; broad modes wait for the confirm click.
@@ -318,12 +345,21 @@ export function useWorkspaceMutations(project: ProjectResponse) {
     confirmScopeMutation.mutate();
   }
 
+  async function saveScopeAndContinue(): Promise<void> {
+    await saveScopeAndContinueMutation.mutateAsync();
+  }
+
   const isCompleted = project.system_state === "COMPLETED";
   const isActive = ACTIVE_PROJECT_STATES.has(project.system_state);
   const isExtracting = (
     ["DISCOVERING", "EXTRACTING", "EXPORTING"] as ProjectState[]
   ).includes(project.system_state);
   const hasRecords = (project.progress?.extracted_records_total ?? 0) > 0;
+  const isSavingScope =
+    saveScopeMutation.isPending ||
+    confirmScopeMutation.isPending ||
+    savePatternsMutation.isPending ||
+    saveScopeAndContinueMutation.isPending;
 
   return {
     projectId,
@@ -349,6 +385,8 @@ export function useWorkspaceMutations(project: ProjectResponse) {
     scopeChangedAfterPreview,
     handleModeChange,
     handleConfirmScope,
+    saveScopeAndContinue,
+    isSavingScope,
     // extract gate errors
     extractScopeError,
     setExtractScopeError,
@@ -358,6 +396,7 @@ export function useWorkspaceMutations(project: ProjectResponse) {
     saveSpec,
     saveScopeMutation,
     confirmScopeMutation,
+    saveScopeAndContinueMutation,
     frontierPreviewMutation,
     broadenScopeMutation,
     detectInteractionsMutation,

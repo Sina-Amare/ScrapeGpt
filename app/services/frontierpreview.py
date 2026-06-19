@@ -51,7 +51,9 @@ from app.services.crawl_scope import (
     REASON_CURRENT_PAGE_SCOPE,
     REASON_EXCLUDED_SCOPE_MODE,
     classify_links_for_scope,
+    dominant_path_glob,
     dominant_prefix_glob,
+    normalize_crawl_scope,
     scope_max_pages,
 )
 from app.core.log_context import set_task_context
@@ -88,7 +90,6 @@ def build_frontier_preview_from_fetch(
     """
     if spec is None:
         return None
-    scope = spec.crawl_scope or {}
     seed = project.normalized_url or project.url
     if not seed:
         return None
@@ -96,6 +97,11 @@ def build_frontier_preview_from_fetch(
         seed_validated = validate_url(seed)
     except URLValidationError:
         return None
+    scope = normalize_crawl_scope(
+        spec.crawl_scope,
+        seed_url=seed_validated,
+        page_limit=getattr(spec, "page_limit", None),
+    )
 
     decisions = classify_links_for_scope(
         html,
@@ -144,7 +150,8 @@ def build_frontier_preview_from_fetch(
     # pages). This subsumes the old PAGINATION-only SCOPE_NO_MATCHING_LINKS hint
     # and works for every narrow scope (CURRENT_PAGE, PAGINATION-with-no-pages).
     if len(included) == 0 and unrelated_same_origin_count >= SCOPE_EXCLUSION_THRESHOLD:
-        dominant = dominant_prefix_glob(excluded_same_origin_urls)
+        sibling_dominant = dominant_path_glob(excluded_same_origin_urls, seed_validated)
+        dominant = sibling_dominant or dominant_prefix_glob(excluded_same_origin_urls)
         if dominant is not None:
             glob, count = dominant
             analysis = project.analysis if isinstance(project.analysis, dict) else {}
@@ -157,7 +164,7 @@ def build_frontier_preview_from_fetch(
                     )
                 except Exception:
                     detail_matches = 0
-            if detail_matches >= 3:
+            if sibling_dominant is None and detail_matches >= 3:
                 suggested_mode = "DATASET"
                 mode_label = "Listing + detail pages"
             else:
@@ -237,7 +244,6 @@ async def create_frontier_preview(
         user_id=project.user_id,
     )
 
-    scope = spec.crawl_scope or {}
     seed = project.normalized_url or project.url
     if not seed:
         return None
@@ -245,6 +251,13 @@ async def create_frontier_preview(
         seed_validated = validate_url(seed)
     except URLValidationError:
         return None
+    scope = normalize_crawl_scope(
+        spec.crawl_scope,
+        seed_url=seed_validated,
+        page_limit=getattr(spec, "page_limit", None),
+    )
+    if spec.crawl_scope != scope:
+        spec.crawl_scope = scope
 
     logger.debug(
         "frontier.fetch_started",
@@ -293,7 +306,7 @@ async def create_frontier_preview(
         )
         if preview is None:
             return None
-        scope_mode = (spec.crawl_scope or {}).get("mode", "CURRENT_PAGE")
+        scope_mode = scope.get("mode", "CURRENT_PAGE")
         included_count = len(preview.included_urls or [])
         excluded_count = len(preview.excluded_urls or [])
         logger.info(
