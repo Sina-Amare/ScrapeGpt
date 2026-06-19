@@ -420,6 +420,55 @@ def _extract_from_tables(
     return payloads
 
 
+# Page chrome that is never primary content — removed before content extraction.
+# Tag-based only (safe): class/id heuristics risk nuking real content containers.
+_CONTENT_CHROME_TAGS = (
+    "script", "style", "noscript", "template", "nav", "header", "footer",
+    "aside", "form", "iframe", "svg",
+)
+# Containers likely to hold the main article/content, best-first.
+_CONTENT_MAIN_SELECTORS = (
+    "main", "article", "[role=main]", "#content", "#main-content", "#main",
+    ".content", ".article", ".post", ".entry-content", ".post-content",
+)
+# Below this many characters content is treated as "tiny" and a warning is added.
+_MIN_CONTENT_TEXT_CHARS = 200
+
+
+def _strip_content_chrome(scope: Tag | BeautifulSoup) -> None:
+    """Remove scripts/nav/header/footer/aside/etc. in place (tag-based only)."""
+    for el in scope.find_all(_CONTENT_CHROME_TAGS):
+        el.decompose()
+
+
+def _readable_text(node: Tag | BeautifulSoup | None) -> str:
+    """Text with block-level line breaks preserved (headings/paragraphs/list items
+    on their own lines) and intra-line whitespace collapsed."""
+    if node is None:
+        return ""
+    raw = node.get_text(separator="\n")
+    lines = [re.sub(r"[ \t \r\f\v]+", " ", ln).strip() for ln in raw.split("\n")]
+    return "\n".join(ln for ln in lines if ln).strip()
+
+
+def _densest_content_container(soup: BeautifulSoup) -> Tag | None:
+    """The main/article/content container with the most text, or None."""
+    best: Tag | None = None
+    best_len = 0
+    for selector in _CONTENT_MAIN_SELECTORS:
+        try:
+            matches = soup.select(selector)
+        except Exception:
+            continue
+        for el in matches:
+            if not isinstance(el, Tag):
+                continue
+            length = len(el.get_text(" ", strip=True))
+            if length > best_len:
+                best, best_len = el, length
+    return best
+
+
 def _extract_content(
     soup: BeautifulSoup,
     *,
@@ -427,19 +476,54 @@ def _extract_content(
     spec: ExtractionSpec,
     fields: list[dict[str, Any]],
 ) -> list[ExtractedPayload]:
-    selector = (spec.content_config or {}).get("primary_selector")
-    content_scope: Tag | BeautifulSoup | None = None
+    """One readable content record per page (CONTENT mode).
+
+    Strips page chrome, prefers the configured primary selector only when it
+    yields enough text, otherwise picks the densest main/article container (body
+    as a last resort), and preserves block-level line breaks. Optional metadata
+    fields are still read from the ORIGINAL document so a ``<title>``/``<h1>`` in
+    the header is not lost to chrome removal. Returns ``[]`` for truly empty
+    content (so the caller's zero-record gate fires); very short content is
+    returned with a warning rather than presented as a clean success.
+    """
     warnings: list[str] = []
+    # Work on a copy so chrome removal never disturbs metadata-field extraction.
+    work = BeautifulSoup(str(soup), "lxml")
+    _strip_content_chrome(work)
+
+    selector = (spec.content_config or {}).get("primary_selector")
+    scope: Tag | BeautifulSoup | None = None
     if selector:
+        candidate: Tag | None = None
         try:
-            matches = soup.select(str(selector))
-            content_scope = matches[0] if matches else None
+            matches = work.select(str(selector))
+            candidate = matches[0] if matches else None
         except Exception as exc:
             warnings.append(f"Primary content selector is invalid: {exc}")
-    if content_scope is None:
-        content_scope = soup.find("main") or soup.find("article") or soup.find("body") or soup
+        # Honor the selector only when it actually yields enough text; otherwise
+        # fall through to density-based selection (a tiny/empty match is worse
+        # than the best main container).
+        if candidate is not None and (
+            len(candidate.get_text(" ", strip=True)) >= _MIN_CONTENT_TEXT_CHARS
+        ):
+            scope = candidate
 
-    text = re.sub(r"\s+", " ", content_scope.get_text(separator=" ", strip=True)).strip()
+    if scope is None:
+        scope = (
+            _densest_content_container(work)
+            or work.find("main")
+            or work.find("article")
+            or work.body
+            or work
+        )
+
+    text = _readable_text(scope)
+    if text and len(text) < _MIN_CONTENT_TEXT_CHARS:
+        warnings.append(
+            "Extracted content is very short — the page may be mostly navigation, "
+            "an image/app, or rendered by JavaScript."
+        )
+
     raw: dict[str, Any] = {"source_url": source_url, "content": text}
     normalized: dict[str, Any] = {"source_url": source_url, "content": text}
     for field in fields:

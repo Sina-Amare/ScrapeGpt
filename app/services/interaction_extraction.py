@@ -26,7 +26,7 @@ from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from app.models.job import ExtractionSpec, Project
+from app.models.job import ExtractionMode, ExtractionSpec, Project
 from app.services.extractor import ExtractedPayload, extract_records_from_html
 from app.services.interaction_profile import (
     VariantCombination,
@@ -184,6 +184,13 @@ async def extract_records_with_variants(
             spec=spec_view,
             max_records=max_records,
         )
+
+    # CONTENT mode is whole-page readable content, never a per-variant table —
+    # a variant fan-out would re-extract the same page N times. Always a
+    # single pass-through, regardless of any (stray) enabled profile.
+    if getattr(spec, "mode", None) == ExtractionMode.CONTENT:
+        records = await _extract(base_html, _variant_spec(spec, spec.fields or []))
+        return records, []
 
     if not is_enabled(profile):
         records = await _extract(base_html, _variant_spec(spec, spec.fields or []))

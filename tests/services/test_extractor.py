@@ -213,3 +213,117 @@ def test_table_short_header_does_not_falsely_match_long_field():
     # Only one field: it should map to the first/best column ('Physical Activity'),
     # not be dragged to the 'cal' column by a loose substring.
     assert records[0].normalized_data["Physical Activity"] == "Walking"
+
+
+# --- CONTENT mode hardening -------------------------------------------------
+
+import pytest  # noqa: E402
+
+_LONG = (
+    "Beef is a rich source of protein and iron and is eaten across many cuisines "
+    "worldwide, commonly grilled, roasted, or stewed. A 100 gram serving has "
+    "around 250 calories depending on the cut and preparation method used."
+)
+
+
+def _content_spec(primary_selector=None, fields=None):
+    cfg = {"primary_selector": primary_selector} if primary_selector else {}
+    return SimpleNamespace(
+        fields=fields or [], mode=ExtractionMode.CONTENT, content_config=cfg,
+    )
+
+
+def test_content_strips_chrome_and_picks_main():
+    html = (
+        "<html><body>"
+        "<nav>Home Products About Contact LOGIN SIGNUP</nav>"
+        "<header>Big Site Title And Menu Bar</header>"
+        f"<main><h1>Beef Nutrition</h1><p>{_LONG}</p></main>"
+        "<footer>Copyright 2026 All rights reserved Privacy Terms Cookies</footer>"
+        "</body></html>"
+    )
+    records = extract_records_from_html(
+        html, source_url="https://e.com/x", project=_project(),
+        spec=_content_spec(), max_records=10,
+    )
+    assert len(records) == 1
+    content = records[0].normalized_data["content"]
+    assert "Beef Nutrition" in content and "250 calories" in content
+    assert "Home Products" not in content   # nav chrome stripped
+    assert "Copyright" not in content       # footer chrome stripped
+
+
+def test_content_preserves_block_line_breaks():
+    html = (
+        "<html><body><article>"
+        "<h1>Title</h1><p>First paragraph.</p><p>Second paragraph.</p>"
+        "</article></body></html>"
+    )
+    records = extract_records_from_html(
+        html, source_url="https://e.com/x", project=_project(),
+        spec=_content_spec(), max_records=10,
+    )
+    content = records[0].normalized_data["content"]
+    assert "Title\nFirst paragraph.\nSecond paragraph." in content
+
+
+def test_content_ignores_tiny_primary_selector_and_uses_density():
+    html = (
+        "<html><body>"
+        '<div class="tag">x</div>'
+        f"<main><p>{_LONG}</p></main>"
+        "</body></html>"
+    )
+    records = extract_records_from_html(
+        html, source_url="https://e.com/x", project=_project(),
+        spec=_content_spec(primary_selector="div.tag"), max_records=10,
+    )
+    content = records[0].normalized_data["content"]
+    # The tiny primary-selector match is ignored in favor of the dense <main>.
+    assert "250 calories" in content
+
+
+def test_content_empty_returns_no_records():
+    html = (
+        "<html><body><nav>Menu Home About</nav>"
+        "<script>var x = 1;</script></body></html>"
+    )
+    records = extract_records_from_html(
+        html, source_url="https://e.com/x", project=_project(),
+        spec=_content_spec(), max_records=10,
+    )
+    assert records == []
+
+
+@pytest.mark.asyncio
+async def test_content_mode_skips_variant_fanout():
+    """Even with an enabled interaction profile, CONTENT mode yields ONE content
+    record (no per-variant fan-out / browser requirement)."""
+    from app.services.interaction_extraction import extract_records_with_variants
+
+    html = f"<html><body><main><p>{_LONG}</p></main></body></html>"
+    profile = {
+        "enabled": True,
+        "max_variant_combinations": 12,
+        "groups": [{
+            "metadata_key": "unit_system",
+            "execution": "interactive",
+            "options": [
+                {"id": "metric", "label": "Metric", "selected": True, "recipe": []},
+                {"id": "imperial", "label": "Imperial", "selected": True,
+                 "recipe": [{"action": "click", "by": "text", "value": "Imperial"}]},
+            ],
+        }],
+    }
+    spec = SimpleNamespace(
+        mode=ExtractionMode.CONTENT, content_config={}, fields=[],
+        interaction_profile=profile,
+    )
+    records, warnings = await extract_records_with_variants(
+        base_html=html, source_url="https://e.com/x",
+        project=SimpleNamespace(analysis={}), spec=spec, max_records=10,
+        fetch_variant_htmls=None,
+    )
+    assert len(records) == 1
+    assert "serving_basis" not in records[0].normalized_data
+    assert "unit_system" not in records[0].normalized_data
