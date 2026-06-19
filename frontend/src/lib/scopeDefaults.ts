@@ -1,5 +1,10 @@
 import type { CrawlScope, CrawlScopeMode } from "../types";
 
+// Display-only helper: surfaces the AI's suggested include patterns so the user
+// can see which globs a related-page scope will apply *before* saving. The
+// patterns themselves are seeded authoritatively by the backend
+// (`normalize_crawl_scope`) on save — the frontend must not seed them itself, or
+// the two implementations drift. See StepScope's "will apply" hint.
 export function suggestedIncludePatterns(
   scope: CrawlScope | null | undefined,
   mode: CrawlScopeMode
@@ -8,31 +13,4 @@ export function suggestedIncludePatterns(
   return (scope?.ai_recommendation?.suggested_include_patterns ?? [])
     .map((pattern) => pattern.trim())
     .filter(Boolean);
-}
-
-export function scopeWithSmartDefaults(
-  scope: CrawlScope | null | undefined,
-  mode: CrawlScopeMode
-): Partial<CrawlScope> {
-  const includePatterns = scope?.include_patterns ?? [];
-  const suggested = suggestedIncludePatterns(scope, mode);
-  const next: Partial<CrawlScope> = {
-    ...(scope ?? {}),
-    mode,
-  };
-
-  if (
-    (mode === "COLLECTION" || mode === "DATASET") &&
-    includePatterns.length === 0 &&
-    suggested.length > 0
-  ) {
-    next.include_patterns = suggested;
-  }
-
-  if (mode === "COLLECTION") {
-    const currentDepth = typeof scope?.max_depth === "number" ? scope.max_depth : null;
-    next.max_depth = currentDepth && currentDepth > 0 ? currentDepth : 1;
-  }
-
-  return next;
 }

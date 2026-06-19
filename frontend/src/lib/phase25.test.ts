@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { buildColumns } from "./recordColumns";
 import { reasonCodeCopy } from "./frontierReasonCopy";
 import { qualityStateInfo, isScopeNotConfirmedError } from "./qualityCopy";
-import { scopeWithSmartDefaults, suggestedIncludePatterns } from "./scopeDefaults";
+import { suggestedIncludePatterns } from "./scopeDefaults";
 import {
   scopeModeLabel,
   scopeModeInfo,
@@ -132,18 +132,9 @@ describe("scopeDefaults", () => {
     assert.deepEqual(suggestedIncludePatterns(baseScope, "COLLECTION"), ["/food/*"]);
   });
 
-  it("seeds collection include patterns so users do not type globs", () => {
-    const scope = scopeWithSmartDefaults(baseScope, "COLLECTION");
-    assert.deepEqual(scope.include_patterns, ["/food/*"]);
-    assert.equal(scope.max_depth, 1);
-  });
-
-  it("preserves user-entered include patterns", () => {
-    const scope = scopeWithSmartDefaults(
-      { ...baseScope, include_patterns: ["/custom/*"] },
-      "COLLECTION"
-    );
-    assert.deepEqual(scope.include_patterns, ["/custom/*"]);
+  it("returns no suggestions for non-related-page scopes", () => {
+    assert.deepEqual(suggestedIncludePatterns(baseScope, "PAGINATION"), []);
+    assert.deepEqual(suggestedIncludePatterns(baseScope, "CURRENT_PAGE"), []);
   });
 });
 

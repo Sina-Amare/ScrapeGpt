@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { ApiError, api } from "../../lib/api";
 import { ACTIVE_PROJECT_STATES } from "../../lib/projectPolling";
 import { isUserConfirmed, requiresConfirmation } from "../../lib/scopeCopy";
-import { scopeWithSmartDefaults } from "../../lib/scopeDefaults";
 import {
   BrowserSession,
   CrawlScope,
@@ -98,10 +97,12 @@ export function useWorkspaceMutations(project: ProjectResponse) {
   });
 
   const saveScopeMutation = useMutation({
+    // Send the user's chosen mode only; the backend's normalize_crawl_scope is
+    // the single source of truth for seeding include_patterns / max_depth.
     mutationFn: (newMode: CrawlScopeMode) =>
       api.updateProjectSpec(projectId, {
         page_limit: pageLimit,
-        crawl_scope: scopeWithSmartDefaults(savedScope, newMode),
+        crawl_scope: { ...(savedScope ?? {}), mode: newMode } as Partial<CrawlScope>,
       }),
     onSuccess: () => {
       setScopeChangedAfterPreview(true);
@@ -114,10 +115,11 @@ export function useWorkspaceMutations(project: ProjectResponse) {
       api.updateProjectSpec(projectId, {
         page_limit: pageLimit,
         crawl_scope: {
-          ...scopeWithSmartDefaults(savedScope, effectiveDraftMode),
+          ...(savedScope ?? {}),
+          mode: effectiveDraftMode,
           status: "USER_CONFIRMED" as CrawlScopeStatus,
           user_confirmed_at: new Date().toISOString(),
-        },
+        } as Partial<CrawlScope>,
       }),
     onSuccess: () => {
       setExtractScopeError(null);
@@ -201,7 +203,8 @@ export function useWorkspaceMutations(project: ProjectResponse) {
       api.updateProjectSpec(projectId, {
         page_limit: pageLimit,
         crawl_scope: {
-          ...scopeWithSmartDefaults(savedScope, effectiveDraftMode),
+          ...(savedScope ?? {}),
+          mode: effectiveDraftMode,
           include_patterns: vars.include,
           exclude_patterns: vars.exclude,
           status: "AI_SUGGESTED" as CrawlScopeStatus,
@@ -311,7 +314,10 @@ export function useWorkspaceMutations(project: ProjectResponse) {
 
   const saveScopeAndContinueMutation = useMutation({
     mutationFn: () => {
-      const nextScope = scopeWithSmartDefaults(savedScope, effectiveDraftMode);
+      const nextScope: Partial<CrawlScope> = {
+        ...(savedScope ?? {}),
+        mode: effectiveDraftMode,
+      };
       const needsConfirm = requiresConfirmation(effectiveDraftMode);
       return api.updateProjectSpec(projectId, {
         page_limit: pageLimit,
