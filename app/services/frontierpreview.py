@@ -51,6 +51,7 @@ from app.services.crawl_scope import (
     REASON_CURRENT_PAGE_SCOPE,
     REASON_EXCLUDED_SCOPE_MODE,
     classify_links_for_scope,
+    derive_include_patterns_from_links,
     dominant_path_glob,
     dominant_prefix_glob,
     normalize_crawl_scope,
@@ -102,6 +103,16 @@ def build_frontier_preview_from_fetch(
         seed_url=seed_validated,
         page_limit=getattr(spec, "page_limit", None),
     )
+    # Self-configure include_patterns from the seed's real links so the preview
+    # reflects what extraction will actually crawl (they share this scope). The
+    # persistence happens in create_frontier_preview; here it only affects the
+    # preview's classification.
+    _analysis = project.analysis if isinstance(project.analysis, dict) else None
+    _derived = derive_include_patterns_from_links(
+        scope, html=html, seed_url=seed_validated, analysis=_analysis
+    )
+    if _derived:
+        scope = {**scope, "include_patterns": _derived}
 
     decisions = classify_links_for_scope(
         html,
@@ -301,6 +312,18 @@ async def create_frontier_preview(
             },
         )
     else:
+        # Self-configure include_patterns from the seed's real links (COLLECTION
+        # sibling glob, or DATASET detail-link evidence) and PERSIST it, so the
+        # actual extraction crawls the same pages this preview shows.
+        derived = derive_include_patterns_from_links(
+            scope,
+            html=html,
+            seed_url=seed_validated,
+            analysis=project.analysis if isinstance(project.analysis, dict) else None,
+        )
+        if derived:
+            scope = {**scope, "include_patterns": derived}
+            spec.crawl_scope = scope
         preview = build_frontier_preview_from_fetch(
             project, spec, html, max_urls=max_urls
         )

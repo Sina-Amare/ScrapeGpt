@@ -21,6 +21,7 @@ from app.services.crawl_scope import (
     REASON_DETAIL_LINK_SELECTOR_MATCH,
     classify_links_for_scope,
     default_crawl_scope,
+    derive_include_patterns_from_links,
     discover_links_for_scope,
     normalize_crawl_scope,
     scope_max_depth,
@@ -322,3 +323,63 @@ def test_assert_scope_confirmed_allow_unconfirmed_short_circuits():
         {"mode": "PAGINATION", "status": "AI_SUGGESTED"},
         allow_unconfirmed=True,
     )
+
+
+# ---- derive_include_patterns_from_links (self-config from real seed links) ----
+
+_SIBLINGS_HTML = (
+    '<a href="/food/meat">Meat</a><a href="/food/fish">Fish</a>'
+    '<a href="/food/fruit">Fruit</a><a href="/food/beer">Beer</a>'
+)
+
+
+def test_derive_collection_patterns_from_sibling_links():
+    scope = {"mode": "COLLECTION", "include_patterns": [], "link_rules": []}
+    out = derive_include_patterns_from_links(
+        scope, html=_SIBLINGS_HTML, seed_url="https://example.com/food/beef-veal"
+    )
+    assert out == ["/food/*"]
+
+
+def test_derive_collection_returns_none_without_sibling_cluster():
+    scope = {"mode": "COLLECTION", "include_patterns": [], "link_rules": []}
+    html = '<a href="/about">About</a><a href="/contact">Contact</a>'
+    out = derive_include_patterns_from_links(
+        scope, html=html, seed_url="https://example.com/food/beef-veal"
+    )
+    assert out is None
+
+
+def test_derive_dataset_only_from_detail_link_evidence():
+    scope = {"mode": "DATASET", "include_patterns": [], "link_rules": []}
+    html = (
+        '<div class="item"><a href="/item/1">1</a></div>'
+        '<div class="item"><a href="/item/2">2</a></div>'
+        '<div class="item"><a href="/item/3">3</a></div>'
+    )
+    out = derive_include_patterns_from_links(
+        scope,
+        html=html,
+        seed_url="https://example.com/list",
+        analysis={"detail_link_selector": "div.item a"},
+    )
+    assert out == ["/item/*"]
+
+
+def test_derive_dataset_returns_none_without_detail_evidence():
+    """Amendment: DATASET must NOT auto-derive a sibling glob — even when sibling
+    list links are present — unless there is real detail-link evidence."""
+    scope = {"mode": "DATASET", "include_patterns": [], "link_rules": []}
+    out = derive_include_patterns_from_links(
+        scope, html=_SIBLINGS_HTML, seed_url="https://example.com/food/beef-veal",
+        analysis={},
+    )
+    assert out is None
+
+
+def test_derive_never_overrides_existing_patterns():
+    scope = {"mode": "COLLECTION", "include_patterns": ["/x/*"], "link_rules": []}
+    out = derive_include_patterns_from_links(
+        scope, html=_SIBLINGS_HTML, seed_url="https://example.com/food/beef-veal"
+    )
+    assert out is None

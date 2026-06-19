@@ -40,6 +40,7 @@ from app.services.crawl_scope import (
     CrawlScopeMode,
     ScopeConfirmationError,
     assert_scope_confirmed,
+    derive_include_patterns_from_links,
     discover_links_for_scope,
     normalize_crawl_scope,
     scope_max_pages,
@@ -447,6 +448,39 @@ async def _process_one_page(
 
         page.url = fetched.final_url
         page.normalized_url = normalize_url(fetched.final_url)
+
+        # Seed-page self-config (safety net for when the frontier preview was not
+        # run): a COLLECTION/DATASET scope with no include_patterns would crawl
+        # only the seed. Derive them from the seed's real links and mutate the
+        # shared ctx.scope so every worker's discovery uses them. The seed is the
+        # first page claimed (depth 0, only PENDING row), so there is no race.
+        if (
+            page.depth == 0
+            and isinstance(ctx.scope, dict)
+            and ctx.scope_mode in (
+                CrawlScopeMode.COLLECTION.value, CrawlScopeMode.DATASET.value
+            )
+            and not ctx.scope.get("include_patterns")
+            and not ctx.scope.get("link_rules")
+        ):
+            _derived = derive_include_patterns_from_links(
+                ctx.scope,
+                html=fetched.html,
+                seed_url=ctx.validated_seed,
+                analysis=(
+                    ctx.project.analysis
+                    if isinstance(ctx.project.analysis, dict) else None
+                ),
+            )
+            if _derived:
+                ctx.scope["include_patterns"] = _derived
+                logger.info(
+                    "extraction.scope_self_configured",
+                    extra={
+                        "project_id": ctx.project_id,
+                        "include_patterns": _derived,
+                    },
+                )
 
         current_count = await _crawl_page_count(db, ctx.run_id)
         remaining = max(0, ctx.page_limit - current_count)

@@ -921,6 +921,80 @@ def dominant_prefix_glob(urls: list[str]) -> tuple[str, int] | None:
     return f"{best_prefix}/*", best_count
 
 
+def _selector_same_origin_links(
+    html: str, seed_url: str, selector: str | None
+) -> list[str]:
+    """Same-origin absolute URLs of anchors matched by ``selector`` (or anchors
+    nested inside the matched elements). Empty on no selector / parse error."""
+    if not html or not selector:
+        return []
+    try:
+        matched = BeautifulSoup(html, "lxml").select(str(selector))
+    except Exception:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for el in matched:
+        if not isinstance(el, Tag):
+            continue
+        anchors = [el] if el.name == "a" else el.find_all("a", href=True)
+        for a in anchors:
+            href = str(a.get("href") or "").strip()
+            if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+                continue
+            try:
+                normalized = normalize_url(href, seed_url)
+            except ValueError:
+                continue
+            if normalized in seen or not same_origin(normalized, seed_url):
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+    return out
+
+
+def derive_include_patterns_from_links(
+    scope: dict[str, Any] | None,
+    *,
+    html: str,
+    seed_url: str,
+    analysis: dict[str, Any] | None = None,
+) -> list[str] | None:
+    """Self-configure ``include_patterns`` for a COLLECTION/DATASET scope that has
+    none, from the seed page's REAL links. Returns the derived patterns, or
+    ``None`` when nothing safe can be derived (leave the scope unchanged).
+
+    * COLLECTION -> the dominant SIBLING glob (e.g. ``/food/*``), because a
+      related-list crawl follows sibling/category list pages.
+    * DATASET -> ONLY from real detail-link evidence: the analyzer's
+      ``detail_link_selector`` must match at least ``DATASET_MIN_DETAIL_LINKS``
+      same-origin anchors, and the glob is derived from those detail links.
+      Without detail evidence DATASET does NOT auto-derive a sibling glob — the
+      caller should instead suggest switching to COLLECTION.
+    """
+    if not isinstance(scope, dict):
+        return None
+    if scope.get("include_patterns") or scope.get("link_rules"):
+        return None  # already configured — never override the user's patterns
+    mode = scope.get("mode")
+    if mode == CrawlScopeMode.COLLECTION.value:
+        dominant = dominant_path_glob(_same_origin_links(html, seed_url), seed_url)
+        if dominant is not None and dominant[1] >= COLLECTION_MIN_SIBLINGS:
+            return [dominant[0]]
+        return None
+    if mode == CrawlScopeMode.DATASET.value:
+        analysis = analysis if isinstance(analysis, dict) else {}
+        detail_links = _selector_same_origin_links(
+            html, seed_url, analysis.get("detail_link_selector")
+        )
+        if len(detail_links) >= DATASET_MIN_DETAIL_LINKS:
+            dominant = dominant_prefix_glob(detail_links)
+            if dominant is not None:
+                return [dominant[0]]
+        return None
+    return None
+
+
 def recommend_scope(
     analysis: dict[str, Any] | None,
     html: str,

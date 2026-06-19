@@ -432,3 +432,34 @@ def test_no_too_narrow_cta_without_enough_links():
     preview = build_frontier_preview_from_fetch(project, spec, html)
     codes = {w["code"] for w in (preview.warnings or [])}
     assert "SCOPE_TOO_NARROW" not in codes
+
+
+def test_collection_self_configures_and_includes_siblings():
+    """A confirmed COLLECTION scope with NO include_patterns derives /food/* from
+    the seed's sibling links, so the preview now INCLUDES them instead of
+    excluding everything (the project #188 regression)."""
+    project = SimpleNamespace(
+        id=1,
+        url="https://www.calories.info/food/beef-veal",
+        normalized_url="https://www.calories.info/food/beef-veal",
+        analysis=None,
+    )
+    html = (
+        '<a href="/food/meat">Meat</a><a href="/food/fish">Fish</a>'
+        '<a href="/food/fruit">Fruit</a><a href="/food/beer">Beer</a>'
+        '<a href="/about">About</a>'
+    )
+    spec = _spec(mode="COLLECTION")  # USER_CONFIRMED, include_patterns absent
+    preview = build_frontier_preview_from_fetch(project, spec, html)
+    assert preview is not None
+    included = {
+        d["normalized_url"]
+        for d in preview.included_urls
+        if d.get("role") != "seed"
+    }
+    assert "https://www.calories.info/food/meat" in included
+    assert "https://www.calories.info/food/fish" in included
+    # The non-sibling link stays out; no "scope too narrow" alarm now that it works.
+    assert "https://www.calories.info/about" not in included
+    codes = {w["code"] for w in (preview.warnings or [])}
+    assert "SCOPE_TOO_NARROW" not in codes
