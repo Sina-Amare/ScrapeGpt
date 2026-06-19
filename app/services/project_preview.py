@@ -36,19 +36,27 @@ def _field_key(field: dict[str, Any]) -> str:
 
 
 def _spec_preview_fingerprint(spec: ExtractionSpec) -> str:
-    """Stable fingerprint for the parts of a spec that affect preview/extract.
+    """Stable fingerprint for the parts of a spec that affect the SAMPLE preview.
 
     Timestamps are not enough because some legacy or direct JSON mutations can
     leave an old PreviewResult attached to a changed spec row. The fingerprint
     lets the API say "this preview validates this exact spec shape".
+
+    Only the inputs that change what the sample preview extracts from the SEED
+    page are included: the extraction mode, the field selectors, the content
+    config, and the interaction/variant profile. ``crawl_scope`` (and the
+    crawl-breadth knobs ``page_limit``/``url_patterns``) are deliberately
+    EXCLUDED — they govern which OTHER pages get crawled, not the seed-page
+    sample, and the scope has its own confirmation gate (SCOPE_NOT_CONFIRMED).
+    Including ``crawl_scope`` made an unrelated action — generating a frontier
+    preview, which self-configures/normalises the scope onto the spec — falsely
+    mark a fresh sample preview stale and block extraction in the natural UI
+    order (preview fields -> view crawl frontier -> extract).
     """
     payload = {
         "mode": spec.mode.value if hasattr(spec.mode, "value") else str(spec.mode),
         "fields": spec.fields or [],
         "content_config": spec.content_config or {},
-        "url_patterns": spec.url_patterns or [],
-        "page_limit": spec.page_limit,
-        "crawl_scope": spec.crawl_scope or {},
         "interaction_profile": getattr(spec, "interaction_profile", None) or {},
     }
     return hashlib.sha256(

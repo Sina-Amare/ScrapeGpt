@@ -198,6 +198,56 @@ def test_preview_fingerprint_matches_exact_spec_shape():
     assert not preview_matches_spec(preview, spec)
 
 
+def test_preview_fingerprint_ignores_crawl_scope_and_breadth_knobs():
+    """A sample preview validates seed-page FIELD extraction. Changing the crawl
+    scope (which the frontier-preview step self-configures onto the spec) or the
+    crawl-breadth knobs must NOT mark a fresh sample preview stale — otherwise
+    viewing the crawl frontier after previewing would falsely block extraction.
+    Scope has its own confirmation gate."""
+    spec = ExtractionSpec(
+        id=1,
+        project_id=1,
+        mode=ExtractionMode.STRUCTURED,
+        fields=[{"name": "Title", "selector": "h1", "selected": True}],
+        content_config={},
+        url_patterns=[],
+        page_limit=50,
+        export_format="csv",
+        crawl_scope={"mode": "CURRENT_PAGE", "seed_url": None},
+        created_at=datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    preview = PreviewResult(
+        id=1,
+        project_id=1,
+        spec_id=1,
+        sample_records=[{"Title": "A"}],
+        warnings=[],
+        missing_fields=[],
+        quality_summary={
+            "selected_field_count": 1,
+            "spec_fingerprint": _spec_preview_fingerprint(spec),
+        },
+        created_at=datetime(2026, 1, 1, 10, 1, tzinfo=timezone.utc),
+    )
+    assert preview_matches_spec(preview, spec)
+
+    # Frontier preview self-configures the scope (fills seed_url, derives
+    # include_patterns) and bumps page_limit/url_patterns — none of which change
+    # what the seed-page sample extracts.
+    spec.crawl_scope = {
+        "mode": "COLLECTION", "seed_url": "https://x.com/food/beef",
+        "include_patterns": ["/food/*"], "max_pages": 200,
+    }
+    spec.page_limit = 200
+    spec.url_patterns = ["/food/*"]
+    assert preview_matches_spec(preview, spec)
+
+    # But changing the field selectors (or mode/content/variants) still marks it
+    # stale.
+    spec.mode = ExtractionMode.CONTENT
+    assert not preview_matches_spec(preview, spec)
+
+
 def test_legacy_preview_shape_mismatch_is_stale_even_when_timestamp_looks_fresh():
     """Regression for re-detecting variants: the spec row can be changed from
     flat duplicate columns to collapsed fields while an older PreviewResult still
