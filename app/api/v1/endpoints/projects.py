@@ -812,7 +812,7 @@ async def export_project(
     project_id: int,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    format: str = Query(default="csv", pattern="^(csv|json|xlsx)$"),
+    format: str = Query(default="csv", pattern="^(csv|json|xlsx|md)$"),
 ) -> Response:
     logger.info(
         "export.started",
@@ -865,6 +865,12 @@ async def export_project(
                 content=_xlsx_bytes(data, field_order=field_order),
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={"Content-Disposition": f'attachment; filename="project-{project_id}.xlsx"'},
+            )
+        if format == "md":
+            return Response(
+                content=_markdown_export(data, field_order=field_order),
+                media_type="text/markdown; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="project-{project_id}.md"'},
             )
 
         output = io.StringIO()
@@ -984,6 +990,49 @@ def _xlsx_bytes(rows: list[dict], *, field_order: list[str] | None = None) -> by
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def _markdown_export(rows: list[dict], *, field_order: list[str] | None = None) -> str:
+    """Render extracted records as a single Markdown document.
+
+    CONTENT-mode rows (those carrying a ``content`` field) are concatenated as
+    readable Markdown documents — each prefixed with its source URL and separated
+    by a horizontal rule — so the downloaded ``.md`` mirrors the in-app preview.
+    STRUCTURED rows fall back to a GitHub-flavoured Markdown table.
+    """
+    has_content = any(str(row.get("content") or "").strip() for row in rows)
+    if has_content:
+        blocks: list[str] = []
+        for row in rows:
+            content = str(row.get("content") or "").strip()
+            if not content:
+                continue
+            url = str(row.get("source_url") or "").strip()
+            header = f"[{url}]({url})\n\n" if url else ""
+            blocks.append(f"{header}{content}")
+        return ("\n\n---\n\n".join(blocks).strip() + "\n") if blocks else ""
+
+    # Structured fallback: a GitHub-flavoured Markdown table.
+    columns = _ordered_columns(rows, field_order or [])
+    if not columns:
+        columns = sorted({key for row in rows for key in row.keys()})
+    if not columns:
+        return ""
+
+    def _cell(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+    lines = [
+        "| " + " | ".join(columns) + " |",
+        "| " + " | ".join("---" for _ in columns) + " |",
+    ]
+    lines.extend(
+        "| " + " | ".join(_cell(row.get(col)) for col in columns) + " |"
+        for row in rows
+    )
+    return "\n".join(lines) + "\n"
 
 
 @router.post("/{project_id}/cancel", response_model=ProjectResponse, summary="Cancel active project")

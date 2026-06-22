@@ -150,6 +150,7 @@ export function StepExtract({
                   <option value="csv">CSV</option>
                   <option value="json">JSON</option>
                   <option value="xlsx">XLSX</option>
+                  <option value="md">Markdown (.md)</option>
                 </Select>
               </label>
               <Button
@@ -158,7 +159,7 @@ export function StepExtract({
                 onClick={async () => {
                   setIsExporting(true);
                   try {
-                    await api.exportProject(project.id, exportFormat as "csv" | "json" | "xlsx");
+                    await api.exportProject(project.id, exportFormat as "csv" | "json" | "xlsx" | "md");
                     toast.success("Export downloaded");
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : "Export failed");

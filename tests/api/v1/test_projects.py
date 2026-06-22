@@ -574,3 +574,41 @@ async def test_retry_non_failed_returns_409(async_client, app, monkeypatch):
 
     assert response.status_code == 409
     assert response.json()["detail"]["error_code"] == "NOT_FAILED"
+
+
+# --- Markdown (.md) export -------------------------------------------------
+
+
+def test_markdown_export_joins_content_records_as_documents():
+    """CONTENT rows export as readable Markdown documents: each prefixed with its
+    source URL and separated by a horizontal rule, with the Markdown body intact
+    (so the downloaded .md mirrors the in-app preview)."""
+    rows = [
+        {"source_url": "https://e.com/a", "content": "# Alpha\n\nFirst body."},
+        {"source_url": "https://e.com/b", "content": "# Beta\n\n```py\nx = 1\n```"},
+    ]
+    out = projects._markdown_export(rows)
+    assert "[https://e.com/a](https://e.com/a)" in out
+    assert "[https://e.com/b](https://e.com/b)" in out
+    assert "# Alpha" in out and "# Beta" in out
+    assert "```py\nx = 1\n```" in out          # code fence preserved verbatim
+    assert "\n---\n" in out                     # records separated by a rule
+
+
+def test_markdown_export_falls_back_to_table_for_structured_rows():
+    """STRUCTURED rows (no ``content`` field) export as a GFM table in spec order,
+    with pipe characters in cells escaped so the table never breaks."""
+    rows = [
+        {"Title": "A | B", "Price": "10", "source_url": "https://e.com/1"},
+        {"Title": "C", "Price": "20", "source_url": "https://e.com/2"},
+    ]
+    out = projects._markdown_export(rows, field_order=["Title", "Price"])
+    lines = out.strip().splitlines()
+    assert lines[0] == "| Title | Price | source_url |"
+    assert lines[1] == "| --- | --- | --- |"
+    assert "A \\| B" in lines[2]                 # pipe escaped, table intact
+    assert "https://e.com/2" in lines[3]
+
+
+def test_markdown_export_empty_is_blank():
+    assert projects._markdown_export([]) == ""

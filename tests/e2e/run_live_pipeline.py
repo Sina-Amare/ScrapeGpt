@@ -520,6 +520,10 @@ CAL_FIELDS = [f("Food", "td:nth-child(1) p"),
               f("Serving Size", "td:nth-child(2) p"),
               f("Calories", "td:nth-child(3)", "number")]
 
+# Documentation page (MkDocs Material): headline CONTENT-as-Markdown case.
+FASTAPI = "https://fastapi.tiangolo.com/"
+FASTAPI_ANALYSIS: dict[str, Any] = {}
+
 
 def _is_category(u: str) -> bool:
     return "/category/" in u
@@ -645,6 +649,28 @@ def chk_hn_content(r: CrawlResult) -> list[str]:
     return fails
 
 
+def chk_fastapi_content(r: CrawlResult) -> list[str]:
+    """The headline CONTENT-as-Markdown case on a real docs page: code blocks must
+    survive as fenced blocks (NOT shredded one token per line), heading-anchor
+    pilcrows must be gone, and at least one real code line must be intact."""
+    fails = []
+    if len(r.records) != 1:
+        fails.append(f"CONTENT produced {len(r.records)} records (want 1)")
+        return fails
+    text = str(r.records[0].normalized_data.get("content") or "")
+    if len(text) < 500:
+        fails.append(f"CONTENT too short ({len(text)} chars)")
+    if "```" not in text:
+        fails.append("CONTENT has no fenced code block (Markdown not emitted)")
+    if "¶" in text:
+        fails.append("CONTENT still contains ¶ heading-anchor pilcrows")
+    if "from fastapi import FastAPI" not in text:
+        fails.append("CONTENT code block is shredded (token-per-line) or missing")
+    if "#" not in text:
+        fails.append("CONTENT has no Markdown headings")
+    return fails
+
+
 SCENARIOS: list[Scenario] = [
     # books.toscrape.com - the clean sandbox: exercises every mode + content
     Scenario("books", "CURRENT_PAGE structured", BOOKS, ExtractionMode.STRUCTURED,
@@ -685,6 +711,12 @@ SCENARIOS: list[Scenario] = [
     Scenario("hn", "CONTENT current page", HN, ExtractionMode.CONTENT,
              "CURRENT_PAGE", HN_ANALYSIS, chk_hn_content, content_config={},
              page_limit=1, do_export=False),
+
+    # fastapi.tiangolo.com - CONTENT-as-Markdown on a real documentation page
+    Scenario("fastapi", "CONTENT markdown (docs page)", FASTAPI,
+             ExtractionMode.CONTENT, "CURRENT_PAGE", FASTAPI_ANALYSIS,
+             chk_fastapi_content, content_config={}, page_limit=1,
+             do_export=False),
 ]
 
 

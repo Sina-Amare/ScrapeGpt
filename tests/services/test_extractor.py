@@ -253,7 +253,7 @@ def test_content_strips_chrome_and_picks_main():
     assert "Copyright" not in content       # footer chrome stripped
 
 
-def test_content_preserves_block_line_breaks():
+def test_content_emits_markdown_headings_and_paragraphs():
     html = (
         "<html><body><article>"
         "<h1>Title</h1><p>First paragraph.</p><p>Second paragraph.</p>"
@@ -264,7 +264,56 @@ def test_content_preserves_block_line_breaks():
         spec=_content_spec(), max_records=10,
     )
     content = records[0].normalized_data["content"]
-    assert "Title\nFirst paragraph.\nSecond paragraph." in content
+    # CONTENT mode now emits Markdown: an ATX heading + blank-line-separated paras.
+    assert "# Title" in content
+    assert "First paragraph." in content
+    assert "Second paragraph." in content
+
+
+def test_content_markdown_preserves_code_blocks_and_strips_pilcrows():
+    """Documentation pages are the headline case: syntax-highlighted code wrapped
+    in per-token <span>s must come back as ONE fenced block (not shredded one
+    token per line), the heading-anchor pilcrow must be gone, and the code
+    language detected from the ``language-*`` class."""
+    html = (
+        "<html><body><article>"
+        '<h1>Guide<a class="headerlink" href="#g" title="Permanent link">¶</a></h1>'
+        f"<p>{_LONG}</p>"
+        '<div class="language-python highlight"><pre><span></span><code>'
+        '<span class="kn">from</span> <span class="nn">fastapi</span> '
+        '<span class="kn">import</span> <span class="n">FastAPI</span>\n\n'
+        '<span class="n">app</span> <span class="o">=</span> '
+        '<span class="n">FastAPI</span><span class="p">()</span>'
+        "</code></pre></div>"
+        "</article></body></html>"
+    )
+    records = extract_records_from_html(
+        html, source_url="https://e.com/x", project=_project(),
+        spec=_content_spec(), max_records=10,
+    )
+    content = records[0].normalized_data["content"]
+    assert "# Guide" in content
+    assert "¶" not in content  # pilcrow heading-anchor stripped
+    assert "```python" in content  # fenced block + language detected
+    assert "from fastapi import FastAPI" in content  # NOT shredded per token
+    assert "app = FastAPI()" in content
+
+
+def test_content_markdown_keeps_links_and_lists():
+    html = (
+        "<html><body><article>"
+        f"<p>{_LONG}</p>"
+        "<ul><li>Alpha item one here</li><li>Beta item two here</li></ul>"
+        '<p>See <a href="https://example.com/docs">the docs</a> for details.</p>'
+        "</article></body></html>"
+    )
+    records = extract_records_from_html(
+        html, source_url="https://e.com/x", project=_project(),
+        spec=_content_spec(), max_records=10,
+    )
+    content = records[0].normalized_data["content"]
+    assert "- Alpha item one here" in content
+    assert "[the docs](https://example.com/docs)" in content
 
 
 def test_content_ignores_tiny_primary_selector_and_uses_density():

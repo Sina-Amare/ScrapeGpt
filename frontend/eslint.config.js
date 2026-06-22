@@ -22,6 +22,12 @@ export default tseslint.config(
       "react-refresh/only-export-components": [
         "warn",
         { allowConstantExport: true, allowExportNames: ["useAuth", "useTheme"] }
+      ],
+      // Allow `const { node, ...props } = ...` to drop a prop (e.g. react-markdown
+      // passes a non-DOM `node` we must strip before spreading onto an element).
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { ignoreRestSiblings: true, argsIgnorePattern: "^_", varsIgnorePattern: "^_" }
       ]
     }
   }

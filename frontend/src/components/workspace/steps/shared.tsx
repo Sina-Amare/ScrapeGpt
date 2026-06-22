@@ -1,4 +1,4 @@
-import { Info } from "lucide-react";
+import { FileText, Info } from "lucide-react";
 import { motion } from "motion/react";
 import { ChangeEvent, ReactNode, useMemo, useState } from "react";
 import { buildColumns } from "../../../lib/recordColumns";
@@ -6,6 +6,8 @@ import type { FieldSpec } from "../../../types";
 import { Alert } from "../../ui/Alert";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
+import { MarkdownPreviewDialog } from "../../ui/MarkdownPreviewDialog";
+import { MarkdownView } from "../../ui/MarkdownView";
 import { Select } from "../../ui/Select";
 
 /** Section card wrapper used by every wizard step body. */
@@ -127,10 +129,9 @@ export function RecordsTable({
 }
 
 function ContentPreviewCard({ row }: { row: Record<string, unknown> }) {
-  const [expanded, setExpanded] = useState(false);
+  const [open, setOpen] = useState(false);
   const content = asString(row.content);
   const sourceUrl = asString(row.source_url);
-  const visibleText = expanded || content.length <= 700 ? content : `${content.slice(0, 700)}...`;
 
   return (
     <article className="rounded-lg border border-line bg-surface p-4">
@@ -147,15 +148,26 @@ function ContentPreviewCard({ row }: { row: Record<string, unknown> }) {
           {content.length.toLocaleString()} chars
         </span>
       </div>
-      <p className="whitespace-pre-wrap text-sm leading-6 text-ink">{visibleText || "-"}</p>
-      {content.length > 700 ? (
-        <Button
-          variant="secondary"
-          className="mt-3"
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "Show less" : "Read full preview"}
-        </Button>
+      {content ? (
+        <>
+          <div className="relative max-h-72 overflow-hidden rounded-md border border-line p-4">
+            <MarkdownView markdown={content} />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-surface to-transparent" />
+          </div>
+          <Button variant="secondary" className="mt-3" onClick={() => setOpen(true)}>
+            <FileText className="h-4 w-4" />
+            Open .md preview
+          </Button>
+        </>
+      ) : (
+        <p className="text-sm text-muted">-</p>
+      )}
+      {open ? (
+        <MarkdownPreviewDialog
+          markdown={content}
+          sourceUrl={sourceUrl || undefined}
+          onClose={() => setOpen(false)}
+        />
       ) : null}
     </article>
   );

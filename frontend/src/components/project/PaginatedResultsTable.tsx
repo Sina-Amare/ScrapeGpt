@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronLeft, ChevronRight, FileText } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { Alert } from "../ui/Alert";
 import { Button } from "../ui/Button";
+import { MarkdownPreviewDialog } from "../ui/MarkdownPreviewDialog";
+import { MarkdownView } from "../ui/MarkdownView";
 import { Select } from "../ui/Select";
 import { Skeleton } from "../ui/Skeleton";
 import { api } from "../../lib/api";
@@ -26,14 +29,24 @@ type Props = {
 
 function ContentCard({
   record,
+  projectId,
 }: {
   record: ProjectRecord;
+  projectId: number;
 }) {
   const data = record.normalized_data ?? record.raw_data;
   const content = asString(data.content);
   const sourceUrl = asString(data.source_url);
-  const [expanded, setExpanded] = useState(false);
-  const visibleText = expanded || content.length <= 900 ? content : `${content.slice(0, 900)}...`;
+  const [open, setOpen] = useState(false);
+
+  async function downloadMd() {
+    try {
+      await api.exportProject(projectId, "md");
+      toast.success("Markdown downloaded");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Download failed");
+    }
+  }
 
   return (
     <article className="rounded-lg border border-line bg-surface p-4">
@@ -53,16 +66,27 @@ function ContentCard({
           {content.length.toLocaleString()} chars
         </span>
       </div>
-      <p className="whitespace-pre-wrap text-sm leading-6 text-ink">{visibleText || "-"}</p>
-      {content.length > 900 ? (
-        <Button
-          variant="secondary"
-          className="mt-3"
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <ChevronDown className={["h-4 w-4 transition", expanded ? "rotate-180" : ""].join(" ")} />
-          {expanded ? "Show less" : "Read full content"}
-        </Button>
+      {content ? (
+        <>
+          <div className="relative max-h-80 overflow-hidden rounded-md border border-line p-4">
+            <MarkdownView markdown={content} />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-surface to-transparent" />
+          </div>
+          <Button variant="secondary" className="mt-3" onClick={() => setOpen(true)}>
+            <FileText className="h-4 w-4" />
+            Open .md preview
+          </Button>
+        </>
+      ) : (
+        <p className="text-sm text-muted">-</p>
+      )}
+      {open ? (
+        <MarkdownPreviewDialog
+          markdown={content}
+          sourceUrl={sourceUrl || undefined}
+          onClose={() => setOpen(false)}
+          onDownload={downloadMd}
+        />
       ) : null}
     </article>
   );
@@ -146,7 +170,7 @@ export function PaginatedResultsTable({ projectId, specFields, isCompleted, mode
       {isContentMode ? (
         <div className="grid gap-3">
           {items.map((record) => (
-            <ContentCard key={record.id} record={record} />
+            <ContentCard key={record.id} record={record} projectId={projectId} />
           ))}
         </div>
       ) : (

@@ -10,6 +10,11 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
+try:  # markdownify is a declared dependency; degrade to plain text if absent.
+    from markdownify import markdownify as _html_to_markdown_raw
+except Exception:  # pragma: no cover - defensive
+    _html_to_markdown_raw = None
+
 from app.models.job import ExtractionMode, ExtractionSpec, Project
 
 logger = logging.getLogger(__name__)
@@ -451,6 +456,75 @@ def _readable_text(node: Tag | BeautifulSoup | None) -> str:
     return "\n".join(ln for ln in lines if ln).strip()
 
 
+# Decorative / non-content noise removed before Markdown conversion. Heading
+# anchor links ("¶" pilcrows), aria-hidden decorations and explicitly hidden
+# nodes would otherwise leak into the readable output as junk or duplicates.
+_CONTENT_NOISE_SELECTORS = (
+    "a.headerlink",
+    ".headerlink",
+    "[aria-hidden=true]",
+    "[hidden]",
+)
+
+
+def _strip_content_noise(scope: Tag | BeautifulSoup) -> None:
+    """Remove heading-anchor pilcrows and hidden/decorative nodes in place."""
+    for selector in _CONTENT_NOISE_SELECTORS:
+        try:
+            for el in scope.select(selector):
+                el.decompose()
+        except Exception:
+            continue
+
+
+def _code_language(el: Tag) -> str:
+    """Best-effort source language for a ``<pre>`` block, read from the common
+    ``language-xxx`` / ``lang-xxx`` / ``highlight-xxx`` class conventions used by
+    Pygments, highlight.js, Prism, MkDocs, Sphinx and Docusaurus."""
+    nodes: list[Tag | None] = [el, el.parent]
+    nodes.extend(el.find_all("code"))
+    for node in nodes:
+        if node is None:
+            continue
+        for cls in (node.get("class") or []):
+            for prefix in ("language-", "lang-", "highlight-"):
+                if cls.startswith(prefix) and len(cls) > len(prefix):
+                    return cls[len(prefix):]
+    return ""
+
+
+def _html_to_markdown(node: Tag | BeautifulSoup | None) -> str:
+    """Convert a content container to clean Markdown.
+
+    Preserves heading levels, lists, links, emphasis and — critically — fenced
+    code blocks, so syntax-highlighted code is not shredded one token per line
+    (the failure mode of a plain ``get_text`` dump). Falls back to plain readable
+    text if the converter is unavailable or raises.
+    """
+    if node is None:
+        return ""
+    if _html_to_markdown_raw is None:
+        return _readable_text(node)
+    try:
+        md = _html_to_markdown_raw(
+            str(node),
+            heading_style="ATX",
+            bullets="-",
+            strong_em_symbol="*",
+            escape_asterisks=False,
+            escape_underscores=False,
+            escape_misc=False,
+            code_language_callback=_code_language,
+        )
+    except Exception:
+        return _readable_text(node)
+    # markdownify emits generous blank lines; trim trailing whitespace and
+    # collapse runs of 3+ newlines to a single blank line.
+    md = re.sub(r"[ \t]+\n", "\n", md)
+    md = re.sub(r"\n{3,}", "\n\n", md)
+    return md.strip()
+
+
 def _densest_content_container(soup: BeautifulSoup) -> Tag | None:
     """The main/article/content container with the most text, or None."""
     best: Tag | None = None
@@ -490,6 +564,9 @@ def _extract_content(
     # Work on a copy so chrome removal never disturbs metadata-field extraction.
     work = BeautifulSoup(str(soup), "lxml")
     _strip_content_chrome(work)
+    # Drop pilcrow anchors / hidden duplicates before container selection so they
+    # neither skew density scoring nor leak into the Markdown output.
+    _strip_content_noise(work)
 
     selector = (spec.content_config or {}).get("primary_selector")
     scope: Tag | BeautifulSoup | None = None
@@ -517,7 +594,7 @@ def _extract_content(
             or work
         )
 
-    text = _readable_text(scope)
+    text = _html_to_markdown(scope)
     if text and len(text) < _MIN_CONTENT_TEXT_CHARS:
         warnings.append(
             "Extracted content is very short — the page may be mostly navigation, "
