@@ -18,7 +18,11 @@ const AUTH_NODES = [
   { left: "53%", top: "58%", delay: "3.6s", dur: "14s" },
   { left: "8%", top: "52%", delay: "6.2s", dur: "17s" },
   { left: "62%", top: "30%", delay: "4.4s", dur: "13s" },
-  { left: "18%", top: "88%", delay: "0.8s", dur: "15s" }
+  { left: "18%", top: "88%", delay: "0.8s", dur: "15s" },
+  { left: "46%", top: "40%", delay: "7s", dur: "16s" },
+  { left: "6%", top: "32%", delay: "2s", dur: "14s" },
+  { left: "30%", top: "46%", delay: "5.8s", dur: "15s" },
+  { left: "58%", top: "76%", delay: "3s", dur: "13s" }
 ];
 
 // ---------------------------------------------------------------------------
@@ -154,6 +158,7 @@ function AuthFrame({
         <span className="auth-blob auth-blob-1" />
         <span className="auth-blob auth-blob-2" />
         <span className="auth-blob auth-blob-3" />
+        <span className="auth-blob auth-blob-4" />
       </div>
 
       {/* Data grid — evokes a page being mapped into rows & columns */}
