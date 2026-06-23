@@ -4,10 +4,37 @@ ScrapeGPT is a self-hosted, BYOK AI-assisted web data extraction app. It combine
 
 `URL -> Understand Data -> Choose Fields -> Preview -> Extract -> Results`
 
+![ScrapeGPT — guided extraction dashboard](docs/screenshots/dashboard.png)
+
 Current status: Phase 2.5 and reliability hardening are complete for the self-hosted single-instance workflow. See [docs/STATUS.md](docs/STATUS.md) for the current product surface and [docs/reviews/03_phase25_validation.md](docs/reviews/03_phase25_validation.md) for the Phase 2.5 E2E validation evidence.
+
+## Screenshots
+
+A premium, responsive interface with light and dark themes.
+
+| Sign in — dark | Sign in — light |
+|---|---|
+| ![Sign in, dark theme](docs/screenshots/login.png) | ![Sign in, light theme](docs/screenshots/login-light.png) |
+
+**Guided extraction workspace** — review the AI's page analysis, choose fields, set the crawl scope, preview a sample, then extract.
+
+![Extraction workspace](docs/screenshots/workspace.png)
+
+**Results, trust signals & export** — server-side paginated records with field-coverage trust signals and CSV / JSON / XLSX export.
+
+![Extraction results](docs/screenshots/results.png)
+
+**Bring-your-own-key providers** — add your own LLM provider keys, encrypted at rest and tested before use.
+
+![Provider management](docs/screenshots/providers.png)
+
+**Works on mobile** — the full workflow is responsive down to phone widths.
+
+<img src="docs/screenshots/mobile.png" alt="Mobile dashboard" width="320">
 
 ## What Works Now
 
+- Premium, responsive React UI with light/dark themes and a guided, step-by-step extraction workspace.
 - Auth with JWT access/refresh tokens.
 - BYOK provider management with encrypted provider API keys.
 - URL validation, robots checks, static HTML fetch, and optional Playwright browser rendering.
@@ -129,9 +156,9 @@ venv\Scripts\python.exe tests\validation\run_validation.py
 
 Last recorded results:
 
-- Backend: 366 passed.
-- Frontend: 70 passed; typecheck, lint, and build passed.
-- Phase 2.5 validation: 8/8 scenarios passed.
+- Backend: 681 passed.
+- Frontend: 89 passed; typecheck, lint, and build passed.
+- Live HTTP API E2E (real public site): 8/8 scenarios passed.
 
 ## Documentation
 
