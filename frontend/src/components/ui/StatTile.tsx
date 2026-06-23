@@ -28,12 +28,16 @@ export function StatTile({
   }, [numericValue, isNumeric]);
 
   return (
-    <div className="rounded-md border border-line bg-surface p-4">
+    <div className="card-hover sheen relative overflow-hidden rounded-xl border border-line bg-surface p-5 shadow-panel">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium text-muted">{label}</p>
-        {icon ? <div className="text-teal">{icon}</div> : null}
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted">{label}</p>
+        {icon ? (
+          <div className="grid h-8 w-8 place-items-center rounded-lg bg-accent/10 text-accent">
+            {icon}
+          </div>
+        ) : null}
       </div>
-      <div className="mt-2 text-xl font-bold text-ink">
+      <div className="mt-3 text-3xl font-bold tracking-tight text-ink tabular-nums">
         {isNumeric ? <span ref={ref}>{numericValue}</span> : value}
       </div>
     </div>

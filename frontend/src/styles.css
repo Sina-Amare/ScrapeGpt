@@ -1,29 +1,77 @@
-/* ─── Design tokens: light mode ──────────────────────────────────────────── */
+/* ─── Design tokens: light mode (warm paper + ink, amber/copper signal) ───── */
 :root {
-  --c-surface:    #FFFFFF;
-  --c-porcelain:  #F8F9FB;
-  --c-ink:        #0F172A;
-  --c-muted:      #64748B;
-  --c-line:       #E2E8F0;
-  --c-body:       #F5F6FC;
-  --c-grid:       rgba(34, 114, 255, 0.03);
-  --c-teal-soft:  #EEF4FF;
-  --shadow-panel: 0 4px 24px -1px rgba(15, 23, 42, 0.07),
-                  0 2px 6px -1px rgba(15, 23, 42, 0.04);
+  --c-surface:        #FFFFFF;
+  --c-surface-2:      #FAF6F0;
+  --c-porcelain:      #F2ECE2;
+  --c-ink:            #1A1410;
+  --c-muted:          #6B6157;
+  --c-line:           rgba(40, 28, 18, 0.10);
+  --c-body:           #F6F1E8;
+  --c-grid:           rgba(120, 80, 30, 0.022);
+
+  /* Glass (frosted chrome that floats over content) */
+  --c-glass:          rgba(255, 252, 246, 0.72);
+  --c-glass-2:        rgba(255, 252, 246, 0.55);
+  --c-glass-border:   rgba(40, 28, 18, 0.08);
+
+  /* Signal accent — amber/copper, deepened for readable contrast on light */
+  --c-accent:         #B4560C;
+  --c-accent-strong:  #8F430A;
+  --c-accent-soft:    rgba(245, 166, 35, 0.14);
+  --c-accent-contrast:#1B1206;
+  --c-teal-soft:      rgba(245, 166, 35, 0.14);
+
+  /* Solid "strong" surface (primary button, selected chips) — ink on light */
+  --c-primary-bg:     #1B1510;
+  --c-primary-fg:     #FFF9F0;
+  --c-primary-hover:  #2C241B;
+
+  --c-success:        #15803D;
+  --c-warning:        #A16207;
+  --c-danger:         #B91C1C;
+
+  --shadow-panel: 0 1px 2px rgba(40, 28, 18, 0.04),
+                  0 14px 32px -18px rgba(40, 28, 18, 0.20);
+  --shadow-glass: 0 10px 34px -14px rgba(40, 28, 18, 0.22);
+  --shadow-glow:  0 0 0 1px var(--c-accent-soft),
+                  0 10px 30px -12px var(--c-accent-soft);
 }
 
-/* ─── Design tokens: dark mode ───────────────────────────────────────────── */
+/* ─── Design tokens: dark mode (warm graphite glass + amber signal) ───────── */
 html.dark {
-  --c-surface:    #252B36;
-  --c-porcelain:  #1E2430;
-  --c-ink:        #F4F7FB;
-  --c-muted:      #B2BDCE;
-  --c-line:       #3B4657;
-  --c-body:       #171D28;
-  --c-grid:       rgba(125, 154, 214, 0.028);
-  --c-teal-soft:  rgba(34, 114, 255, 0.13);
-  --shadow-panel: 0 10px 26px -20px rgba(0, 0, 0, 0.62),
-                  0 1px 0 rgba(255, 255, 255, 0.045) inset;
+  --c-surface:        #1E1813;
+  --c-surface-2:      #271F18;
+  --c-porcelain:      #18130F;
+  --c-ink:            #F5EFE7;
+  --c-muted:          #A99E90;
+  --c-line:           rgba(255, 243, 230, 0.085);
+  --c-body:           #15110D;
+  --c-grid:           rgba(245, 185, 120, 0.022);
+
+  --c-glass:          rgba(26, 20, 14, 0.62);
+  --c-glass-2:        rgba(26, 20, 14, 0.42);
+  --c-glass-border:   rgba(255, 238, 220, 0.09);
+
+  --c-accent:         #F5A623;
+  --c-accent-strong:  #E08515;
+  --c-accent-soft:    rgba(245, 166, 35, 0.13);
+  --c-accent-contrast:#1B1206;
+  --c-teal-soft:      rgba(245, 166, 35, 0.13);
+
+  --c-primary-bg:     #F5A623;
+  --c-primary-fg:     #1B1206;
+  --c-primary-hover:  #FBB845;
+
+  --c-success:        #34D399;
+  --c-warning:        #FACC15;
+  --c-danger:         #F87171;
+
+  --shadow-panel: 0 1px 0 rgba(255, 240, 225, 0.04) inset,
+                  0 18px 44px -22px rgba(0, 0, 0, 0.72),
+                  0 4px 14px -8px rgba(0, 0, 0, 0.55);
+  --shadow-glass: 0 18px 54px -22px rgba(0, 0, 0, 0.78);
+  --shadow-glow:  0 0 0 1px var(--c-accent-soft),
+                  0 12px 36px -10px rgba(245, 166, 35, 0.18);
 }
 
 @font-face {
@@ -77,19 +125,52 @@ body {
   min-height: 100vh;
   font-family: Geist, ui-sans-serif, system-ui, -apple-system, sans-serif;
   background:
+    radial-gradient(880px 520px at 100% -8%, rgba(245, 166, 35, 0.08), transparent 60%),
+    radial-gradient(820px 600px at -8% 108%, rgba(90, 56, 22, 0.05), transparent 55%),
     linear-gradient(var(--c-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--c-grid) 1px, transparent 1px),
     var(--c-body);
-  background-size: 32px 32px;
+  background-size: auto, auto, 34px 34px, 34px 34px, auto;
+  background-attachment: fixed, fixed, fixed, fixed, fixed;
 }
 
 html.dark body {
   background:
-    radial-gradient(circle at 18% -8%, rgba(34, 114, 255, 0.06), transparent 28rem),
+    radial-gradient(900px 540px at 90% -12%, rgba(245, 166, 35, 0.09), transparent 58%),
+    radial-gradient(820px 640px at -8% 112%, rgba(194, 112, 58, 0.06), transparent 55%),
     linear-gradient(var(--c-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--c-grid) 1px, transparent 1px),
     var(--c-body);
-  background-size: auto, 32px 32px, 32px 32px, auto;
+  background-size: auto, auto, 34px 34px, 34px 34px, auto;
+  background-attachment: fixed, fixed, fixed, fixed, fixed;
+}
+
+/* ─── Glass surfaces (frosted chrome floating over content) ───────────────── */
+.glass {
+  background: var(--c-glass);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border-color: var(--c-glass-border);
+}
+.glass-2 {
+  background: var(--c-glass-2);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border-color: var(--c-glass-border);
+}
+/* Subtle top sheen on elevated cards (premium depth without heavy shadows) */
+.sheen { position: relative; }
+.sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 38%);
+}
+html:not(.dark) .sheen::before {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), transparent 40%);
+  opacity: 0.5;
 }
 
 @keyframes extract-progress-indeterminate {
@@ -110,23 +191,23 @@ select {
   transition: box-shadow 0.22s ease, transform 0.22s ease !important;
 }
 .card-hover:hover {
-  box-shadow: 0 8px 32px -4px rgba(34, 114, 255, 0.13),
-              0 4px 12px -2px rgba(34, 114, 255, 0.07);
+  box-shadow: 0 12px 34px -12px rgba(245, 166, 35, 0.12),
+              0 6px 16px -8px rgba(40, 28, 18, 0.16);
   transform: translateY(-1px);
 }
 
 html.dark .card-hover:hover {
   box-shadow: 0 14px 34px -26px rgba(0, 0, 0, 0.82),
-              0 0 0 1px rgba(34, 114, 255, 0.13);
+              0 0 0 1px rgba(245, 166, 35, 0.16);
 }
 
 html.dark ::selection {
-  background: rgba(34, 114, 255, 0.34);
+  background: rgba(245, 166, 35, 0.28);
   color: var(--c-ink);
 }
 
 html.dark * {
-  scrollbar-color: #485266 var(--c-porcelain);
+  scrollbar-color: #574C40 var(--c-porcelain);
 }
 
 html.dark *::-webkit-scrollbar {
@@ -139,13 +220,13 @@ html.dark *::-webkit-scrollbar-track {
 }
 
 html.dark *::-webkit-scrollbar-thumb {
-  background: #485266;
+  background: #574C40;
   border: 3px solid var(--c-porcelain);
   border-radius: 9999px;
 }
 
 html.dark *::-webkit-scrollbar-thumb:hover {
-  background: #5B6680;
+  background: #6E6253;
 }
 
 html.dark .hover\:bg-red-50:hover {
@@ -246,8 +327,8 @@ select option {
   opacity: 0.6;
 }
 .auth-input:focus {
-  border-color: rgba(34, 114, 255, 0.7);
-  box-shadow: 0 0 0 3px rgba(34, 114, 255, 0.16);
+  border-color: var(--c-accent);
+  box-shadow: 0 0 0 3px var(--c-accent-soft);
 }
 
 /* ─── Primary button shimmer sweep ───────────────────────────────────────── */
@@ -292,17 +373,17 @@ html:not(.dark) .auth-blob {
 }
 .auth-blob-1 {
   width: 540px; height: 540px; left: -8%; top: -14%;
-  background: radial-gradient(circle, rgba(34, 114, 255, 0.55), transparent 70%);
+  background: radial-gradient(circle, rgba(245, 166, 35, 0.24), transparent 70%);
   animation: auth-drift-1 26s ease-in-out infinite;
 }
 .auth-blob-2 {
   width: 480px; height: 480px; right: -8%; bottom: -16%;
-  background: radial-gradient(circle, rgba(45, 212, 191, 0.42), transparent 70%);
+  background: radial-gradient(circle, rgba(194, 112, 58, 0.24), transparent 70%);
   animation: auth-drift-2 32s ease-in-out infinite;
 }
 .auth-blob-3 {
   width: 440px; height: 440px; left: 42%; top: 26%;
-  background: radial-gradient(circle, rgba(124, 92, 255, 0.34), transparent 70%);
+  background: radial-gradient(circle, rgba(225, 140, 70, 0.18), transparent 70%);
   animation: auth-drift-3 38s ease-in-out infinite;
 }
 @keyframes auth-drift-1 {
@@ -329,8 +410,8 @@ html:not(.dark) .auth-blob {
   width: 4px;
   height: 4px;
   border-radius: 9999px;
-  background: rgba(34, 114, 255, 0.9);
-  box-shadow: 0 0 8px 1px rgba(34, 114, 255, 0.55);
+  background: rgba(245, 180, 90, 0.9);
+  box-shadow: 0 0 8px 1px rgba(245, 166, 35, 0.5);
   opacity: 0;
   animation-name: auth-float;
   animation-timing-function: ease-in-out;
@@ -349,8 +430,8 @@ html:not(.dark) .auth-blob {
   position: absolute;
   inset: -42px;
   background-image:
-    linear-gradient(to right, rgba(34, 114, 255, 0.10) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(34, 114, 255, 0.10) 1px, transparent 1px);
+    linear-gradient(to right, rgba(245, 166, 35, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(245, 166, 35, 0.08) 1px, transparent 1px);
   background-size: 42px 42px;
   -webkit-mask-image: radial-gradient(ellipse 75% 60% at 50% 42%, #000 25%, transparent 78%);
   mask-image: radial-gradient(ellipse 75% 60% at 50% 42%, #000 25%, transparent 78%);
@@ -390,8 +471,10 @@ html:not(.dark) .auth-blob {
 .markdown-body h4 { font-size: 1em; }
 .markdown-body p { margin: 0 0 1em; }
 .markdown-body a {
-  color: rgb(34, 114, 255);
-  text-decoration: none;
+  color: var(--c-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
   font-weight: 500;
 }
 .markdown-body a:hover { text-decoration: underline; }

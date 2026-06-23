@@ -21,7 +21,7 @@ export function Field({
 export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className={`w-full h-10 rounded-md border border-line bg-surface px-3 text-sm text-ink outline-none transition placeholder:text-muted focus:border-teal focus:ring-2 focus:ring-teal/15 autofill-surface ${className}`}
+      className={`w-full h-10 rounded-lg border border-line bg-porcelain px-3.5 text-sm text-ink outline-none transition placeholder:text-muted/70 hover:border-line focus:border-accent focus:bg-surface focus:ring-2 focus:ring-accent/25 autofill-surface ${className}`}
       {...props}
     />
   );

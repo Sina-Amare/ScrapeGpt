@@ -104,10 +104,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   });
 
   return (
-    <div className="min-h-screen bg-porcelain text-ink dark:bg-transparent">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-line bg-surface px-4 py-5 md:block">
+    <div className="min-h-screen text-ink">
+      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-glassline glass px-4 py-5 md:block">
         <div className="mb-8 flex items-center gap-3 px-2">
-          <div className="grid h-10 w-10 place-items-center rounded-md bg-teal text-white">
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-onprimary shadow-glow">
             <DatabaseZap className="h-5 w-5" />
           </div>
           <div>
@@ -121,11 +121,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       {mobileOpen ? (
-        <div className="fixed inset-0 z-40 bg-ink/35 md:hidden">
-          <aside className="h-full w-72 border-r border-line bg-surface p-4">
+        <div className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-sm md:hidden">
+          <aside className="h-full w-[min(18rem,calc(100vw-3rem))] border-r border-glassline glass-2 p-4">
             <div className="mb-6 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="grid h-9 w-9 place-items-center rounded-md bg-teal text-white">
+                <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-onprimary shadow-glow">
                   <DatabaseZap className="h-5 w-5" />
                 </div>
                 <span className="text-sm font-bold uppercase tracking-wide">
@@ -146,7 +146,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       ) : null}
 
       <div className="md:pl-64">
-        <header className="sticky top-0 z-30 border-b border-line bg-surface">
+        <header className="sticky top-0 z-30 border-b border-glassline glass">
           <div className="flex h-16 items-center justify-between gap-3 px-4 md:px-8">
             <div className="flex items-center gap-3">
               <button

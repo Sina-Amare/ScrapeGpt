@@ -30,7 +30,7 @@ function SessionRow({
     <tr>
       <td className="py-2 pr-4 font-medium">{session.name}</td>
       <td className="py-2 pr-4 font-mono text-sm">{session.domain}</td>
-      <td className="py-2 pr-4 text-sm text-gray-500">
+      <td className="py-2 pr-4 text-sm text-muted">
         {session.expires_at
           ? new Date(session.expires_at).toLocaleDateString()
           : "No expiry"}
@@ -38,7 +38,7 @@ function SessionRow({
       <td className="py-2 pr-4">
         <span
           className={`text-xs font-semibold ${
-            session.is_active ? "text-green-600" : "text-gray-400"
+            session.is_active ? "text-success" : "text-muted"
           }`}
         >
           {session.is_active ? "Active" : "Inactive"}
@@ -46,7 +46,7 @@ function SessionRow({
       </td>
       <td className="py-2 text-right">
         <Button variant="ghost" onClick={onDelete} disabled={isPending}>
-          <Trash2 className="h-4 w-4 text-red-500" />
+          <Trash2 className="h-4 w-4 text-danger" />
         </Button>
       </td>
     </tr>
@@ -60,7 +60,7 @@ export function SessionsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<BrowserSession | null>(null);
 
-  const { data: sessions, isLoading } = useQuery<BrowserSession[]>({
+  const { data: sessions, isLoading, isError, refetch } = useQuery<BrowserSession[]>({
     queryKey: ["sessions"],
     queryFn: () => api.listSessions(),
   });
@@ -123,13 +123,26 @@ export function SessionsPage() {
 
       {isLoading && <Skeleton className="mt-6 h-24 w-full" />}
 
-      {!isLoading && (!sessions || sessions.length === 0) && (
+      {!isLoading && isError && (
+        <div className="mt-6">
+          <Alert tone="danger">
+            <div className="flex flex-col gap-2">
+              <span>Couldn&apos;t load your saved sessions.</span>
+              <Button variant="secondary" className="w-fit" onClick={() => void refetch()}>
+                Try again
+              </Button>
+            </div>
+          </Alert>
+        </div>
+      )}
+
+      {!isLoading && !isError && (!sessions || sessions.length === 0) && (
         <div className="mt-8 rounded-lg border border-dashed border-line p-8 text-center text-muted">
           <p className="text-sm">No sessions yet.</p>
           <p className="mt-1 text-xs">
-            Export cookies from your browser (e.g. with{" "}
-            <span className="font-medium">Cookie-Editor</span>) and paste them
-            here to unlock sites that require a logged-in session.
+            Export your browser cookies (for example with the free{" "}
+            <span className="font-medium">Cookie-Editor</span> extension) and
+            paste them here to reach sites that need you signed in.
           </p>
         </div>
       )}

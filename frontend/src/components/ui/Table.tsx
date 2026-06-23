@@ -8,12 +8,12 @@ export function Table({
   children: ReactNode;
 }) {
   return (
-    <div className="overflow-hidden rounded-md border border-line bg-surface">
-      <table className="w-full border-collapse text-left text-sm">
-        <thead className="bg-porcelain text-xs uppercase text-muted">
+    <div className="overflow-x-auto rounded-xl border border-line bg-surface shadow-panel">
+      <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+        <thead className="bg-porcelain/60 text-xs uppercase tracking-wider text-muted">
           <tr>
             {headings.map((heading) => (
-              <th key={heading} className="px-4 py-3 font-bold">
+              <th key={heading} className="px-4 py-3 font-semibold">
                 {heading}
               </th>
             ))}

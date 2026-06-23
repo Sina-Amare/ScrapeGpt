@@ -36,7 +36,7 @@ function PipelineProgress({ state }: { state: TaskState }) {
 
   if (isFailed) {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600">
+      <div className="flex items-center gap-2 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm font-semibold text-danger">
         <X className="h-4 w-4 shrink-0" />
         Pipeline failed — see error below
       </div>
@@ -57,10 +57,10 @@ function PipelineProgress({ state }: { state: TaskState }) {
                 className={[
                   "flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition-all",
                   isDone
-                    ? "bg-teal text-white"
+                    ? "bg-primary text-onprimary"
                     : isActive
                     ? "bg-teal/15 text-teal ring-2 ring-teal animate-pulse"
-                    : "bg-gray-100 text-gray-400",
+                    : "bg-porcelain text-muted",
                 ].join(" ")}
               >
                 {isDone || isCompleted ? (
@@ -82,7 +82,7 @@ function PipelineProgress({ state }: { state: TaskState }) {
               <div
                 className={[
                   "mb-5 h-0.5 flex-1 mx-1 transition-all",
-                  idx < currentIdx ? "bg-teal" : "bg-gray-100",
+                  idx < currentIdx ? "bg-teal" : "bg-line",
                 ].join(" ")}
               />
             ) : null}

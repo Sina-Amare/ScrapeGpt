@@ -140,7 +140,7 @@ export function ProjectsPage() {
                   <button
                     onClick={() => setDeleteTarget(project.id)}
                     disabled={!TERMINAL_PROJECT_STATES.has(project.system_state) || deleteMutation.isPending}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-red-500/70 transition hover:border-danger hover:bg-red-50 hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-surface disabled:hover:text-red-500/50"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-danger/70 transition hover:border-danger hover:bg-danger/10 hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-surface disabled:hover:text-danger/50"
                     title="Delete project"
                   >
                     <Trash2 className="h-4 w-4" />

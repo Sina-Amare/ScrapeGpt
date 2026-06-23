@@ -165,7 +165,7 @@ function ProjectsSection() {
                   </span>
                   {project.error ? (
                     <span
-                      className="mt-0.5 block truncate text-xs text-red-500"
+                      className="mt-0.5 block truncate text-xs text-danger"
                       title={project.error}
                     >
                       {project.error}
@@ -198,7 +198,7 @@ function ProjectsSection() {
                       disabled={
                         !TERMINAL_PROJECT_STATES.has(project.system_state)
                       }
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-red-500/70 hover:border-danger hover:bg-red-50 hover:text-danger transition focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-surface disabled:hover:text-red-500/50"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-danger/70 hover:border-danger hover:bg-red-50 hover:text-danger transition focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-surface disabled:hover:text-danger/50"
                       title="Delete project"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -302,7 +302,7 @@ function ActivityLogSection() {
               onClick={() => setFilter(option.key)}
               className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
                 filter === option.key
-                  ? "bg-teal text-white"
+                  ? "bg-primary text-onprimary"
                   : "text-muted hover:bg-porcelain hover:text-ink"
               }`}
             >
@@ -541,7 +541,7 @@ function LegacyScrapeSection() {
                   </span>
                   {t.error ? (
                     <span
-                      className="mt-0.5 block truncate text-xs text-red-500"
+                      className="mt-0.5 block truncate text-xs text-danger"
                       title={t.error}
                     >
                       {t.error}
@@ -570,7 +570,7 @@ function LegacyScrapeSection() {
                       disabled={
                         t.state !== "COMPLETED" && t.state !== "FAILED"
                       }
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-red-500/70 hover:border-danger hover:bg-red-50 hover:text-danger transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-surface disabled:hover:text-red-500/50"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-danger/70 hover:border-danger hover:bg-red-50 hover:text-danger transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-danger disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-line disabled:hover:bg-surface disabled:hover:text-danger/50"
                       title="Delete Task"
                     >
                       <Trash2 className="h-4 w-4" />

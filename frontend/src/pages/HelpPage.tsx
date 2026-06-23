@@ -42,10 +42,10 @@ function Pipeline() {
       {steps.map((step, i) => (
         <div key={step.n} className="flex items-center gap-2">
           <span
-            className={`rounded-md px-3 py-1.5 text-xs font-bold text-white ${
+            className={`rounded-md px-3 py-1.5 text-xs font-bold ${
               step.current
-                ? "bg-teal ring-2 ring-teal/60 ring-offset-2 ring-offset-surface"
-                : "bg-teal-dark"
+                ? "bg-primary text-onprimary ring-2 ring-accent/50 ring-offset-2 ring-offset-surface"
+                : "bg-porcelain text-muted"
             }`}
           >
             {step.n}. {step.label}

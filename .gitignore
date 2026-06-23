@@ -297,3 +297,6 @@ uploads/
 *.spec
 celerybeat-schedule
 celerybeat.pid
+
+# Dev UX screenshot scratch (Playwright captures, not committed)
+.ux-shots/

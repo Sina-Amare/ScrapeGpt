@@ -8,7 +8,8 @@
       (function () {
         try {
           var s = localStorage.getItem("scrapegpt-theme");
-          var dark = s ? s === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+          // Dark-first: default to the premium dark theme unless the user chose light.
+          var dark = s ? s === "dark" : true;
           if (dark) document.documentElement.classList.add("dark");
         } catch (_) {}
       })();

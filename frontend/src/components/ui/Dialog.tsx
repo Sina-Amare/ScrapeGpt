@@ -20,14 +20,14 @@ export function Dialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4 sm:p-6"
+      className="fixed inset-0 z-50 grid place-items-center bg-ink/50 p-4 backdrop-blur-sm sm:p-6"
       onClick={onClose}
     >
       <section
-        className="flex w-full max-w-xl max-h-full flex-col overflow-hidden rounded-md border border-line bg-surface shadow-panel"
+        className="glass-2 sheen relative flex w-full max-w-xl max-h-full flex-col overflow-hidden rounded-2xl border shadow-glass"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex shrink-0 items-center justify-between border-b border-line px-5 py-4">
+        <header className="flex shrink-0 items-center justify-between border-b border-glassline px-5 py-4">
           <h2 className="text-base font-semibold text-ink">{title}</h2>
           <button
             type="button"

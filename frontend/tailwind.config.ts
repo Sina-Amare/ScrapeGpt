@@ -8,24 +8,38 @@ export default {
       colors: {
         porcelain: "var(--c-porcelain)",
         surface: "var(--c-surface)",
+        surface2: "var(--c-surface-2)",
         ink: "var(--c-ink)",
         muted: "var(--c-muted)",
         line: "var(--c-line)",
         body: "var(--c-body)",
-        // Brand accent — electric blue. Components use "teal" class names (historical alias).
+        glass: "var(--c-glass)",
+        glassline: "var(--c-glass-border)",
+        // Signal accent — amber (dark) / copper (light). Components use the
+        // historical "teal" alias; both now resolve to the accent variable.
         teal: {
-          DEFAULT: "#2272FF",
-          dark:    "#1A5FE8",
-          soft:    "var(--c-teal-soft)",
-          subtle:  "#BFDBFE",
+          DEFAULT: "var(--c-accent)",
+          dark:    "var(--c-accent-strong)",
+          soft:    "var(--c-accent-soft)",
+          subtle:  "var(--c-accent)",
         },
-        accent: "#2272FF",
-        success: "#15803D",
-        warning: "#B45309",
-        danger: "#B91C1C",
+        accent: "var(--c-accent)",
+        onaccent: "var(--c-accent-contrast)",
+        // Solid "strong" surface — ink (light) / amber (dark). High-contrast in
+        // both modes; used for primary buttons and selected chips.
+        primary: "var(--c-primary-bg)",
+        onprimary: "var(--c-primary-fg)",
+        success: "var(--c-success)",
+        warning: "var(--c-warning)",
+        danger: "var(--c-danger)",
       },
       boxShadow: {
         panel: "var(--shadow-panel)",
+        glass: "var(--shadow-glass)",
+        glow: "var(--shadow-glow)",
+      },
+      backdropBlur: {
+        xs: "2px",
       },
       fontFamily: {
         sans: ["Geist", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "sans-serif"],

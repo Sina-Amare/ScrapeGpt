@@ -219,7 +219,7 @@ export function Select({ value = "", onChange, disabled, className = "", childre
                       opt.disabled
                         ? "cursor-not-allowed text-muted/40"
                         : isSelected
-                        ? "bg-teal text-white"
+                        ? "bg-primary text-onprimary"
                         : "text-ink hover:bg-teal/[0.08]",
                     ].join(" ")}
                   >

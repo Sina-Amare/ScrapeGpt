@@ -4,11 +4,13 @@ import { Spinner } from "./Spinner";
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: "btn-primary-shimmer bg-teal text-white hover:bg-teal-dark focus-visible:ring-teal",
+  primary:
+    "btn-primary-shimmer bg-primary text-onprimary shadow-sm hover:bg-[var(--c-primary-hover)] focus-visible:ring-accent",
   secondary:
-    "border border-line bg-surface text-ink hover:border-teal hover:text-teal focus-visible:ring-teal",
-  ghost: "text-muted hover:bg-porcelain hover:text-ink focus-visible:ring-teal",
-  danger: "bg-danger text-white hover:bg-red-800 focus-visible:ring-danger"
+    "border border-line bg-surface2 text-ink hover:border-accent/60 hover:text-accent focus-visible:ring-accent",
+  ghost: "text-muted hover:bg-porcelain hover:text-ink focus-visible:ring-accent",
+  danger:
+    "border border-danger/30 bg-danger/10 text-danger hover:bg-danger/20 hover:border-danger/50 focus-visible:ring-danger"
 };
 
 export function Button({

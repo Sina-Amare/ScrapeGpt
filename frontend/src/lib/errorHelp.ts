@@ -51,6 +51,11 @@ const HELP: Record<string, ErrorHelp> = {
     title: "The page timed out",
     guidance:
       "The site took too long to respond. Retry — if it persists, the site may be slow or blocking automated requests."
+  },
+  ACTIVE_JOB_LIMIT_REACHED: {
+    title: "Too many extractions running",
+    guidance:
+      "You've reached the limit of extractions that can run at once. Wait for a running one to finish, then try again."
   }
 };
 

@@ -43,7 +43,7 @@ export function StepReview({
               <Badge tone="neutral">{project.selected_field_count} selected fields</Badge>
             </div>
           </div>
-          <div className="w-full rounded-lg border border-line bg-porcelain p-4 md:w-72">
+          <div className="w-full rounded-lg border border-line bg-porcelain p-4 sm:w-72">
             <p className="mb-2 text-xs font-bold uppercase tracking-widest text-muted">Confidence</p>
             <ConfidenceBar value={project.confidence} />
           </div>

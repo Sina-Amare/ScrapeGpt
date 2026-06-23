@@ -23,7 +23,7 @@ export function StepCard({
   children: ReactNode;
 }) {
   return (
-    <section className="card-hover rounded-lg border border-line bg-surface p-6 shadow-panel">
+    <section className="card-hover sheen relative rounded-xl border border-line bg-surface p-6 shadow-panel">
       {(title || action) && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>

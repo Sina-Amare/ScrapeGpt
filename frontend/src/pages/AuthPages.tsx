@@ -110,7 +110,7 @@ function LogoMark({ size = 32 }: { size?: number }) {
   return (
     <div
       style={{ width: size, height: size, borderRadius: Math.round(size * 0.28) }}
-      className="grid flex-shrink-0 place-items-center bg-teal"
+      className="grid flex-shrink-0 place-items-center bg-primary shadow-glow"
     >
       <svg
         width={size * 0.5}
@@ -121,7 +121,7 @@ function LogoMark({ size = 32 }: { size?: number }) {
         strokeWidth="2.2"
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="text-white"
+        className="text-onprimary"
       >
         <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" />
       </svg>
@@ -563,7 +563,7 @@ export function ForgotPasswordPage() {
           </Alert>
           <Link
             to="/login"
-            className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-teal text-sm font-semibold text-white transition hover:bg-teal-dark"
+            className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary text-sm font-semibold text-onprimary transition hover:bg-[var(--c-primary-hover)]"
           >
             Back to sign in
           </Link>

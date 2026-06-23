@@ -59,9 +59,9 @@ function StepIcon({ status }: { status: StepStatus }) {
   }
   if (status === "active") {
     return (
-      <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal text-white">
+      <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-onprimary">
         <motion.div
-          className="absolute inset-0 rounded-full border-2 border-teal"
+          className="absolute inset-0 rounded-full border-2 border-accent"
           animate={{ scale: [1, 1.6, 1], opacity: [0.7, 0, 0.7] }}
           transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
         />

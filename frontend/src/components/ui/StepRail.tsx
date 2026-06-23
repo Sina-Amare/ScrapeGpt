@@ -46,7 +46,7 @@ export function StepRail({
               <span
                 className={`relative flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold ${
                   status === "done"
-                    ? "border-teal bg-teal text-white"
+                    ? "border-primary bg-primary text-onprimary"
                     : status === "active"
                     ? "border-teal text-teal"
                     : "border-line bg-surface text-muted/60"

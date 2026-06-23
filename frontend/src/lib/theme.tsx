@@ -13,9 +13,10 @@ function readInitialTheme(): boolean {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return stored === "dark";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    // Dark-first: the premium glass theme is the default for new sessions.
+    return true;
   } catch {
-    return false;
+    return true;
   }
 }
 

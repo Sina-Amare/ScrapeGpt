@@ -81,10 +81,10 @@ export function ScopeSelector({
             <span
               className={[
                 "mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border",
-                isSelected ? "border-teal bg-teal text-white" : "border-line bg-surface",
+                isSelected ? "border-primary bg-primary text-onprimary" : "border-line bg-surface",
               ].join(" ")}
             >
-              {isSelected ? <span className="h-2 w-2 rounded-full bg-white" /> : null}
+              {isSelected ? <span className="h-2 w-2 rounded-full bg-onprimary" /> : null}
             </span>
             <span className="flex-1">
               <span className="flex items-center gap-2">
@@ -127,7 +127,7 @@ export function ScopeSelector({
                 <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-warning" />
                 <span>
                   {currentMode === "FULL_SITE"
-                    ? "Whole-site crawl requires explicit confirmation. This will explore the entire website."
+                    ? "Whole-site crawl requires explicit confirmation. This will crawl the entire website, which can take a while and use significant resources."
                     : "Confirm the crawl scope before extraction can begin."}
                 </span>
               </div>

@@ -48,11 +48,11 @@ export function MarkdownPreviewDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4 sm:p-6"
+      className="fixed inset-0 z-50 grid place-items-center bg-ink/50 p-4 backdrop-blur-sm sm:p-6"
       onClick={onClose}
     >
       <section
-        className="flex h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-panel"
+        className="glass-2 flex h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border shadow-glass"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-5 py-4">
@@ -141,7 +141,7 @@ function TabButton({
       onClick={onClick}
       className={[
         "inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-semibold transition",
-        active ? "bg-teal text-white" : "text-muted hover:text-ink",
+        active ? "bg-primary text-onprimary" : "text-muted hover:text-ink",
       ].join(" ")}
     >
       {icon}

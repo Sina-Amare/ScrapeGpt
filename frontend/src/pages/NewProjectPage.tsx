@@ -77,7 +77,7 @@ function ExtractionModeCards({
           >
             <span
               className={`mt-0.5 grid h-8 w-8 flex-shrink-0 place-items-center rounded-md ${
-                active ? "bg-teal text-white" : "bg-porcelain text-muted"
+                active ? "bg-primary text-onprimary" : "bg-porcelain text-muted"
               }`}
             >
               <Icon className="h-4 w-4" />
@@ -223,14 +223,15 @@ export function NewProjectPage() {
                   <span className="text-sm font-semibold text-ink">What are you extracting?</span>
                   <ExtractionModeCards value={extractionMode} onChange={setExtractionMode} />
                   <p className="text-xs text-muted">
-                    Scraping GitHub, docs, or articles? Choose{" "}
+                    Working with code repositories, documentation, or articles?
+                    Choose{" "}
                     <span className="font-semibold text-ink">Content / documents</span>.
                   </p>
                 </div>
 
                 <Field
                   label="How should ScrapeGPT load the page?"
-                  hint="Use browser rendering if the preview comes back empty or the page is heavily JavaScript-driven (e.g. GitHub-style apps)."
+                  hint="Use browser rendering if the preview comes back empty, or if the page only fills in its content after it loads or you scroll and click."
                 >
                   <Select
                     value={renderMode}

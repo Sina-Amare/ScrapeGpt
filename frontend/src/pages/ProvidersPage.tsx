@@ -97,7 +97,7 @@ type CapStatus = "ok" | "fail" | "info";
 function CapFlag({ label, status }: { label: string; status: CapStatus }) {
   const Icon = status === "ok" ? CheckCircle2 : status === "fail" ? XCircle : Info;
   const iconColor =
-    status === "ok" ? "text-green-500" : status === "fail" ? "text-red-400" : "text-amber-500";
+    status === "ok" ? "text-success" : status === "fail" ? "text-danger" : "text-warning";
   return (
     <div className="flex items-center gap-2 text-sm">
       <Icon className={`h-4 w-4 shrink-0 ${iconColor}`} />
@@ -245,8 +245,8 @@ function RevealKeyDialog({
   return (
     <Dialog title={`API key — ${providerName}`} onClose={onClose}>
       <p className="mb-4 text-sm text-muted">
-        This key is decrypted on demand and never stored in plaintext. Copy it
-        and store it in a secure vault if needed.
+        Your key is encrypted and only decrypted when needed for your
+        extractions. Copy it and keep it somewhere safe if you need it again.
       </p>
       <div className="flex items-center gap-2">
         <input
@@ -261,7 +261,7 @@ function RevealKeyDialog({
           className="h-10 shrink-0 gap-1.5 px-3"
           onClick={() => void copyKey()}
         >
-          {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+          {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
           {copied ? "Copied" : "Copy"}
         </Button>
       </div>
@@ -415,7 +415,7 @@ function ProviderForm({
         label="API key"
         hint={
           requireApiKey
-            ? "Encrypted at rest with AES-128 Fernet. Use the eye icon to verify before saving."
+            ? "Your key is encrypted before it's stored. Use the eye icon to verify it before saving."
             : "Leave blank to keep existing key. Use the Reveal button on the row to view it."
         }
       >
