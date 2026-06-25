@@ -86,7 +86,7 @@ function ProjectsSection() {
   ).length;
 
   return (
-    <div className="grid gap-6">
+    <div className="space-y-6">
       {/* Stat tiles */}
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile
@@ -335,7 +335,7 @@ function ActivityLogSection() {
               >
                 Project #{group.projectId}
               </Link>
-              <ul className="grid gap-1.5">
+              <ul className="grid grid-cols-1 gap-1.5">
                 {group.events.map((event) => (
                   <li key={event.id} className="flex items-start gap-3 text-sm">
                     <span

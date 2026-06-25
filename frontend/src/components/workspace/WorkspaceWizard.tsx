@@ -166,7 +166,7 @@ export function WorkspaceWizard({ project }: { project: ProjectResponse }) {
   }
 
   return (
-    <div className="grid gap-6">
+    <div className="space-y-6">
       <div className="sticky top-16 z-20 -mx-4 border-b border-line bg-surface px-4 py-3 md:-mx-8 md:px-8">
         <StepRail
           steps={RAIL_STEPS}
