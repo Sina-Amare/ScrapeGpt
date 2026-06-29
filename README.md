@@ -1,38 +1,95 @@
-# ScrapeGPT
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="ScrapeGPT logo" width="104">
+</p>
 
-ScrapeGPT is a self-hosted, BYOK AI-assisted web data extraction app. It combines a FastAPI backend, PostgreSQL persistence, and a React frontend for the workflow:
+<h1 align="center">ScrapeGPT</h1>
 
-`URL -> Understand Data -> Choose Fields -> Preview -> Extract -> Results`
+<p align="center">
+  The open-source, self-hosted platform for turning any website into clean,<br />
+  structured data &mdash; powered by your own LLM keys&nbsp;(BYOK).
+</p>
 
-![ScrapeGPT — guided extraction dashboard](docs/screenshots/dashboard.png)
+<p align="center">
+  <a href="#screenshots"><strong>Screenshots</strong></a> &middot;
+  <a href="#features"><strong>Features</strong></a> &middot;
+  <a href="#quick-start"><strong>Quick Start</strong></a> &middot;
+  <a href="#tech-stack"><strong>Tech Stack</strong></a> &middot;
+  <a href="#api"><strong>API</strong></a> &middot;
+  <a href="#security"><strong>Security</strong></a>
+</p>
 
-Current status: Phase 2.5 and reliability hardening are complete for the self-hosted single-instance workflow. See [docs/STATUS.md](docs/STATUS.md) for the current product surface and [docs/reviews/03_phase25_validation.md](docs/reviews/03_phase25_validation.md) for the Phase 2.5 E2E validation evidence.
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-F5A623"></a>
+  <a href="https://github.com/Sina-Amare/ScrapeGpt/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Sina-Amare/ScrapeGpt?color=F5A623&logo=github&logoColor=white"></a>
+  <a href="https://github.com/Sina-Amare/ScrapeGpt/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Sina-Amare/ScrapeGpt?color=F5A623"></a>
+  <img alt="Tests: 770 passing" src="https://img.shields.io/badge/tests-770%20passing-F5A623">
+  <img alt="Self-hosted &amp; BYOK" src="https://img.shields.io/badge/self--hosted-BYOK-1B1206?labelColor=F5A623">
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/dashboard-light.png">
+    <img alt="ScrapeGPT dashboard — extraction overview with project stats, recent projects and activity log" src="docs/screenshots/dashboard.png" width="100%">
+  </picture>
+</p>
+
+---
+
+**ScrapeGPT** turns any URL into clean, structured data. Point it at a page, let an AI model map the
+extractable fields, preview the result on a live sample, then extract — and export to CSV, JSON, or
+XLSX. It is **self-hosted** and **bring-your-own-key**: your data and your LLM provider keys stay on
+your own infrastructure.
+
+```text
+URL  →  Understand data  →  Choose fields  →  Preview  →  Extract  →  Results
+```
+
+> **Status:** Phase 2.5 and reliability hardening are complete for the self-hosted single-instance
+> workflow. See [docs/STATUS.md](docs/STATUS.md) for the current product surface and
+> [docs/reviews/03_phase25_validation.md](docs/reviews/03_phase25_validation.md) for the Phase 2.5
+> E2E validation evidence.
 
 ## Screenshots
 
-A premium, responsive interface with light and dark themes.
-
-| Sign in — dark | Sign in — light |
-|---|---|
-| ![Sign in, dark theme](docs/screenshots/login.png) | ![Sign in, light theme](docs/screenshots/login-light.png) |
+A premium, responsive interface with first-class **light and dark** themes.
 
 **Guided extraction workspace** — review the AI's page analysis, choose fields, set the crawl scope, preview a sample, then extract.
 
-![Extraction workspace](docs/screenshots/workspace.png)
+<p align="center">
+  <img alt="Guided extraction workspace with a step rail, AI analysis summary and a confidence score" src="docs/screenshots/workspace.png" width="100%">
+</p>
 
-**Results, trust signals & export** — server-side paginated records with field-coverage trust signals and CSV / JSON / XLSX export.
+**Results, trust signals & export** — server-side paginated records with field-coverage trust signals and one-click CSV / JSON / XLSX export.
 
-![Extraction results](docs/screenshots/results.png)
+<p align="center">
+  <img alt="Extraction results showing progress, record count, quality trust signals and per-field coverage" src="docs/screenshots/results.png" width="100%">
+</p>
 
-**Bring-your-own-key providers** — add your own LLM provider keys, encrypted at rest and tested before use.
+**Bring-your-own-key providers** — add your own LLM provider keys; encrypted at rest and tested before use.
 
-![Provider management](docs/screenshots/providers.png)
+<p align="center">
+  <img alt="Provider management screen for bring-your-own-key LLM configurations, encrypted at rest" src="docs/screenshots/providers.png" width="100%">
+</p>
 
-**Works on mobile** — the full workflow is responsive down to phone widths.
+<table>
+  <tr>
+    <td width="50%"><img alt="Sign-in screen, dark theme" src="docs/screenshots/login.png"></td>
+    <td width="50%"><img alt="Sign-in screen, light theme" src="docs/screenshots/login-light.png"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Sign in &middot; dark</b></sub></td>
+    <td align="center"><sub><b>Sign in &middot; light</b></sub></td>
+  </tr>
+</table>
 
-<img src="docs/screenshots/mobile.png" alt="Mobile dashboard" width="320">
+<p align="center">
+  <img alt="Mobile dashboard — the full workflow is responsive down to phone widths" src="docs/screenshots/mobile.png" width="300">
+  <br />
+  <sub><b>Fully responsive</b> — the entire workflow works down to phone widths.</sub>
+</p>
 
-## What Works Now
+## Features
 
 - Premium, responsive React UI with light/dark themes and a guided, step-by-step extraction workspace.
 - Auth with JWT access/refresh tokens.
@@ -53,6 +110,16 @@ A premium, responsive interface with light and dark themes.
 - Reliability hardening: legacy `/scrape` SSRF validated at endpoint, executor, and redirect-hop levels; CrawlPage lease reaper; stuck-project watchdog; all-pages-failed projects transition to FAILED instead of zero-record COMPLETED.
 
 ## Tech Stack
+
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-149ECA?logo=react&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white">
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white">
+  <img alt="Tailwind CSS" src="https://img.shields.io/badge/Tailwind%20CSS-06B6D4?logo=tailwindcss&logoColor=white">
+</p>
 
 | Concern | Stack |
 |---|---|
@@ -106,7 +173,7 @@ If `DEBUG=true`, API docs are available at [http://127.0.0.1:8000/docs](http://1
 .\dev-stop.ps1    # stops both
 ```
 
-## API Surface
+## API
 
 All API routes are under `/api/v1`.
 
@@ -160,24 +227,30 @@ Last recorded results:
 - Frontend: 89 passed; typecheck, lint, and build passed.
 - Live HTTP API E2E (real public site): 8/8 scenarios passed.
 
-## Documentation
+## Security
 
-Start here:
+- **Your data stays local.** ScrapeGPT is self-hosted; pages, extracted records, and exports never leave your infrastructure.
+- **Provider keys are encrypted at rest** with Fernet and decrypted only on demand; reveals are audit-logged.
+- **SSRF / DNS rebinding:** the static fetch path pins the connected peer IP, and the Chromium (Playwright) backend is pinned to the validated IP via `--host-resolver-rules`. The Camoufox and FlareSolverr backends cannot be pinned — if you enable them, restrict the app's outbound network (firewall / egress policy) to public destinations so private/loopback ranges are unreachable.
 
-- [docs/README.md](docs/README.md) — documentation map and reading guide.
-- [docs/STATUS.md](docs/STATUS.md) — current product state, not-implemented items, and verification snapshot.
-- [docs/product/strategic_redesign.md](docs/product/strategic_redesign.md) — product roadmap and long-term architecture (Phases 3–6).
-- [AGENTS.md](AGENTS.md) — engineering standards, conventions, invariants, and agent guidance.
-
-## Important Limitations
+## Limitations
 
 - The legacy `/scrape` pipeline remains for compatibility and is not the primary product path.
 - A real AI provider is required for fresh provider-backed page analysis.
 - Multi-worker durable crawler recovery is not implemented.
 - Authenticated-content browser sessions are not implemented.
 - CAPTCHA solving, stealth browser patches, proxy evasion, and challenge bypass are non-goals.
-- **SSRF / DNS rebinding:** the static fetch path pins the connected peer IP and the Chromium (Playwright) backend is pinned to the validated IP via `--host-resolver-rules`. The Camoufox and FlareSolverr backends cannot be pinned — if you enable them, restrict the app's outbound network (firewall / egress policy) to public destinations so private/loopback ranges are unreachable.
+
+## Documentation
+
+- [docs/STATUS.md](docs/STATUS.md) — current product state, not-implemented items, and verification snapshot.
+- [docs/product/strategic_redesign.md](docs/product/strategic_redesign.md) — product roadmap and long-term architecture (Phases 3–6).
+- [docs/README.md](docs/README.md) — full documentation map and reading guide.
+
+## Contributing
+
+Issues and pull requests are welcome. Please run the [verification](#verification) suite before opening a PR.
 
 ## License
 
-MIT.
+[MIT](LICENSE)

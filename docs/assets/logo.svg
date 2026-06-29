@@ -1,0 +1,16 @@
+<svg width="112" height="112" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ScrapeGPT logo">
+  <defs>
+    <linearGradient id="ember" x1="0" y1="0" x2="96" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FBB845"/>
+      <stop offset="1" stop-color="#E08515"/>
+    </linearGradient>
+  </defs>
+  <rect width="96" height="96" rx="26" fill="url(#ember)"/>
+  <g transform="translate(22 22) scale(2.1667)" stroke="#1B1206" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <ellipse cx="12" cy="5" rx="9" ry="3"/>
+    <path d="M3 5V19A9 3 0 0 0 15 21.84"/>
+    <path d="M21 5V8"/>
+    <path d="M21 12L18 17H22L19 22"/>
+    <path d="M3 12A9 3 0 0 0 14.59 14.87"/>
+  </g>
+</svg>
